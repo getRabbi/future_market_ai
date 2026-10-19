@@ -11,3 +11,6 @@ export * as webhooks from './modules/webhooks.js';
 export * as customers from './modules/m02-customers/index.js';
 export * as knowledge from './modules/m03-knowledge/index.js';
 import './modules/m02-customers/executors.js';
+export * as analytics from './modules/m08-analytics/index.js';
+export * as experimentsModule from './modules/m10-experiments/index.js';
+export * as audiences from './modules/m11-audiences/index.js';

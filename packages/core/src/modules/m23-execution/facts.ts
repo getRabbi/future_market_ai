@@ -11,6 +11,7 @@ import {
   consentState,
   customerProfiles,
   evidenceRecords,
+  experiments,
   messages,
   platformCapabilities,
   suppressions,
@@ -219,7 +220,14 @@ export async function gatherPolicyFacts(tx: Tx, deps: CoreDeps, input: FactInput
     assets: assetRows.map((a) => ({ id: a.id, publishEligible: a.publishEligible, reasons: a.eligibilityReasons })),
     missingAssetIds: assetIds.filter((id) => !assetRows.some((a) => a.id === id)),
     disclosure,
+    experiment: def?.type === 'experiment.start' ? await experimentFact(tx, input.params.experimentId as string) : null,
   };
+}
+
+async function experimentFact(tx: Tx, id: string | undefined) {
+  if (!id) return null;
+  const [e] = await tx.select({ riskTier: experiments.riskTier, status: experiments.status }).from(experiments).where(eq(experiments.id, id));
+  return e ? { riskTier: e.riskTier as 'low' | 'medium' | 'high', status: e.status } : null;
 }
 
 /** Freshness is re-derived at read time from the SLA rather than trusted from insertion time. */

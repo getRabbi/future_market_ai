@@ -36,6 +36,13 @@
       "when": 1792436130583,
       "tag": "0004_ingestion_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792438447817,
+      "tag": "0005_experiment_decision_rules",
+      "breakpoints": true
     }
   ]
 }

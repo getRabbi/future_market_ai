@@ -93,6 +93,8 @@ export interface PolicyFacts {
   assets: readonly AssetFact[];
   missingAssetIds: readonly string[];
   disclosure: DisclosureFact | null;
+  /** Present for experiment.start. */
+  experiment?: { riskTier: 'low' | 'medium' | 'high'; status: string } | null;
 }
 
 export interface PolicyInput {
@@ -322,6 +324,16 @@ function rulePlatformSpecific(i: PolicyInput): Finding[] {
   return [];
 }
 
+function ruleExperiment(i: PolicyInput): Finding[] {
+  if (i.actionType !== 'experiment.start') return [];
+  const e = i.facts.experiment;
+  if (!e) return [deny('R-EXPERIMENT', 'EXPERIMENT_NOT_FOUND', 'experiment not found')];
+  if (!['draft', 'approved'].includes(e.status)) return [deny('R-EXPERIMENT', 'EXPERIMENT_NOT_STARTABLE', `experiment is ${e.status}`)];
+  // Product plan M10: high-risk treatments require fixed (human) approval irrespective of autonomy settings.
+  if (e.riskTier === 'high') return [approve('R-EXPERIMENT', 'HIGH_RISK_EXPERIMENT', 'high-risk experiments always require human approval')];
+  return [];
+}
+
 function positiveSpend(risk: ActionRisk): number {
   return Math.max(0, risk.spendDeltaMicros);
 }
@@ -390,6 +402,7 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
     ...ruleAssets(input),
     ...ruleMessaging(input),
     ...rulePlatformSpecific(input),
+    ...ruleExperiment(input),
   ];
   const autonomy = ruleAutonomy(input);
   findings.push(...autonomy.findings);

@@ -373,6 +373,10 @@ export const experiments = pgTable('experiments', {
   assignmentSalt: text('assignment_salt').notNull(),
   plannedSamplePerVariant: integer('planned_sample_per_variant'),
   holdoutFraction: dbl('holdout_fraction').notNull().default(0),
+  /** Ship/stop thresholds {probBestThreshold, maxExpectedLoss}; null = [U], recommendations stay inconclusive. */
+  decisionRules: json<Record<string, number> | null>('decision_rules'),
+  /** Bandit exploration floor per arm; required before Thompson allocation is applied. */
+  minExplorationShare: dbl('min_exploration_share'),
   startedAt: ts('started_at'),
   endedAt: ts('ended_at'),
   createdBy: text('created_by').notNull(),
