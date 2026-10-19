@@ -15,6 +15,20 @@
       "when": 1792433072154,
       "tag": "0001_security",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792434863067,
+      "tag": "0002_proof_purpose",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792434865785,
+      "tag": "0003_proof_purpose_trigger",
+      "breakpoints": true
     }
   ]
 }

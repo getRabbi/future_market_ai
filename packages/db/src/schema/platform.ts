@@ -383,6 +383,8 @@ export const executionProofs = pgTable('execution_proofs', {
   executionId: uuid('execution_id').notNull().references(() => executions.id),
   verdict: text('verdict').notNull(),
   method: text('method').notNull(),
+  /** 'postcondition' proves the intended change; 'rollback' proves its compensation. */
+  purpose: text('purpose').notNull().default('postcondition'),
   expected: json<Record<string, unknown>>('expected').notNull(),
   observed: json<Record<string, unknown> | null>('observed'),
   diff: json<unknown[]>('diff').notNull(),
@@ -395,6 +397,7 @@ export const executionProofs = pgTable('execution_proofs', {
   index('execution_proofs_action_idx').on(t.actionId, t.checkedAt),
   oneOf('execution_proofs_verdict_chk', t.verdict, PROOF_VERDICTS),
   oneOf('execution_proofs_method_chk', t.method, VERIFICATION_METHODS),
+  oneOf('execution_proofs_purpose_chk', t.purpose, ['postcondition', 'rollback']),
 ]);
 
 export const budgetReservations = pgTable('budget_reservations', {

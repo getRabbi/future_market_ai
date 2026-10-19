@@ -52,7 +52,7 @@ export interface MessagingFact {
   senderIdentityComplete: boolean;
   /** null = could not be evaluated because the tenant has not configured a cap ([U]). */
   withinFrequencyCap: boolean | null;
-  withinQuietHours: boolean | null;
+  quietHoursOk: boolean | null;
 }
 
 export interface PersonaFact {
@@ -411,7 +411,7 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   }
 
   const constraints: Record<string, unknown> = {};
-  if (input.facts.messaging?.withinQuietHours === false) constraints.deferUntilOutsideQuietHours = true;
+  if (input.facts.messaging?.quietHoursOk === false) constraints.deferUntilOutsideQuietHours = true;
   if (input.definition?.affectsSpend) constraints.spendDeltaMicros = positiveSpend(input.risk);
   if (input.tenantPolicy.approvalTtlHours) constraints.approvalTtlHours = input.tenantPolicy.approvalTtlHours;
 

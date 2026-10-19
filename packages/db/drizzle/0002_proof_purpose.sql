@@ -1,0 +1,2 @@
+ALTER TABLE "execution_proofs" ADD COLUMN "purpose" text DEFAULT 'postcondition' NOT NULL;--> statement-breakpoint
+ALTER TABLE "execution_proofs" ADD CONSTRAINT "execution_proofs_purpose_chk" CHECK ("execution_proofs"."purpose" in ('postcondition', 'rollback'));

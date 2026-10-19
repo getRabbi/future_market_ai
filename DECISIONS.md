@@ -114,3 +114,9 @@ Each decision lists: context → decision → consequences. `[U]` marks values t
 ## D-022 — Local storage backend
 
 - **Decision:** `packages/storage` implements Cloudflare R2 (S3 API, SigV4) for staging/production and a filesystem backend for local development and tests. `NODE_ENV=production` refuses the filesystem backend.
+
+## D-023 — Autonomous execution requires evidence with a declared freshness SLA
+
+- **Context:** The evidence object has `freshness_status: current|stale|unknown`. Without an SLA, freshness cannot be computed and is `unknown`.
+- **Decision:** Agent/system-proposed actions require every cited evidence record to be `admitted`, `current` (derived at read time from `freshness_sla_hours`), permitted for `autonomous_execution`, and not prohibited for it. Evidence with unknown freshness can still support *human* proposals, which then always require approval.
+- **Consequence:** Producers of evidence intended to drive automation must declare a freshness SLA; this is enforced by the policy engine, not by convention.

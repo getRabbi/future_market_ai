@@ -247,7 +247,7 @@ describe('policy engine', () => {
           isChild: null,
           senderIdentityComplete: true,
           withinFrequencyCap: true,
-          withinQuietHours: true,
+          quietHoursOk: true,
           ...m,
         },
       },
@@ -263,7 +263,7 @@ describe('policy engine', () => {
     // transactional mail does not need marketing consent but still honours suppression
     expect(evaluatePolicy(emailInput({ category: 'transactional', consentGranted: false })).outcome).toBe('PRE_AUTHORIZED');
     expect(evaluatePolicy(emailInput({}, 5)).outcome).toBe('REQUIRE_APPROVAL');
-    expect(evaluatePolicy(emailInput({ withinQuietHours: false })).constraints.deferUntilOutsideQuietHours).toBe(true);
+    expect(evaluatePolicy(emailInput({ quietHoursOk: false })).constraints.deferUntilOutsideQuietHours).toBe(true);
   });
 
   it('is deterministic', () => {
