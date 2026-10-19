@@ -20,6 +20,8 @@ export interface CreateDbOptions {
   max?: number;
   applicationName?: string;
   ssl?: boolean | { rejectUnauthorized: boolean; ca?: string };
+  /** Errors on idle clients (e.g. server restart). Without a handler they crash the process. */
+  onPoolError?: (err: Error) => void;
 }
 
 // Return bigint/numeric as JS numbers only where safe; int8 (20) stays string by default in pg,
@@ -33,6 +35,7 @@ export function createDb(opts: CreateDbOptions): DbHandle {
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   });
+  pool.on('error', opts.onPoolError ?? ((err) => console.error('[db] idle client error', err.message)));
   const db = drizzle(pool, { schema });
   return {
     db,
