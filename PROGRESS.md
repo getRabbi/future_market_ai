@@ -22,10 +22,24 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 
 ## Milestone log
 
-### M0 Foundation — ◐
-- [x] Read both source documents; conflict analysis → `DECISIONS.md` (D-000…D-022).
-- [x] Verified Google Ads developer-token sunset (D-003).
-- [x] Git repository initialised.
+### M0 Foundation — ☑
+- [x] Read both source documents; conflict analysis → `DECISIONS.md` (D-000…D-023).
+- [x] Verified Google Ads developer-token sunset (D-003); Meta Graph v26.0, Shopify 2026-10, Google Ads v26 defaults.
+- [x] Git repository initialised (work on branch `build/futuregrow-v1`).
 - [x] Portable Python 3.13.16 in `.tools/` (gitignored).
-- [ ] Workspace scaffold + dependency install.
-- [ ] Embedded PostgreSQL 17 harness verified.
+- [x] npm workspaces; TypeScript 7, Vitest 5, Biome, Drizzle Kit.
+- [x] Embedded PostgreSQL 17.10 harness (no pgvector locally → exact-cosine fallback path is the one exercised).
+
+### M1 Data core — ☑
+- [x] Contracts (Zod): evidence, growth decision, action request, policy decision (approval groups), proof, capability, model artifact, event envelope, tenant policy; 24-module registry (test-enforced).
+- [x] Drizzle schema for all 24 modules (~95 tables) + Better Auth 1.7 tables.
+- [x] Security migrations: RLS role `fg_tenant` + policy on every tenant table (test-enforced), append-only triggers, DB-enforced state machine (VERIFIED needs a postcondition proof, ROLLED_BACK a rollback proof, APPROVED a hash-bound approval), outbox→Graphile trigger, experiment logging order, evidence immutability.
+- [x] Hash-chained audit with tamper/truncation detection; idempotency store.
+
+### M3 Governance & execution — ☑ (M2 API/worker next)
+- [x] Policy engine `fg-policy-1.0.0` (16 tests): allowlist, kill switches, capability/scope, evidence trust (D-023), children/sensitive blocks, jurisdiction→legal, claims, persona/endorsement disclosure, assets, messaging consent/suppression/CAN-SPAM/frequency, TikTok audit, spend ceilings; separation-of-duties approval groups.
+- [x] Connectors (36 contract tests vs. local fixture): Meta (Pages post/reply, Instagram, campaign budget/status, insights), Google Ads (OAuth-only, validateOnly), TikTok Direct Post, YouTube resumable upload, Shopify discount (`context`), App Store Connect (ES256 JWT, localizations, sales reports), Resend; SSRF guard, robots.txt, webhook signatures, failure-phase classification. ⛔ live validation (B-005, B-006, B-008, B-009).
+- [x] M23 gateway + M24 verification/rollback/escalation, budget reservations, rate limiting, kill switches, incidents, registries, encrypted credentials, connector health (12 end-to-end tests incl. the Facebook-post vertical slice).
+- [x] M01 evidence admission/quarantine/release/lineage/freshness sweep.
+
+**Test status:** 89/89 passing (contracts, db, policies, connectors, core).
