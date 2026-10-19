@@ -193,10 +193,19 @@ export const ProposerSchema = z.object({
 });
 export type Proposer = z.infer<typeof ProposerSchema>;
 
+export const ApprovalGroupSchema = z.object({
+  /** Group name, e.g. `operational`, `finance`, `legal`, `privacy`. Every group needs one approval. */
+  name: z.string().min(1),
+  anyOfRoles: z.array(z.enum(TENANT_ROLES)).min(1),
+});
+export type ApprovalGroup = z.infer<typeof ApprovalGroupSchema>;
+
 export const PolicyDecisionSchema = z.object({
   outcome: z.enum(POLICY_OUTCOMES),
-  reasons: z.array(z.object({ code: z.string(), message: z.string(), rule: z.string() })),
-  requiredApproverRoles: z.array(z.enum(TENANT_ROLES)),
+  reasons: z.array(
+    z.object({ code: z.string(), message: z.string(), rule: z.string(), effect: z.enum(POLICY_OUTCOMES) }),
+  ),
+  approvalGroups: z.array(ApprovalGroupSchema),
   requiresDistinctApprover: z.boolean(),
   policyVersion: z.string(),
   evaluatedAt: isoDate,

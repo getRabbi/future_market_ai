@@ -51,7 +51,7 @@ Each decision lists: context → decision → consequences. `[U]` marks values t
 
 ## D-008 — Tenant isolation: PostgreSQL RLS + application scoping
 
-- **Decision:** Better Auth `organization` = tenant. Every tenant table carries `tenant_id` and has `ENABLE` + `FORCE ROW LEVEL SECURITY` with policy `tenant_id = current_setting('app.tenant_id', true)`. Tenant work runs in a transaction that sets `app.tenant_id` and `SET LOCAL ROLE fg_tenant` (a `NOLOGIN` role without `BYPASSRLS`), so isolation does not depend on remembering a `WHERE` clause. A migration test asserts that **every** table with `tenant_id` has the policy.
+- **Decision:** Better Auth `organization` = tenant. Every tenant table carries `tenant_id` and has `ENABLE ROW LEVEL SECURITY` with policy `fg_tenant_isolation … TO fg_tenant USING/WITH CHECK (tenant_id = current_setting('app.tenant_id', true))`. Tenant work runs in a transaction that sets `app.tenant_id` and `SET LOCAL ROLE fg_tenant` (a `NOLOGIN` role without `BYPASSRLS`), so isolation does not depend on remembering a `WHERE` clause. `FORCE` is deliberately not used: the owner role is the explicit *system path* (`withSystem`, used only for cross-tenant queue scans and migrations), and tenant traffic never runs as the owner. Append-only tables additionally get SELECT/INSERT-only grants for `fg_tenant` and mutation-blocking triggers that apply to every role. A test asserts that **every** table with `tenant_id` has RLS and the policy.
 - **Risk:** Whether the Northflank managed-PostgreSQL user may `CREATE ROLE` is `[U]`. Startup probes this; if the role cannot exist, the app refuses to start in `production` mode and logs the reason (B-004).
 
 ## D-009 — Events: transactional outbox + Graphile Worker; webhook inbox

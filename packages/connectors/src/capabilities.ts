@@ -1,0 +1,360 @@
+import type { PlatformCapability, Provider } from '@futuregrow/contracts';
+import { DEFAULT_API_VERSIONS } from './types.js';
+
+export const CONNECTOR_VERSION = '1.0.0';
+
+/** Date the capability facts below were last checked against provider documentation/reporting. */
+const CHECKED = '2026-10-19T00:00:00.000Z';
+
+const LIVE_UNVERIFIED =
+  'Request/response shapes implemented from provider documentation; contract-tested against a local fixture only. Live validation pending (BLOCKERS).';
+
+type Seed = Omit<PlatformCapability, 'termsCheckedAt' | 'connectorVersion'>;
+
+const seeds: Seed[] = [
+  // ---------------- Meta ----------------
+  {
+    platform: 'meta',
+    apiVersion: DEFAULT_API_VERSIONS.meta,
+    capability: 'facebook_page_publish',
+    supported: true,
+    requiredScopes: ['pages_manage_posts', 'pages_read_engagement'],
+    requiredAccountType: 'facebook_page (page access token)',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 30, refillPerSecond: 0.5, notes: 'Meta Business Use Case rate limits; X-Business-Use-Case-Usage header governs' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.facebook.com/docs/pages-api/posts',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'meta',
+    apiVersion: DEFAULT_API_VERSIONS.meta,
+    capability: 'facebook_page_comment_reply',
+    supported: true,
+    requiredScopes: ['pages_manage_engagement', 'pages_read_engagement'],
+    requiredAccountType: 'facebook_page (page access token)',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 30, refillPerSecond: 0.5, notes: 'Business Use Case rate limits' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.facebook.com/docs/graph-api/reference/object/comments',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'meta',
+    apiVersion: DEFAULT_API_VERSIONS.meta,
+    capability: 'instagram_content_publish',
+    supported: true,
+    requiredScopes: ['instagram_basic', 'instagram_content_publish'],
+    requiredAccountType: 'instagram_professional_account',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 10, refillPerSecond: 0.05, notes: 'Content publishing is limited per account per rolling 24h; check content_publishing_limit' },
+    quota: { publishLimitEndpoint: '/{ig-user-id}/content_publishing_limit' },
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.facebook.com/docs/instagram-platform/content-publishing',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'meta',
+    apiVersion: DEFAULT_API_VERSIONS.meta,
+    capability: 'meta_ads_campaign_budget_update',
+    supported: true,
+    requiredScopes: ['ads_management', 'ads_read'],
+    requiredAccountType: 'ad_account',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 20, refillPerSecond: 0.2, notes: 'Marketing API ad-account level throttling' },
+    quota: { overdeliveryFactorDaily: null },
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.facebook.com/docs/marketing-api/reference/ad-campaign-group',
+    notes: `${LIVE_UNVERIFIED} Daily overdelivery tolerance is [U] and must be configured before reconciliation can flag overspend as critical.`,
+  },
+  {
+    platform: 'meta',
+    apiVersion: DEFAULT_API_VERSIONS.meta,
+    capability: 'meta_ads_campaign_status_update',
+    supported: true,
+    requiredScopes: ['ads_management', 'ads_read'],
+    requiredAccountType: 'ad_account',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 20, refillPerSecond: 0.2, notes: 'Marketing API ad-account level throttling' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.facebook.com/docs/marketing-api/reference/ad-campaign-group',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'meta',
+    apiVersion: DEFAULT_API_VERSIONS.meta,
+    capability: 'meta_ads_reporting',
+    supported: true,
+    requiredScopes: ['ads_read'],
+    requiredAccountType: 'ad_account',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 20, refillPerSecond: 0.2, notes: 'Insights API throttling' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'read_only',
+    sourceUrl: 'https://developers.facebook.com/docs/marketing-api/insights',
+    notes: LIVE_UNVERIFIED,
+  },
+  // ---------------- Google Ads (D-003) ----------------
+  {
+    platform: 'google_ads',
+    apiVersion: DEFAULT_API_VERSIONS.googleAds,
+    capability: 'google_ads_campaign_budget_mutate',
+    supported: true,
+    requiredScopes: ['https://www.googleapis.com/auth/adwords'],
+    requiredAccountType: 'google_ads_customer',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 10, refillPerSecond: 1, notes: 'Mutate requests capped; daily operations depend on the Cloud project access level' },
+    quota: { explorerOpsPerDay: 2880, basicOpsPerDay: 15000, standard: 'no general daily cap; service limits apply', overdeliveryFactorDaily: null },
+    regionalRestrictions: [],
+    termsVersion: 'access-level-by-cloud-project (developer token sunset 2026-09-09)',
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.google.com/google-ads/api/docs/access-levels',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'google_ads',
+    apiVersion: DEFAULT_API_VERSIONS.googleAds,
+    capability: 'google_ads_campaign_status_mutate',
+    supported: true,
+    requiredScopes: ['https://www.googleapis.com/auth/adwords'],
+    requiredAccountType: 'google_ads_customer',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 10, refillPerSecond: 1, notes: 'see campaign budget mutate' },
+    quota: { explorerOpsPerDay: 2880, basicOpsPerDay: 15000 },
+    regionalRestrictions: [],
+    termsVersion: 'access-level-by-cloud-project (developer token sunset 2026-09-09)',
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.google.com/google-ads/api/docs/campaigns/overview',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'google_ads',
+    apiVersion: DEFAULT_API_VERSIONS.googleAds,
+    capability: 'google_ads_reporting',
+    supported: true,
+    requiredScopes: ['https://www.googleapis.com/auth/adwords'],
+    requiredAccountType: 'google_ads_customer',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 20, refillPerSecond: 2, notes: 'GoogleAdsService.Search' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'read_only',
+    sourceUrl: 'https://developers.google.com/google-ads/api/docs/reporting/overview',
+    notes: LIVE_UNVERIFIED,
+  },
+  // ---------------- TikTok ----------------
+  {
+    platform: 'tiktok',
+    apiVersion: DEFAULT_API_VERSIONS.tiktok,
+    capability: 'tiktok_direct_post',
+    supported: true,
+    requiredScopes: ['video.publish'],
+    requiredAccountType: 'tiktok_creator (authorized by the creator)',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 6, refillPerSecond: 0.1, notes: 'video/init: 6 requests per minute per user access token' },
+    quota: { unauditedVisibility: 'SELF_ONLY' },
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.tiktok.com/doc/content-posting-api-reference-direct-post',
+    notes: `${LIVE_UNVERIFIED} Unaudited clients are private-only; creator_info must be queried before each post; PULL_FROM_URL requires a verified URL prefix.`,
+  },
+  // ---------------- YouTube ----------------
+  {
+    platform: 'youtube',
+    apiVersion: DEFAULT_API_VERSIONS.youtube,
+    capability: 'youtube_video_upload',
+    supported: true,
+    requiredScopes: ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly'],
+    requiredAccountType: 'youtube_channel',
+    appReviewRequired: 'unspecified',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 5, refillPerSecond: 0.01, notes: 'Daily quota units per Cloud project; uploads are expensive in quota units [U exact cost]' },
+    quota: { dailyUnitsDefault: 10000 },
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developers.google.com/youtube/v3/docs/videos/insert',
+    notes: `${LIVE_UNVERIFIED} Unverified API projects may have uploads restricted to private.`,
+  },
+  // ---------------- Shopify ----------------
+  {
+    platform: 'shopify',
+    apiVersion: DEFAULT_API_VERSIONS.shopify,
+    capability: 'shopify_discount_create',
+    supported: true,
+    requiredScopes: ['write_discounts', 'read_discounts'],
+    requiredAccountType: 'shopify_store (custom or public app)',
+    appReviewRequired: 'unspecified',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 10, refillPerSecond: 2, notes: 'GraphQL cost-based leaky bucket; extensions.cost.throttleStatus governs' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: 'Shopify API License and Terms of Use',
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://shopify.dev/docs/api/admin-graphql/latest/mutations/discountCodeBasicCreate',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'shopify',
+    apiVersion: DEFAULT_API_VERSIONS.shopify,
+    capability: 'shopify_orders_webhook',
+    supported: true,
+    requiredScopes: ['read_orders'],
+    requiredAccountType: 'shopify_store',
+    appReviewRequired: 'unspecified',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: null, refillPerSecond: null, notes: 'inbound webhooks' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'read_only',
+    sourceUrl: 'https://shopify.dev/docs/apps/build/webhooks',
+    notes: LIVE_UNVERIFIED,
+  },
+  // ---------------- App Store Connect ----------------
+  {
+    platform: 'app_store_connect',
+    apiVersion: DEFAULT_API_VERSIONS.appStoreConnect,
+    capability: 'asc_version_localization_update',
+    supported: true,
+    requiredScopes: [],
+    requiredAccountType: 'asc_api_key (App Manager role)',
+    appReviewRequired: 'false',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 10, refillPerSecond: 1, notes: 'X-Rate-Limit header governs' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://developer.apple.com/documentation/appstoreconnectapi/app_store_version_localizations',
+    notes: `${LIVE_UNVERIFIED} description/keywords editable only while the version is editable; promotionalText anytime.`,
+  },
+  {
+    platform: 'app_store_connect',
+    apiVersion: DEFAULT_API_VERSIONS.appStoreConnect,
+    capability: 'asc_sales_reports',
+    supported: true,
+    requiredScopes: [],
+    requiredAccountType: 'asc_api_key (Sales/Finance role)',
+    appReviewRequired: 'false',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 10, refillPerSecond: 1, notes: 'X-Rate-Limit header governs' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'read_only',
+    sourceUrl: 'https://developer.apple.com/documentation/appstoreconnectapi/download_sales_and_trends_reports',
+    notes: LIVE_UNVERIFIED,
+  },
+  // ---------------- Messaging (D-018) ----------------
+  {
+    platform: 'resend',
+    apiVersion: 'v1',
+    capability: 'email_send',
+    supported: true,
+    requiredScopes: [],
+    requiredAccountType: 'verified_sending_domain',
+    appReviewRequired: 'false',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 2, refillPerSecond: 2, notes: 'default team rate limit; response headers govern' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'queue_for_human',
+    sourceUrl: 'https://resend.com/docs/api-reference/emails/send-email',
+    notes: `${LIVE_UNVERIFIED} Vendor contract/DPA review outstanding (B-008).`,
+  },
+  // ---------------- Read-only integrations ----------------
+  {
+    platform: 'search_console',
+    apiVersion: 'v3',
+    capability: 'search_console_query',
+    supported: true,
+    requiredScopes: ['https://www.googleapis.com/auth/webmasters.readonly'],
+    requiredAccountType: 'verified_site_owner',
+    appReviewRequired: 'unspecified',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 5, refillPerSecond: 0.5, notes: 'Search Analytics query quotas' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'read_only',
+    sourceUrl: 'https://developers.google.com/webmaster-tools/v1/searchanalytics/query',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'posthog',
+    apiVersion: 'capture-v0',
+    capability: 'posthog_capture',
+    supported: true,
+    requiredScopes: [],
+    requiredAccountType: 'posthog_project',
+    appReviewRequired: 'false',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 50, refillPerSecond: 10, notes: 'ingestion' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'disable',
+    sourceUrl: 'https://posthog.com/docs/api/capture',
+    notes: LIVE_UNVERIFIED,
+  },
+  {
+    platform: 'chatwoot',
+    apiVersion: 'v1',
+    capability: 'chatwoot_conversation_sync',
+    supported: true,
+    requiredScopes: [],
+    requiredAccountType: 'chatwoot_agent_bot_or_user_token',
+    appReviewRequired: 'false',
+    rateLimitPolicy: { kind: 'token_bucket', capacity: 10, refillPerSecond: 1, notes: 'instance-dependent' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'disable',
+    sourceUrl: 'https://www.chatwoot.com/developers/api/',
+    notes: LIVE_UNVERIFIED,
+  },
+];
+
+export const CAPABILITY_SEEDS: PlatformCapability[] = seeds.map((s) => ({
+  ...s,
+  termsCheckedAt: CHECKED,
+  connectorVersion: CONNECTOR_VERSION,
+}));
+
+export function configuredApiVersion(provider: Provider, versions = DEFAULT_API_VERSIONS): string | null {
+  switch (provider) {
+    case 'meta':
+      return versions.meta;
+    case 'google_ads':
+      return versions.googleAds;
+    case 'shopify':
+      return versions.shopify;
+    case 'tiktok':
+      return versions.tiktok;
+    case 'youtube':
+      return versions.youtube;
+    case 'app_store_connect':
+      return versions.appStoreConnect;
+    case 'resend':
+      return 'v1';
+    case 'search_console':
+      return 'v3';
+    case 'posthog':
+      return 'capture-v0';
+    case 'chatwoot':
+      return 'v1';
+    default:
+      return null;
+  }
+}
