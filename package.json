@@ -1,0 +1,49 @@
+{
+  "name": "futuregrow-ai",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "jobs/media"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:py": "node scripts/run-python-tests.mjs",
+    "db:generate": "drizzle-kit generate --config packages/db/drizzle.config.ts",
+    "db:migrate": "tsx packages/db/src/cli/migrate.ts",
+    "db:probe": "tsx packages/db/src/cli/probe.ts",
+    "db:seed": "tsx packages/db/src/cli/seed.ts",
+    "dev:db": "tsx scripts/dev-db.ts",
+    "dev:api": "tsx watch apps/api/src/main.ts",
+    "dev:worker": "tsx watch apps/worker/src/main.ts",
+    "dev:web": "npm run dev -w @futuregrow/web",
+    "build": "node scripts/build.mjs",
+    "sbom": "node scripts/sbom.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "embedded-postgres": "^17.10.0-beta.17",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "allowScripts": {
+    "esbuild@0.18.20": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "@embedded-postgres/windows-x64@17.10.0-beta.17": true
+  }
+}

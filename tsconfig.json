@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "apps/api/src/**/*.ts",
+    "apps/api/test/**/*.ts",
+    "apps/worker/src/**/*.ts",
+    "apps/worker/test/**/*.ts",
+    "jobs/media/src/**/*.ts",
+    "jobs/media/src/**/*.tsx",
+    "test/**/*.ts",
+    "scripts/**/*.ts"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@futuregrow/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@fastify/cors": "^11.3.1",
+    "@fastify/helmet": "^13.2.0",
+    "@fastify/rate-limit": "^11.2.1",
+    "@fastify/swagger": "^9.9.2",
+    "better-auth": "^1.7.11",
+    "fastify": "^5.12.7",
+    "fastify-type-provider-zod": "^7.0.0"
+  }
+}
