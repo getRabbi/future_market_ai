@@ -101,9 +101,11 @@ async function messagingFacts(tx: Tx, deps: CoreDeps, input: FactInput, policy: 
   }
   const hash = identifierHash(deps.config.identifierPepper, 'email', profile.email);
   const sup = await tx
-    .select({ id: suppressions.id })
+    .select({ reason: suppressions.reason })
     .from(suppressions)
     .where(and(eq(suppressions.identifierHash, hash), inArray(suppressions.channel, ['email', 'all'])));
+  // An unsubscribe blocks commercial mail only; bounces, complaints, DSAR and manual blocks stop everything.
+  const suppressed = sup.some((r) => r.reason !== 'unsubscribe') || (category === 'commercial' && sup.length > 0);
   const [consent] = await tx
     .select()
     .from(consentState)
@@ -140,7 +142,7 @@ async function messagingFacts(tx: Tx, deps: CoreDeps, input: FactInput, policy: 
   return {
     category,
     consentGranted,
-    suppressed: sup.length > 0,
+    suppressed,
     isChild: profile.isChild,
     senderIdentityComplete: senderIdentityComplete(settings?.senderIdentity),
     withinFrequencyCap,

@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { type Actor, type CoreDeps } from '@futuregrow/core';
+import { type Actor, type CoreDeps, type knowledge } from '@futuregrow/core';
 import { DbError, authUser, beginIdempotent, completeIdempotent, idempotencyKeys, isValidIdempotencyKey, member, withSystem, withTenant } from '@futuregrow/db';
 import { FgError, sha256Canonical } from '@futuregrow/observability';
 import { ZodError } from 'zod';
@@ -18,6 +18,8 @@ declare module 'fastify' {
 export interface ApiContext {
   deps: CoreDeps;
   auth: Auth;
+  /** Approved embeddings provider, when configured (D-007). */
+  embedder?: knowledge.Embedder;
 }
 
 /** Convert a Fastify request to a Web Request for Better Auth. */

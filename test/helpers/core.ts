@@ -36,7 +36,7 @@ export interface CoreHarness {
   clock: TestClock;
   storeDir: string;
   tenantId: string;
-  users: Record<'owner' | 'approver' | 'finance' | 'legal' | 'operator' | 'admin', Actor>;
+  users: Record<'owner' | 'approver' | 'finance' | 'legal' | 'operator' | 'admin' | 'privacy' | 'analyst', Actor>;
   close(): Promise<void>;
 }
 
@@ -76,6 +76,8 @@ const ROLE_SETS = {
   legal: ['legal_approver'],
   operator: ['growth_operator'],
   admin: ['admin'],
+  privacy: ['privacy_officer'],
+  analyst: ['analyst'],
 } as const;
 
 export async function createCoreHarness(opts: { endpointBase?: string; tenantSlug?: string } = {}): Promise<CoreHarness> {

@@ -8,3 +8,6 @@ export * as evidence from './modules/m01-evidence/index.js';
 export * as connectionsModule from './modules/connections.js';
 export * from './bootstrap.js';
 export * as webhooks from './modules/webhooks.js';
+export * as customers from './modules/m02-customers/index.js';
+export * as knowledge from './modules/m03-knowledge/index.js';
+import './modules/m02-customers/executors.js';

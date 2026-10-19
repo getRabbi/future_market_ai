@@ -349,3 +349,22 @@ export const knowledgeChunks = pgTable('knowledge_chunks', {
   uniqueIndex('knowledge_chunks_ord_uq').on(t.documentId, t.ordinal),
   index('knowledge_chunks_tsv_gin').using('gin', t.tsv),
 ]);
+
+/** Event-ingestion credentials for M02 (server keys and origin-bound browser keys). */
+export const ingestionKeys = pgTable('ingestion_keys', {
+  id: pk(),
+  tenantId: tenantId(),
+  kind: text('kind').notNull(),
+  keyPrefix: text('key_prefix').notNull(),
+  keyHash: text('key_hash').notNull(),
+  allowedOrigins: textArray('allowed_origins').notNull().default(sql`'{}'::text[]`),
+  status: text('status').notNull().default('active'),
+  createdBy: text('created_by').notNull(),
+  createdAt: createdAt(),
+  revokedAt: ts('revoked_at'),
+}, (t) => [
+  uniqueIndex('ingestion_keys_hash_uq').on(t.keyHash),
+  oneOf('ingestion_keys_kind_chk', t.kind, ['server', 'browser']),
+  oneOf('ingestion_keys_status_chk', t.status, ['active', 'revoked']),
+  rawCheck('ingestion_keys_browser_origin_chk', sql`${t.kind} <> 'browser' or cardinality(${t.allowedOrigins}) > 0`),
+]);
