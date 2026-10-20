@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { injectionSignals } from '@futuregrow/agent-kernel';
 import { type DbOrTx, type Tx, brandRules, claims, evidenceRecords, kgEntities, kgRelations, knowledgeChunks, knowledgeDocuments } from '@futuregrow/db';
 import { conflict, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
@@ -433,6 +434,21 @@ export async function searchKnowledge(
     } else merged.set(r.id, { chunkId: r.id, documentId: r.document_id, title: r.title, text: r.text, evidenceId: r.evidence_id, score: 1 / (K + r.vectorRank), ftsRank: null, vectorRank: r.vectorRank });
   }
   return [...merged.values()].sort((a, b) => b.score - a.score || a.chunkId.localeCompare(b.chunkId)).slice(0, limit);
+}
+
+/**
+ * Drop retrieved excerpts that carry prompt-injection markers before they reach a model. The
+ * text is still fenced as untrusted data; this removes known attack shapes entirely.
+ */
+export function screenRetrieved(chunks: RetrievedChunk[]): { kept: RetrievedChunk[]; dropped: { chunkId: string; documentId: string; signals: string[] }[] } {
+  const kept: RetrievedChunk[] = [];
+  const dropped: { chunkId: string; documentId: string; signals: string[] }[] = [];
+  for (const c of chunks) {
+    const signals = injectionSignals(`${c.title}\n${c.text}`);
+    if (signals.length) dropped.push({ chunkId: c.chunkId, documentId: c.documentId, signals });
+    else kept.push(c);
+  }
+  return { kept, dropped };
 }
 
 export async function listClaims(tx: DbOrTx, status?: string) {

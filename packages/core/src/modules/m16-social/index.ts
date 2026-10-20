@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
 import { runAgent } from '../../agents.js';
 import { audit, normalizeText, record, requireRole } from '../../util.js';
-import { lintCopy, searchKnowledge } from '../m03-knowledge/index.js';
+import { lintCopy, screenRetrieved, searchKnowledge } from '../m03-knowledge/index.js';
 import { personaContentCheck } from '../m15-personas/index.js';
 import { proposeAction } from '../m23-execution/gateway.js';
 import { type ActionRow, registerHooks, registerResolver } from '../m23-execution/registry.js';
@@ -260,7 +260,7 @@ export async function draftReply(deps: CoreDeps, tenantId: string, actor: Actor,
       const [i] = await tx.select().from(socialInteractions).where(eq(socialInteractions.id, interactionId));
       if (!i) throw notFound('interaction');
       const c = await searchKnowledge(tx, { query: i.text.slice(0, 300), roles: [], audience: 'public', limit: 6, match: 'any' });
-      return { it: i, chunks: c };
+      return { it: i, chunks: screenRetrieved(c).kept };
     });
     const mod = it.moderation as { needsEscalation?: boolean };
     if (mod.needsEscalation) {

@@ -45,6 +45,10 @@ const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
   { name: 'shopify_token', re: /\bshp(at|ca|pa|ss)_[a-f0-9]{32}\b/ },
   { name: 'jwt', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
   { name: 'meta_token', re: /\bEAA[A-Za-z0-9]{40,}\b/ },
+  { name: 'resend_key', re: /\bre_[A-Za-z0-9]{8,}_[A-Za-z0-9]{16,}\b/ },
+  { name: 'google_api_key', re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { name: 'google_refresh_token', re: /\b1\/\/0[A-Za-z0-9_-]{30,}/ },
+  { name: 'stripe_key', re: /\b(sk|rk)_(live|test)_[A-Za-z0-9]{20,}\b/ },
 ];
 
 /**

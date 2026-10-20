@@ -24,14 +24,15 @@ export const REDACT_PATHS = [
   '*.credentials',
 ];
 
-export function createLogger(service: string, level = process.env.LOG_LEVEL ?? 'info'): Logger {
-  return pino({
+export function createLogger(service: string, level = process.env.LOG_LEVEL ?? 'info', destination?: pino.DestinationStream): Logger {
+  const opts = {
     name: service,
     level,
     base: { service, env: process.env.NODE_ENV ?? 'development' },
     redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
     timestamp: pino.stdTimeFunctions.isoTime,
-  });
+  };
+  return destination ? pino(opts, destination) : pino(opts);
 }
 
 export type { Logger };

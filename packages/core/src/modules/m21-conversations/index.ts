@@ -9,7 +9,8 @@ import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js'
 import { runAgent } from '../../agents.js';
 import { audit, record, requireRole } from '../../util.js';
 import { readContext } from '../connections.js';
-import { type Embedder, type RetrievedChunk, lintCopy, searchKnowledge } from '../m03-knowledge/index.js';
+import { type Embedder, type RetrievedChunk, lintCopy, screenRetrieved, searchKnowledge } from '../m03-knowledge/index.js';
+import { raiseAlert } from '../m24-governance/index.js';
 
 /* ------------------------------------------------------------------ */
 /* Widgets                                                             */
@@ -137,7 +138,11 @@ export async function postCustomerMessage(deps: CoreDeps, args: { publicKey: str
     await tx.insert(conversationMessages).values({ tenantId, conversationId: c.id, role: 'customer', text, redactedText: redacted });
     await tx.update(conversations).set({ lastMessageAt: new Date() }).where(eq(conversations.id, c.id));
     const history = await tx.select().from(conversationMessages).where(eq(conversationMessages.conversationId, c.id)).orderBy(desc(conversationMessages.createdAt)).limit(8);
-    const chunks = c.status === 'open' ? await searchKnowledge(tx, { query: redacted.slice(0, 500), roles: [], audience: 'public', limit: 6, match: 'any', ...(args.embedder ? { embedder: args.embedder } : {}) }) : [];
+    const found = c.status === 'open' ? await searchKnowledge(tx, { query: redacted.slice(0, 500), roles: [], audience: 'public', limit: 6, match: 'any', ...(args.embedder ? { embedder: args.embedder } : {}) }) : [];
+    const { kept: chunks, dropped } = screenRetrieved(found);
+    for (const d of dropped) {
+      await raiseAlert(tx, tenantId, { kind: 'knowledge.injection_detected', severity: 'warning', message: `Knowledge document ${d.documentId} contains prompt-injection markers and was withheld from the assistant`, refs: d, dedupKey: `kb-injection:${d.documentId}` });
+    }
     return { c, history: history.reverse(), chunks };
   });
   if (state.c.status === 'handoff') return { role: 'system', text: 'A team member will reply here shortly.', citations: [], handoff: true };
