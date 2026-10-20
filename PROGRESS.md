@@ -66,4 +66,16 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 
 **Test status:** 154/154 TS tests + 24/24 Python tests passing.
 
-### M8 Channels — ◐
+### M8 Channels — ☑
+- [x] M16 organic social: scheduling with anti-spam spacing/dedup, publish through M23 (status set only on VERIFIED), Meta comment webhooks, moderation/escalation, grounded reply drafts, policy-gated replies.
+- [x] M17 paid media: campaign/spend sync, append-only budget history with external-change alerts, settled-day spend ledger with restatement alerts, spend reconciliation (D-027), budget/status proposals with reservations.
+- [x] M18 SEO/ASO/AI discovery: robots.txt-honouring technical audit (issues, duplicates, broken links, AI crawler access, llms.txt), Search Console sync, keyword upload, striking-distance heuristic, store-metadata validation, App Store localization pushes via M23. Google Play writes remain blocked (B-009).
+- [x] M19 app growth: install-referrer minimisation, labelled attribution methods, consent-gated profile links, App Store sales reports as evidence, weekly cohorts (activation/retention) marked non-causal.
+- [x] M20 lifecycle: templates (variable allow-list, HTML safety, CAN-SPAM footer), four-eyes approval, evidence-backed journeys (D-025) with wait/exit/experiment steps, RFC 8058 one-click unsubscribe, Resend bounce/complaint webhooks → suppression.
+- [x] M21 conversations: widgets with per-widget CORS, PII-redacted grounded answers with resolvable citations, deterministic answer validation, handoff + tickets + leads, optional Chatwoot mirror.
+- [x] M22 creators: evidence-backed contracts with mandatory disclosure, referral redirects with hashed clicks, Shopify order/refund attribution, accrual + proportional clawback, fraud flags, conspicuous-disclosure check; payouts denied by policy (B-015).
+- [x] Worker crons: social_dispatch, journey_tick, ads_sync, spend_reconcile, search_console_sync, app_store_sales_sync; on-demand seo_audit.
+
+**Test status:** 188/188 TS tests + 24/24 Python tests passing.
+
+### M9 Web control plane — ◐
