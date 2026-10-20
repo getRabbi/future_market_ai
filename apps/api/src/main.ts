@@ -6,7 +6,7 @@ const env = loadEnv();
 const runtime = await createRuntime(env, 'api');
 await governance.syncCapabilityRegistry(runtime.deps.db);
 await governance.seedModelRegistry(runtime.deps.db);
-const { app } = await buildApp({ env, deps: runtime.deps });
+const { app } = await buildApp({ env, deps: runtime.deps, ...(runtime.embedder ? { embedder: runtime.embedder } : {}) });
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutting down');

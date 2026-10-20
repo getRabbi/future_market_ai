@@ -256,10 +256,10 @@ export async function syncCapabilityRegistry(db: Db): Promise<number> {
 }
 
 /** Seed default models as NOT approved (D-002): approval requires vendor review. */
+/** D-024: the current Opus serves every reasoning purpose; Opus 4.8 is a refusal-fallback candidate. */
 export const DEFAULT_MODELS = [
-  { provider: 'anthropic', modelId: 'claude-sonnet-5-5', displayName: 'Claude Sonnet 5.5', purposes: ['reasoning', 'generation', 'critic'] },
-  { provider: 'anthropic', modelId: 'claude-opus-5-5', displayName: 'Claude Opus 5.5', purposes: ['reasoning', 'planning'] },
-  { provider: 'anthropic', modelId: 'claude-haiku-5-5', displayName: 'Claude Haiku 5.5', purposes: ['classification', 'extraction', 'moderation'] },
+  { provider: 'anthropic', modelId: 'claude-opus-5-5', displayName: 'Claude Opus 5.5', purposes: ['planning', 'critic', 'generation', 'extraction', 'classification'], inputUsdPerMtok: 4, outputUsdPerMtok: 20 },
+  { provider: 'anthropic', modelId: 'claude-opus-4-8', displayName: 'Claude Opus 4.8 (refusal fallback)', purposes: ['fallback'], inputUsdPerMtok: 5, outputUsdPerMtok: 25 },
 ] as const;
 
 export async function seedModelRegistry(db: Db): Promise<void> {
@@ -276,6 +276,9 @@ export async function seedModelRegistry(db: Db): Promise<void> {
           commercialUse: 'unknown',
           trainingOnCustomerData: 'unknown',
           approvedForProduction: false,
+          // List prices as published by the vendor on 2026-10-06; re-confirmed at approval time.
+          inputUsdPerMtok: m.inputUsdPerMtok,
+          outputUsdPerMtok: m.outputUsdPerMtok,
         })
         .onConflictDoNothing();
     }

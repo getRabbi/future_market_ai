@@ -5,7 +5,7 @@ import swagger from '@fastify/swagger';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { sql } from 'drizzle-orm';
-import type { CoreDeps } from '@futuregrow/core';
+import type { CoreDeps, knowledge } from '@futuregrow/core';
 import { type Auth, createAuth } from './auth.js';
 import { type Env, origins } from '@futuregrow/runtime';
 import { type ApiContext, registerErrorHandler, registerTenantHooks, sendWebResponse, toWebRequest } from './http.js';
@@ -18,9 +18,10 @@ export interface BuildAppOptions {
   env: Env;
   deps: CoreDeps;
   auth?: Auth;
+  embedder?: knowledge.Embedder;
 }
 
-export async function buildApp({ env, deps, auth: providedAuth }: BuildAppOptions): Promise<{ app: FastifyInstance; auth: Auth }> {
+export async function buildApp({ env, deps, auth: providedAuth, embedder }: BuildAppOptions): Promise<{ app: FastifyInstance; auth: Auth }> {
   const auth = providedAuth ?? createAuth(deps.db, env);
   const app = Fastify({
     logger: env.NODE_ENV === 'test' ? false : { level: env.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers.cookie'] },
@@ -69,7 +70,7 @@ export async function buildApp({ env, deps, auth: providedAuth }: BuildAppOption
     transform: jsonSchemaTransform,
   });
 
-  const ctx: ApiContext = { deps, auth };
+  const ctx: ApiContext = { deps, auth, ...(embedder ? { embedder } : {}) };
   registerErrorHandler(app);
   registerTenantHooks(app, ctx);
 

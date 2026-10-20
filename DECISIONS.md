@@ -120,3 +120,9 @@ Each decision lists: context → decision → consequences. `[U]` marks values t
 - **Context:** The evidence object has `freshness_status: current|stale|unknown`. Without an SLA, freshness cannot be computed and is `unknown`.
 - **Decision:** Agent/system-proposed actions require every cited evidence record to be `admitted`, `current` (derived at read time from `freshness_sla_hours`), permitted for `autonomous_execution`, and not prohibited for it. Evidence with unknown freshness can still support *human* proposals, which then always require approval.
 - **Consequence:** Producers of evidence intended to drive automation must declare a freshness SLA; this is enforced by the policy engine, not by convention.
+
+## D-024 — Model routing and refusal fallbacks
+
+- **Default model:** every reasoning purpose (planning, critique, generation, extraction) routes to `claude-opus-5-5`; no automatic downgrade to cheaper models for cost. Adaptive thinking is always on for this model (the `thinking` parameter is omitted); depth is controlled with `output_config.effort` set explicitly per purpose (its default is `medium`).
+- **Structured output:** responses are constrained with `output_config.format` (Zod schema via the SDK's `betaZodOutputFormat`) and re-validated with the full FUTUREGROW Zod contract; forced `tool_choice` is not used (rejected by this model).
+- **Refusal fallbacks vs. the licence gate:** the vendor recommends server-side `fallbacks: "default"`, but that lets the server pick a model that is not in FUTUREGROW's registry, which the product plan forbids ("never silently switch to an unapproved-licence model"). Decision: send `fallbacks` only as an explicit list of models that are registered **and approved** with purpose `fallback`; when none are approved, no fallback is sent and a refusal makes the step abstain. Every response's served-by model is checked against the approved registry before its output is used.

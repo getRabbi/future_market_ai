@@ -47,6 +47,15 @@ export const EnvSchema = z
     ANTHROPIC_API_KEY: z.string().optional(),
     OPENAI_COMPATIBLE_BASE_URL: z.string().url().optional(),
     OPENAI_COMPATIBLE_API_KEY: z.string().optional(),
+    // Optional embeddings endpoint (D-007); full-text retrieval works without it.
+    EMBEDDINGS_BASE_URL: z.string().url().optional(),
+    EMBEDDINGS_MODEL: z.string().optional(),
+    EMBEDDINGS_API_KEY: z.string().optional(),
+    // Optional immediate trigger of Northflank jobs (D-016); cron schedules work without it.
+    NORTHFLANK_API_TOKEN: z.string().optional(),
+    NORTHFLANK_PROJECT_ID: z.string().optional(),
+    NORTHFLANK_ANALYTICS_JOB_ID: z.string().optional(),
+    NORTHFLANK_MEDIA_JOB_ID: z.string().optional(),
     VERIFICATION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(12),
     VERIFICATION_BASE_DELAY_SECONDS: z.coerce.number().int().min(1).max(3600).default(15),
   })

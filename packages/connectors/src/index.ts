@@ -14,6 +14,7 @@ export * from './ssrf.js';
 export * from './robots.js';
 export * from './capabilities.js';
 export * from './webhooks.js';
+export * from './html.js';
 export * from './providers/money.js';
 export { appStoreConnectJwt, fetchSalesReport } from './providers/apple.js';
 export { googleAccessToken, gaqlSearch, clearGoogleTokenCache } from './providers/google.js';

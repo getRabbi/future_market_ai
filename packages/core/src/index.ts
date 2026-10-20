@@ -14,3 +14,7 @@ import './modules/m02-customers/executors.js';
 export * as analytics from './modules/m08-analytics/index.js';
 export * as experimentsModule from './modules/m10-experiments/index.js';
 export * as audiences from './modules/m11-audiences/index.js';
+export * from './agents.js';
+export * as competitorsModule from './modules/m05-competitors/index.js';
+export * as ideas from './modules/m06-ideas/index.js';
+export * as brain from './modules/m07-brain/index.js';

@@ -1,3 +1,4 @@
+import type { ModelGateway } from '@futuregrow/agent-kernel';
 import type { ApiVersions, HttpClient, ProviderEndpoints } from '@futuregrow/connectors';
 import type { Db } from '@futuregrow/db';
 import type { Logger } from '@futuregrow/observability';
@@ -50,6 +51,8 @@ export interface CoreDeps {
   clock: Clock;
   /** Override sleeping in connectors (tests). */
   sleep?: (ms: number) => Promise<void>;
+  /** Registry-gated model gateway; absent when no provider is configured (B-003). */
+  models?: ModelGateway;
 }
 
 export interface Actor {
