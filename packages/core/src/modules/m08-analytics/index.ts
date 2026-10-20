@@ -98,6 +98,8 @@ const ParamsByKind: Record<AnalyticsKind, z.ZodType> = {
 
 export async function requestAnalytics(tx: Tx, tenantId: string, actor: Actor, kind: AnalyticsKind, rawParams: unknown, priority = 100) {
   if (!ANALYTICS_KINDS.includes(kind)) throw invalid(`unknown analytics kind ${kind}`);
+  // Backups are platform-wide; verification runs as the scheduled backup job, never per tenant.
+  if (kind === 'backup_verification') throw invalid('backup verification is a platform operation (python -m futuregrow_analytics.backup verify), not a tenant request');
   const params = ParamsByKind[kind].parse(rawParams) as Record<string, unknown>;
   const [row] = await tx.insert(analyticsRequests).values({ tenantId, kind, params, priority, requestedBy: actorRef(actor) }).returning();
   await record(tx, tenantId, actor, 'analytics.request.queued', { type: 'analytics_request', id: row!.id }, { kind });

@@ -498,3 +498,24 @@ export const costLedger = pgTable('cost_ledger', {
   oneOf('cost_ledger_category_chk', t.category, ['llm', 'embedding', 'media_render', 'api', 'analytics', 'storage']),
   index('cost_ledger_tenant_time_idx').on(t.tenantId, t.occurredAt),
 ]);
+
+/**
+ * Platform backups and their verification (M24 backup/restore). Not tenant-scoped: only the
+ * owner (system) role reads or writes it; the analytics job records every run.
+ */
+export const backupRuns = pgTable('backup_runs', {
+  id: pk(),
+  kind: text('kind').notNull(),
+  status: text('status').notNull(),
+  objectKey: text('object_key'),
+  archiveSha256: text('archive_sha256'),
+  bytes: bigint('bytes', { mode: 'number' }),
+  tableCounts: json<Record<string, number>>('table_counts').notNull().default({}),
+  details: json<Record<string, unknown>>('details').notNull().default({}),
+  startedAt: ts('started_at').notNull(),
+  finishedAt: ts('finished_at').notNull(),
+}, (t) => [
+  index('backup_runs_kind_time_idx').on(t.kind, t.finishedAt),
+  oneOf('backup_runs_kind_chk', t.kind, ['backup', 'verification', 'restore_drill']),
+  oneOf('backup_runs_status_chk', t.status, ['succeeded', 'failed']),
+]);

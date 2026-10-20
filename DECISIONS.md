@@ -149,3 +149,9 @@ Each decision lists: context → decision → consequences. `[U]` marks values t
 
 - **Context:** On Windows, `initdb` defaults to the WIN1252 code page, which rejected non-ASCII text (e.g. "→" in alert messages) that production (UTF-8) accepts.
 - **Decision:** Test and dev clusters are created with `--encoding=UTF8 --locale=C` and databases with `encoding 'UTF8' template template0`, matching managed Postgres.
+
+## D-030 — Encrypted logical backups with verification and restore drills
+
+- **Context:** The tech stack assigns backup verification to the analytics job and backups to R2. The Northflank Sandbox Postgres addon's native backup capabilities are tier-dependent `[U]`, and no `pg_dump` binary ships with the runtime images.
+- **Decision:** `python -m futuregrow_analytics.backup create` exports every public table from one `REPEATABLE READ, READ ONLY` snapshot via `COPY … (FORMAT csv, HEADER)` (generated columns excluded), gzip + AES-256-GCM per table (key `FG_BACKUP_KEY`, AAD binds archive key and table), into a tar with a plaintext manifest of migration hashes, row counts and member hashes; archive + sidecar manifest go to R2 (SigV4 implemented in Python and cross-checked against the AWS vector and aws4fetch). `verify` checks hashes, decrypts and counts every member; `verify --restore-into` performs a restore drill into an empty database migrated by the same release (user triggers disabled during load, FK order, sequences advanced, migration-owned reference tables skipped), and every run is recorded in the platform-only `backup_runs` table. `backup_verification` is not a tenant analytics request.
+- **Consequence:** Restores need the same migrations and an empty target; the backup key must be stored separately from R2 credentials (losing it makes backups unreadable). Managed addon backups, where available, remain the primary point-in-time mechanism; these logical backups are the provider-independent copy.
