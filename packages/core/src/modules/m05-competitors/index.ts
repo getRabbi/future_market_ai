@@ -1,23 +1,12 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
 import { PROMPTS, untrustedBlock } from '@futuregrow/agent-kernel';
-import { type PublicFetchResult, diffLines, extractPage, parseRobots, publicFetch } from '@futuregrow/connectors';
-import {
-  type DbOrTx,
-  type Tx,
-  competitorObservations,
-  competitorSnapshots,
-  competitorSources,
-  competitors,
-  kgEntities,
-  reaJobs,
-  withTenant,
-  sequential,
-} from '@futuregrow/db';
+import { diffLines, extractPage, type PublicFetchResult, parseRobots, publicFetch } from '@futuregrow/connectors';
+import { competitorObservations, competitorSnapshots, competitorSources, competitors, type DbOrTx, kgEntities, reaJobs, sequential, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
 import { runAgent } from '../../agents.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, normalizeText, record, requireMfa, requireRole } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 
@@ -34,7 +23,11 @@ export async function addCompetitor(tx: Tx, tenantId: string, actor: Actor, inpu
   requireRole(actor, ['owner', 'admin', 'growth_operator', 'analyst'], 'adding competitors');
   const domains = [...new Set(input.domains.map((d) => d.toLowerCase().trim()))];
   if (!domains.length || domains.some((d) => !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d))) throw invalid('competitor domains must be bare hostnames');
-  const [row] = await tx.insert(competitors).values({ tenantId, name: input.name.trim(), domains, notes: input.notes ?? null }).onConflictDoNothing().returning();
+  const [row] = await tx
+    .insert(competitors)
+    .values({ tenantId, name: input.name.trim(), domains, notes: input.notes ?? null })
+    .onConflictDoNothing()
+    .returning();
   if (!row) throw conflict('competitor already exists');
   await audit(tx, tenantId, actor, 'competitor.competitor.added', { type: 'competitor', id: row.id }, { domains });
   return row;
@@ -45,7 +38,12 @@ export const SourceSchema = z.object({
   url: z.string().url(),
   kind: z.enum(['pricing', 'features', 'changelog', 'docs', 'app_listing', 'ad_library', 'press', 'other']),
   lawfulBasisNote: z.string().min(10).max(2000),
-  crawlIntervalHours: z.number().int().min(6).max(24 * 30).default(24),
+  crawlIntervalHours: z
+    .number()
+    .int()
+    .min(6)
+    .max(24 * 30)
+    .default(24),
 });
 
 export async function proposeSource(tx: Tx, tenantId: string, actor: Actor, raw: unknown) {
@@ -59,7 +57,11 @@ export async function proposeSource(tx: Tx, tenantId: string, actor: Actor, raw:
   if (!c.domains.some((d) => host === d || host.endsWith(`.${d}`)) && input.kind !== 'app_listing' && input.kind !== 'ad_library') {
     throw invalid(`URL host ${host} is not one of the competitor's domains`);
   }
-  const [row] = await tx.insert(competitorSources).values({ tenantId, ...input, url: u.toString() }).onConflictDoNothing().returning();
+  const [row] = await tx
+    .insert(competitorSources)
+    .values({ tenantId, ...input, url: u.toString() })
+    .onConflictDoNothing()
+    .returning();
   if (!row) throw conflict('source already registered');
   await audit(tx, tenantId, actor, 'competitor.source.proposed', { type: 'competitor_source', id: row.id }, { url: row.url, kind: row.kind });
   return row;
@@ -283,7 +285,10 @@ export async function extractObservationsWithModel(deps: CoreDeps, tenantId: str
 
 /** Features competitors publicly list that do not match an active fact about our own product. [I] */
 export async function featureGaps(tx: DbOrTx, competitorId?: string) {
-  const ours = await tx.select({ name: kgEntities.name }).from(kgEntities).where(and(eq(kgEntities.status, 'active'), sql`${kgEntities.kind} in ('feature','integration')`));
+  const ours = await tx
+    .select({ name: kgEntities.name })
+    .from(kgEntities)
+    .where(and(eq(kgEntities.status, 'active'), sql`${kgEntities.kind} in ('feature','integration')`));
   const ourTokens = ours.map((o) => new Set(normalizeText(o.name).split(' ')));
   const snaps = await tx.execute<{ competitor_id: string; name: string; headings: { text: string }[]; evidence_id: string }>(sql`
     select distinct on (s.source_id) cs.competitor_id, c.name, s.extracted->'headings' as headings, s.evidence_id
@@ -293,7 +298,11 @@ export async function featureGaps(tx: DbOrTx, competitorId?: string) {
   const gaps: { competitorId: string; competitor: string; feature: string; evidenceId: string; flag: 'I' }[] = [];
   for (const row of snaps.rows) {
     for (const h of row.headings ?? []) {
-      const t = new Set(normalizeText(h.text).split(' ').filter((w) => w.length > 2));
+      const t = new Set(
+        normalizeText(h.text)
+          .split(' ')
+          .filter((w) => w.length > 2),
+      );
       if (t.size === 0) continue;
       const covered = ourTokens.some((o) => [...t].filter((w) => o.has(w)).length / t.size >= 0.6);
       if (!covered) gaps.push({ competitorId: row.competitor_id, competitor: row.name, feature: h.text, evidenceId: row.evidence_id, flag: 'I' });

@@ -1,8 +1,8 @@
-import { and, eq } from 'drizzle-orm';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { customers, experimentsModule } from '@futuregrow/core';
 import { ingestionKeys, withSystem, withTenant } from '@futuregrow/db';
 import { FgError, sha256Hex } from '@futuregrow/observability';
+import { and, eq } from 'drizzle-orm';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ApiContext } from '../http.js';
 import { registerPublicChannelRoutes } from './public-channel-routes.js';
 
@@ -12,7 +12,10 @@ export async function resolveIngestionKey(ctx: ApiContext, req: FastifyRequest):
   const raw = typeof auth === 'string' && auth.startsWith('Bearer fgk_sk_') ? auth.slice(7) : typeof writeKey === 'string' ? writeKey : null;
   if (!raw) throw new FgError('UNAUTHENTICATED', 'ingestion key required', 401);
   const [key] = await withSystem(ctx.deps.db, 'system:ingest', (tx) =>
-    tx.select().from(ingestionKeys).where(and(eq(ingestionKeys.keyHash, sha256Hex(raw)), eq(ingestionKeys.status, 'active'))),
+    tx
+      .select()
+      .from(ingestionKeys)
+      .where(and(eq(ingestionKeys.keyHash, sha256Hex(raw)), eq(ingestionKeys.status, 'active'))),
   );
   if (!key) throw new FgError('UNAUTHENTICATED', 'invalid ingestion key', 401);
   if (key.kind === 'browser') {
@@ -54,9 +57,7 @@ export function registerPublicRoutes(app: FastifyInstance, ctx: ApiContext): voi
   app.post('/ingest/v1/experiments/:id/assign', { config: { public: true } }, async (req) => {
     const { tenantId } = await serverKey(req);
     const b = expBody(req);
-    return withTenant(ctx.deps.db, { tenantId, actor: 'sdk:experiments' }, (tx) =>
-      experimentsModule.assign(tx, expId(req), b.unitId as string, { ...(typeof b.country === 'string' ? { country: b.country } : {}), ...(typeof b.locale === 'string' ? { locale: b.locale } : {}) }),
-    );
+    return withTenant(ctx.deps.db, { tenantId, actor: 'sdk:experiments' }, (tx) => experimentsModule.assign(tx, expId(req), b.unitId as string, { ...(typeof b.country === 'string' ? { country: b.country } : {}), ...(typeof b.locale === 'string' ? { locale: b.locale } : {}) }));
   });
   app.post('/ingest/v1/experiments/:id/exposures', { config: { public: true } }, async (req, reply) => {
     const { tenantId } = await serverKey(req);

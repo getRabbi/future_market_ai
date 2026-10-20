@@ -63,7 +63,13 @@ function KillSwitches() {
         </div>
         <div className="field">
           <label htmlFor="ks-target">Target</label>
-          <input id="ks-target" value={targetRef} onChange={(e) => setTargetRef(e.target.value)} disabled={scope === 'tenant'} placeholder={scope === 'connector' ? 'connection id or provider' : scope === 'object' ? 'campaign / post / journey id' : scope === 'model' ? 'model id' : scope === 'agent' ? 'agent id' : 'whole tenant'} />
+          <input
+            id="ks-target"
+            value={targetRef}
+            onChange={(e) => setTargetRef(e.target.value)}
+            disabled={scope === 'tenant'}
+            placeholder={scope === 'connector' ? 'connection id or provider' : scope === 'object' ? 'campaign / post / journey id' : scope === 'model' ? 'model id' : scope === 'agent' ? 'agent id' : 'whole tenant'}
+          />
         </div>
         <div className="field">
           <label htmlFor="ks-reason">Reason</label>
@@ -79,10 +85,20 @@ function KillSwitches() {
       <DataTable
         rows={(list.data ?? []) as unknown as Record<string, unknown>[]}
         columns={['scope', 'targetRef', 'engaged', 'reason', 'engagedBy', 'engagedAt', 'releasedAt']}
-        actions={(r) => (r.engaged ? <button type="button" onClick={() => void release(String(r.id))}>Release</button> : null)}
+        actions={(r) =>
+          r.engaged ? (
+            <button type="button" onClick={() => void release(String(r.id))}>
+              Release
+            </button>
+          ) : null
+        }
         empty="No kill switches have been engaged."
       />
-      {engaged.length ? <p className="small"><Badge value="critical" /> {engaged.length} engaged</p> : null}
+      {engaged.length ? (
+        <p className="small">
+          <Badge value="critical" /> {engaged.length} engaged
+        </p>
+      ) : null}
     </section>
   );
 }

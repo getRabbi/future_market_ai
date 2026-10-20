@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ACTION_TRANSITIONS } from '@futuregrow/contracts';
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { runMigrations as runGraphileMigrations } from 'graphile-worker';
-import { ACTION_TRANSITIONS } from '@futuregrow/contracts';
 import { createDb } from './client.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));

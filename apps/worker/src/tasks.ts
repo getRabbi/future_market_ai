@@ -1,8 +1,8 @@
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
-import type { JobHelpers, Task, TaskList } from 'graphile-worker';
 import { type CoreDeps, connectionsModule, evidence, execution, systemActor, webhooks, wireEventHandlers } from '@futuregrow/core';
 import { actionRequests, connections, organization, outboxEvents, withSystem, withTenant } from '@futuregrow/db';
 import { EventBus, rowToEnvelope } from '@futuregrow/events';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import type { JobHelpers, Task, TaskList } from 'graphile-worker';
 
 export type TaskFactory = (deps: CoreDeps) => Record<string, Task>;
 const extraTaskFactories: TaskFactory[] = [];
@@ -36,14 +36,21 @@ export function buildTaskList(deps: CoreDeps): TaskList {
       const { eventId } = payload as { eventId: string };
       const row = await withSystem(deps.db, 'system:dispatcher', async (tx) => {
         const [r] = await tx.select().from(outboxEvents).where(eq(outboxEvents.id, eventId));
-        if (r) await tx.update(outboxEvents).set({ dispatchAttempts: sql`${outboxEvents.dispatchAttempts} + 1` }).where(eq(outboxEvents.id, eventId));
+        if (r)
+          await tx
+            .update(outboxEvents)
+            .set({ dispatchAttempts: sql`${outboxEvents.dispatchAttempts} + 1` })
+            .where(eq(outboxEvents.id, eventId));
         return r;
       });
       if (!row || row.dispatchedAt) return;
       const failures = await bus.dispatch(rowToEnvelope(row));
       if (failures.length) {
         await withSystem(deps.db, 'system:dispatcher', (tx) =>
-          tx.update(outboxEvents).set({ lastError: JSON.stringify(failures).slice(0, 4000) }).where(eq(outboxEvents.id, eventId)),
+          tx
+            .update(outboxEvents)
+            .set({ lastError: JSON.stringify(failures).slice(0, 4000) })
+            .where(eq(outboxEvents.id, eventId)),
         );
         throw new Error(`event ${eventId} handlers failed: ${failures.map((f) => f.handler).join(', ')}`);
       }
@@ -97,7 +104,10 @@ export function buildTaskList(deps: CoreDeps): TaskList {
 
     connector_health: async () => {
       const conns = await withSystem(deps.db, 'system:health', (tx) =>
-        tx.select({ id: connections.id, tenantId: connections.tenantId }).from(connections).where(inArray(connections.status, ['active', 'read_only'])),
+        tx
+          .select({ id: connections.id, tenantId: connections.tenantId })
+          .from(connections)
+          .where(inArray(connections.status, ['active', 'read_only'])),
       );
       for (const c of conns) {
         try {
@@ -117,9 +127,4 @@ export function buildTaskList(deps: CoreDeps): TaskList {
 }
 
 /** Graphile crontab (UTC). Heavier jobs run on the Northflank analytics/media jobs instead. */
-export const CRONTAB = [
-  '*/5 * * * * watchdog',
-  '7 * * * * evidence_sweep',
-  '17 * * * * connector_health',
-  '23 3 * * * webhook_retention',
-].join('\n');
+export const CRONTAB = ['*/5 * * * * watchdog', '7 * * * * evidence_sweep', '17 * * * * connector_health', '23 3 * * * webhook_retention'].join('\n');

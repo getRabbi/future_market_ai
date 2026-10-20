@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/dist
+.data
+.tools
+.astro
+**/.venv
+**/__pycache__
+**/.pytest_cache
+coverage
+*.log
+.env
+.env.*
+!.env.example
+.wrangler

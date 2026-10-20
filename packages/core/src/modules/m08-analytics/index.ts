@@ -1,24 +1,9 @@
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { ANALYTICS_KINDS, type AnalyticsKind } from '@futuregrow/contracts';
-import {
-  type DbOrTx,
-  type Tx,
-  analyticsRequests,
-  evidenceRecords,
-  forecastPoints,
-  forecastRuns,
-  metricPoints,
-  metricSeries,
-  mmmRuns,
-  propensityModels,
-  propensityScores,
-  topicClusters,
-  trends,
-  withTenant,
-} from '@futuregrow/db';
+import { analyticsRequests, type DbOrTx, evidenceRecords, forecastPoints, forecastRuns, metricPoints, metricSeries, mmmRuns, propensityModels, propensityScores, type Tx, topicClusters, trends, withTenant } from '@futuregrow/db';
 import { invalid, notFound } from '@futuregrow/observability';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { registerEventHandlers } from '../../event-handlers.js';
 import { audit, record } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
@@ -28,7 +13,11 @@ import { admitInternalEvidence } from '../m01-evidence/index.js';
 /* ------------------------------------------------------------------ */
 
 export const SeriesInputSchema = z.object({
-  key: z.string().min(1).max(200).regex(/^[a-z0-9][a-z0-9._:-]*$/),
+  key: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-z0-9][a-z0-9._:-]*$/),
   name: z.string().min(1).max(300),
   unit: z.string().min(1).max(50),
   granularity: z.enum(['hour', 'day', 'week', 'month']),
@@ -52,7 +41,10 @@ export async function upsertSeries(tx: Tx, tenantId: string, actor: Actor, raw: 
   return row!;
 }
 
-export const PointsSchema = z.array(z.object({ ts: z.string().datetime({ offset: true }), value: z.number().finite(), evidenceId: z.string().uuid().nullable().optional() })).min(1).max(20000);
+export const PointsSchema = z
+  .array(z.object({ ts: z.string().datetime({ offset: true }), value: z.number().finite(), evidenceId: z.string().uuid().nullable().optional() }))
+  .min(1)
+  .max(20000);
 
 export async function appendPoints(tx: Tx, tenantId: string, seriesId: string, raw: unknown) {
   const pts = PointsSchema.parse(raw);
@@ -60,7 +52,10 @@ export async function appendPoints(tx: Tx, tenantId: string, seriesId: string, r
   if (!s) throw notFound('series');
   for (let i = 0; i < pts.length; i += 500) {
     const chunk = pts.slice(i, i + 500).map((p) => ({ tenantId, seriesId, ts: new Date(p.ts), value: p.value, evidenceId: p.evidenceId ?? null }));
-    await tx.insert(metricPoints).values(chunk).onConflictDoUpdate({ target: [metricPoints.seriesId, metricPoints.ts], set: { value: sql`excluded.value`, evidenceId: sql`excluded.evidence_id`, ingestedAt: new Date() } });
+    await tx
+      .insert(metricPoints)
+      .values(chunk)
+      .onConflictDoUpdate({ target: [metricPoints.seriesId, metricPoints.ts], set: { value: sql`excluded.value`, evidenceId: sql`excluded.evidence_id`, ingestedAt: new Date() } });
   }
   return { seriesId, upserted: pts.length };
 }
@@ -101,7 +96,10 @@ export async function requestAnalytics(tx: Tx, tenantId: string, actor: Actor, k
   // Backups are platform-wide; verification runs as the scheduled backup job, never per tenant.
   if (kind === 'backup_verification') throw invalid('backup verification is a platform operation (python -m futuregrow_analytics.backup verify), not a tenant request');
   const params = ParamsByKind[kind].parse(rawParams) as Record<string, unknown>;
-  const [row] = await tx.insert(analyticsRequests).values({ tenantId, kind, params, priority, requestedBy: actorRef(actor) }).returning();
+  const [row] = await tx
+    .insert(analyticsRequests)
+    .values({ tenantId, kind, params, priority, requestedBy: actorRef(actor) })
+    .returning();
   await record(tx, tenantId, actor, 'analytics.request.queued', { type: 'analytics_request', id: row!.id }, { kind });
   return row!;
 }

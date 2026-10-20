@@ -1,8 +1,8 @@
-import { generateKeyPairSync, verify as cryptoVerify, createPublicKey } from 'node:crypto';
+import { createPublicKey, verify as cryptoVerify, generateKeyPairSync } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { appStoreConnectJwt, EXECUTORS, fetchSalesReport, READ_CONNECTORS } from '../src/index.js';
 import { clearGoogleTokenCache } from '../src/providers/google.js';
-import { EXECUTORS, READ_CONNECTORS, appStoreConnectJwt, fetchSalesReport } from '../src/index.js';
 import { FixtureServer, makeCtx, meta } from './helpers.js';
 
 const server = new FixtureServer();
@@ -13,12 +13,13 @@ beforeEach(() => {
   clearGoogleTokenCache();
 });
 
-const exec = (t: string) => EXECUTORS[t] as unknown as {
-  execute: (c: unknown, p: unknown, m: unknown) => Promise<any>;
-  verify: (c: unknown, p: unknown, r: unknown) => Promise<any>;
-  rollback?: (c: unknown, p: unknown, r: unknown, b: unknown) => Promise<any>;
-  verifyRollback?: (c: unknown, p: unknown, r: unknown, b: unknown) => Promise<any>;
-};
+const exec = (t: string) =>
+  EXECUTORS[t] as unknown as {
+    execute: (c: unknown, p: unknown, m: unknown) => Promise<any>;
+    verify: (c: unknown, p: unknown, r: unknown) => Promise<any>;
+    rollback?: (c: unknown, p: unknown, r: unknown, b: unknown) => Promise<any>;
+    verifyRollback?: (c: unknown, p: unknown, r: unknown, b: unknown) => Promise<any>;
+  };
 
 describe('Meta Graph API', () => {
   const ctx = () => makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN', appSecret: 'APP_SECRET' });
@@ -26,11 +27,7 @@ describe('Meta Graph API', () => {
   it('publishes a page post, verifies by readback, and rolls back with delete', async () => {
     server.on('POST', '/v26.0/123/feed', { json: { id: '123_456' }, headers: { 'x-fb-trace-id': 'trace-1' } });
     let deleted = false;
-    server.on('GET', '/v26.0/123_456', () =>
-      deleted
-        ? { status: 400, json: { error: { code: 100, message: 'Unsupported get request' } } }
-        : { json: { id: '123_456', message: 'Hello', is_published: true, permalink_url: 'https://facebook.com/123_456' } },
-    );
+    server.on('GET', '/v26.0/123_456', () => (deleted ? { status: 400, json: { error: { code: 100, message: 'Unsupported get request' } } } : { json: { id: '123_456', message: 'Hello', is_published: true, permalink_url: 'https://facebook.com/123_456' } }));
     server.on('DELETE', '/v26.0/123_456', () => {
       deleted = true;
       return { json: { success: true } };
@@ -109,7 +106,9 @@ describe('Meta Graph API', () => {
 
   it('maps invalid tokens (code 190) to auth errors', async () => {
     server.on('POST', '/v26.0/123/feed', { status: 400, json: { error: { code: 190, message: 'Error validating access token' } } });
-    const err = await exec('social.facebook.publish_post').execute(ctx(), { pageId: '123', message: 'x' }, meta).catch((x) => x);
+    const err = await exec('social.facebook.publish_post')
+      .execute(ctx(), { pageId: '123', message: 'x' }, meta)
+      .catch((x) => x);
     expect(err.isAuthError).toBe(true);
   });
 
@@ -179,14 +178,18 @@ describe('Google Ads API', () => {
   it('refuses when the account currency differs (nothing mutated)', async () => {
     const state = { micros: 30_000_000, currency: 'EUR' };
     mountGoogle(state);
-    const err = await exec('ads.google.update_campaign_budget').execute(ctx(), params, meta).catch((x) => x);
+    const err = await exec('ads.google.update_campaign_budget')
+      .execute(ctx(), params, meta)
+      .catch((x) => x);
     expect(err.phase).toBe('rejected');
     expect(server.find('POST', '/v26/customers/1234567890/campaignBudgets:mutate')).toHaveLength(0);
   });
 
   it('a revoked refresh token is an auth failure before anything is sent', async () => {
     server.on('POST', '/oauth/token', { status: 400, json: { error: 'invalid_grant' } });
-    const err = await exec('ads.google.update_campaign_budget').execute(ctx(), params, meta).catch((x) => x);
+    const err = await exec('ads.google.update_campaign_budget')
+      .execute(ctx(), params, meta)
+      .catch((x) => x);
     expect(err.isAuthError).toBe(true);
     expect(err.phase).toBe('before_send');
   });
@@ -229,7 +232,9 @@ describe('TikTok Content Posting API', () => {
     server.on('POST', '/v2/post/publish/creator_info/query/', {
       json: { data: { privacy_level_options: ['SELF_ONLY'], comment_disabled: false, duet_disabled: false, stitch_disabled: false }, error: { code: 'ok' } },
     });
-    const err = await exec('social.tiktok.publish_video').execute(ctx(), { ...p, privacyLevel: 'PUBLIC_TO_EVERYONE' }, meta).catch((x) => x);
+    const err = await exec('social.tiktok.publish_video')
+      .execute(ctx(), { ...p, privacyLevel: 'PUBLIC_TO_EVERYONE' }, meta)
+      .catch((x) => x);
     expect(err.phase).toBe('rejected');
     expect(server.find('POST', '/v2/post/publish/video/init/')).toHaveLength(0);
   });
@@ -268,9 +273,7 @@ describe('Shopify Admin GraphQL', () => {
         return {
           json: {
             data: {
-              codeDiscountNodeByCode: created
-                ? { id: 'gid://shopify/DiscountCodeNode/1', codeDiscount: { title: 'Fall 10', status, usageLimit: 100, codes: { nodes: [{ code: 'FALL10' }] }, customerGets: { value: { percentage: 0.1 } } } }
-                : null,
+              codeDiscountNodeByCode: created ? { id: 'gid://shopify/DiscountCodeNode/1', codeDiscount: { title: 'Fall 10', status, usageLimit: 100, codes: { nodes: [{ code: 'FALL10' }] }, customerGets: { value: { percentage: 0.1 } } } } : null,
             },
           },
         };
@@ -301,9 +304,7 @@ describe('Shopify Admin GraphQL', () => {
   it('userErrors are rejections', async () => {
     const ctx = makeCtx(server, { provider: 'shopify', shopDomain: 'demo.myshopify.com', accessToken: 'shpat' });
     server.on('POST', '/admin/api/2026-10/graphql.json', (req) =>
-      (req.json as { query: string }).query.includes('codeDiscountNodeByCode')
-        ? { json: { data: { codeDiscountNodeByCode: null } } }
-        : { json: { data: { discountCodeBasicCreate: { codeDiscountNode: null, userErrors: [{ message: 'Code must be unique' }] } } } },
+      (req.json as { query: string }).query.includes('codeDiscountNodeByCode') ? { json: { data: { codeDiscountNodeByCode: null } } } : { json: { data: { discountCodeBasicCreate: { codeDiscountNode: null, userErrors: [{ message: 'Code must be unique' }] } } } },
     );
     const err = await exec('commerce.shopify.create_discount')
       .execute(ctx, { title: 't', code: 'ABCD', percentage: 0.1, startsAt: '2026-10-20T00:00:00Z', endsAt: null, usageLimit: null }, meta)

@@ -1,8 +1,8 @@
-import { run } from 'graphile-worker';
 import { createRuntime, loadEnv } from '@futuregrow/runtime';
-import { CRONTAB, buildTaskList } from './tasks.js';
-import { MODULE_CRONTAB } from './register-modules.js';
+import { run } from 'graphile-worker';
 import { CHANNEL_CRONTAB } from './register-channels.js';
+import { MODULE_CRONTAB } from './register-modules.js';
+import { buildTaskList, CRONTAB } from './tasks.js';
 
 const env = loadEnv();
 const runtime = await createRuntime(env, 'worker');

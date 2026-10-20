@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { eq } from 'drizzle-orm';
 import type { ProviderCredentials } from '@futuregrow/connectors';
-import { type Tx, connectionSecrets } from '@futuregrow/db';
+import { connectionSecrets, type Tx } from '@futuregrow/db';
 import { FgError } from '@futuregrow/observability';
+import { eq } from 'drizzle-orm';
 import type { CoreConfig, SecretKey } from './deps.js';
 
 /**
@@ -50,12 +50,7 @@ export function encryptCredentials(config: CoreConfig, tenantId: string, connect
   };
 }
 
-export function decryptCredentials(
-  config: CoreConfig,
-  tenantId: string,
-  connectionId: string,
-  row: { ciphertext: string; iv: string; authTag: string; keyVersion: number },
-): ProviderCredentials {
+export function decryptCredentials(config: CoreConfig, tenantId: string, connectionId: string, row: { ciphertext: string; iv: string; authTag: string; keyVersion: number }): ProviderCredentials {
   const decipher = createDecipheriv('aes-256-gcm', keyFor(config, row.keyVersion), Buffer.from(row.iv, 'base64'));
   decipher.setAAD(aad(tenantId, connectionId));
   decipher.setAuthTag(Buffer.from(row.authTag, 'base64'));
@@ -67,14 +62,7 @@ export function decryptCredentials(
   }
 }
 
-export async function storeCredentials(
-  tx: Tx,
-  config: CoreConfig,
-  tenantId: string,
-  connectionId: string,
-  creds: ProviderCredentials,
-  expiresAt: Date | null,
-): Promise<void> {
+export async function storeCredentials(tx: Tx, config: CoreConfig, tenantId: string, connectionId: string, creds: ProviderCredentials, expiresAt: Date | null): Promise<void> {
   const enc = encryptCredentials(config, tenantId, connectionId, creds);
   await tx
     .insert(connectionSecrets)

@@ -1,8 +1,8 @@
+import type { Actor, CoreDeps, knowledge } from '@futuregrow/core';
+import { authUser, beginIdempotent, completeIdempotent, DbError, idempotencyKeys, isValidIdempotencyKey, member, withSystem, withTenant } from '@futuregrow/db';
+import { FgError, sha256Canonical } from '@futuregrow/observability';
 import { and, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { type Actor, type CoreDeps, type knowledge } from '@futuregrow/core';
-import { DbError, authUser, beginIdempotent, completeIdempotent, idempotencyKeys, isValidIdempotencyKey, member, withSystem, withTenant } from '@futuregrow/db';
-import { FgError, sha256Canonical } from '@futuregrow/observability';
 import { ZodError } from 'zod';
 import type { Auth } from './auth.js';
 
@@ -28,7 +28,7 @@ export function toWebRequest(req: FastifyRequest): Request {
   const headers = new Headers();
   for (const [k, v] of Object.entries(req.headers)) {
     if (v === undefined) continue;
-    if (Array.isArray(v)) v.forEach((x) => headers.append(k, x));
+    if (Array.isArray(v)) for (const x of v) headers.append(k, x);
     else headers.set(k, String(v));
   }
   const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
@@ -56,7 +56,10 @@ export async function resolveActor(ctx: ApiContext, req: FastifyRequest): Promis
   const tenantId = (typeof headerTenant === 'string' && headerTenant) || (session.session as { activeOrganizationId?: string | null }).activeOrganizationId;
   if (!tenantId) throw new FgError('NO_TENANT', 'select an organization (x-fg-tenant header or active organization)', 400);
   const found = await withSystem(ctx.deps.db, `user:${session.user.id}`, async (tx) => {
-    const [m] = await tx.select().from(member).where(and(eq(member.organizationId, tenantId), eq(member.userId, session.user.id)));
+    const [m] = await tx
+      .select()
+      .from(member)
+      .where(and(eq(member.organizationId, tenantId), eq(member.userId, session.user.id)));
     const [u] = await tx.select({ twoFactorEnabled: authUser.twoFactorEnabled }).from(authUser).where(eq(authUser.id, session.user.id));
     return { m, u };
   });
@@ -66,7 +69,10 @@ export async function resolveActor(ctx: ApiContext, req: FastifyRequest): Promis
     actor: {
       type: 'user',
       id: session.user.id,
-      roles: found.m.role.split(',').map((r) => r.trim()).filter(Boolean),
+      roles: found.m.role
+        .split(',')
+        .map((r) => r.trim())
+        .filter(Boolean),
       // Better Auth only issues a session after the second factor when 2FA is enabled.
       mfaVerified: found.u?.twoFactorEnabled === true,
     },
@@ -100,15 +106,7 @@ export function registerTenantHooks(app: FastifyInstance, ctx: ApiContext): void
         const taken = await tx
           .update(idempotencyKeys)
           .set({ createdAt: new Date() })
-          .where(
-            and(
-              eq(idempotencyKeys.tenantId, tenantId),
-              eq(idempotencyKeys.scope, 'api'),
-              eq(idempotencyKeys.key, key),
-              eq(idempotencyKeys.status, 'in_progress'),
-              sql`${idempotencyKeys.createdAt} < ${new Date(Date.now() - STALE_IN_PROGRESS_MS)}`,
-            ),
-          )
+          .where(and(eq(idempotencyKeys.tenantId, tenantId), eq(idempotencyKeys.scope, 'api'), eq(idempotencyKeys.key, key), eq(idempotencyKeys.status, 'in_progress'), sql`${idempotencyKeys.createdAt} < ${new Date(Date.now() - STALE_IN_PROGRESS_MS)}`))
           .returning({ key: idempotencyKeys.key });
         if (taken.length) return { state: 'new' as const };
       }
@@ -151,8 +149,7 @@ export function registerTenantHooks(app: FastifyInstance, ctx: ApiContext): void
 export function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((rawErr, req, reply) => {
     const err = rawErr as Error;
-    const send = (status: number, code: string, message: string, details?: unknown) =>
-      reply.status(status).send({ error: { code, message, ...(details ? { details } : {}) } });
+    const send = (status: number, code: string, message: string, details?: unknown) => reply.status(status).send({ error: { code, message, ...(details ? { details } : {}) } });
     if (err instanceof FgError) return send(err.httpStatus, err.code, err.message, err.details);
     if (err instanceof ZodError) return send(422, 'VALIDATION_FAILED', 'request validation failed', err.issues);
     if ((err as { validation?: unknown }).validation) return send(422, 'VALIDATION_FAILED', err.message, (err as unknown as { validation: unknown }).validation);

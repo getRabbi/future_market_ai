@@ -1,15 +1,14 @@
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
 import { DEFAULT_API_VERSIONS, DEFAULT_ENDPOINTS, HttpClient } from '../../packages/connectors/src/index.js';
-import type { CoreConfig, CoreDeps, JobOptions, JobQueue } from '../../packages/core/src/deps.js';
-import { authUser, member, organization } from '../../packages/db/src/index.js';
+import type { Actor, CoreConfig, CoreDeps, JobOptions, JobQueue } from '../../packages/core/src/deps.js';
 import { syncCapabilityRegistry } from '../../packages/core/src/modules/m24-governance/index.js';
+import { authUser, member, organization } from '../../packages/db/src/index.js';
 import { createLogger } from '../../packages/observability/src/index.js';
 import { FilesystemStore } from '../../packages/storage/src/index.js';
-import { type TestDatabase, createTestDatabase } from './db.js';
-import type { Actor } from '../../packages/core/src/deps.js';
+import { createTestDatabase, type TestDatabase } from './db.js';
 
 export class RecordingQueue implements JobQueue {
   readonly jobs: { task: string; payload: Record<string, unknown>; opts: JobOptions | undefined }[] = [];

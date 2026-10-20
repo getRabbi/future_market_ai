@@ -1,6 +1,6 @@
-import { desc, eq, inArray } from 'drizzle-orm';
-import { type DbOrTx, type Tx, artifactLicenses, evidenceRecords, protectedIdentities, syntheticPersonas } from '@futuregrow/db';
+import { artifactLicenses, type DbOrTx, evidenceRecords, protectedIdentities, syntheticPersonas, type Tx } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef } from '../../deps.js';
 import { audit, normalizeText, record, requireMfa, requireRole } from '../../util.js';
@@ -22,7 +22,11 @@ export function personaContentCheck(text: string): { passed: boolean; findings: 
 
 export async function addProtectedIdentity(tx: Tx, tenantId: string, actor: Actor, input: { name: string; reason: string }) {
   requireRole(actor, ['owner', 'admin', 'legal_approver'], 'maintaining protected identities');
-  const [row] = await tx.insert(protectedIdentities).values({ tenantId, name: input.name, normalizedName: normalizeText(input.name), reason: input.reason }).onConflictDoNothing().returning();
+  const [row] = await tx
+    .insert(protectedIdentities)
+    .values({ tenantId, name: input.name, normalizedName: normalizeText(input.name), reason: input.reason })
+    .onConflictDoNothing()
+    .returning();
   await audit(tx, tenantId, actor, 'persona.protected_identity.added', { type: 'protected_identity', id: row?.id ?? 'existing' }, { name: input.name });
   return row ?? null;
 }
@@ -41,10 +45,7 @@ export const PersonaSchema = z.object({
   disclosureCopy: z.string().min(10).max(300),
   platformDisclosures: z.record(z.string(), z.unknown()).default({}),
   contentRules: z.object({ noTestimonials: z.literal(true).default(true), noHumanExperienceClaims: z.literal(true).default(true), extra: z.array(z.string().max(300)).max(20).default([]) }).default({ noTestimonials: true, noHumanExperienceClaims: true, extra: [] }),
-  likeness: z.discriminatedUnion('origin', [
-    z.object({ origin: z.literal('original_synthetic'), attestation: z.string().min(20).max(2000) }),
-    z.object({ origin: z.literal('licensed_likeness'), consentEvidenceId: z.string().uuid(), rightsHolder: z.string().min(2).max(200), attestation: z.string().min(20).max(2000) }),
-  ]),
+  likeness: z.discriminatedUnion('origin', [z.object({ origin: z.literal('original_synthetic'), attestation: z.string().min(20).max(2000) }), z.object({ origin: z.literal('licensed_likeness'), consentEvidenceId: z.string().uuid(), rightsHolder: z.string().min(2).max(200), attestation: z.string().min(20).max(2000) })]),
   childPersona: z.boolean().default(false),
 });
 
@@ -100,7 +101,11 @@ export async function approvePersona(tx: Tx, tenantId: string, actor: Actor, id:
   const problems = (p.impersonationCheck as { problems?: string[] }).problems ?? [];
   if (problems.length) throw invalid(`persona has unresolved problems: ${problems.join('; ')}`);
   if (p.status === 'approved') throw conflict('persona already approved');
-  const [row] = await tx.update(syntheticPersonas).set({ status: 'approved', approvedBy: actorRef(actor), approvedAt: new Date() }).where(eq(syntheticPersonas.id, id)).returning();
+  const [row] = await tx
+    .update(syntheticPersonas)
+    .set({ status: 'approved', approvedBy: actorRef(actor), approvedAt: new Date() })
+    .where(eq(syntheticPersonas.id, id))
+    .returning();
   await record(tx, tenantId, actor, 'persona.persona.approved', { type: 'synthetic_persona', id }, {});
   return row!;
 }

@@ -1,6 +1,6 @@
-import { and, eq, lt, sql } from 'drizzle-orm';
-import { type Db, type Tx, connections, webhookInbox, withSystem, withTenant } from '@futuregrow/db';
+import { connections, type Db, type Tx, webhookInbox, withSystem, withTenant } from '@futuregrow/db';
 import { sha256Hex } from '@futuregrow/observability';
+import { and, eq, lt, sql } from 'drizzle-orm';
 import { type CoreDeps, systemActor } from '../deps.js';
 import { record } from '../util.js';
 
@@ -105,9 +105,7 @@ export async function processWebhook(deps: CoreDeps, inboxId: string): Promise<s
       .where(eq(webhookInbox.id, inboxId)),
   );
   if (row.resolvedTenantId && !error) {
-    await withTenant(deps.db, { tenantId: row.resolvedTenantId, actor: 'connector:webhook' }, (tx: Tx) =>
-      record(tx, row.resolvedTenantId!, systemActor('webhooks'), 'connector.webhook.received', { type: 'webhook', id: row.id }, { provider: row.provider, topic: row.topic, outcome }),
-    );
+    await withTenant(deps.db, { tenantId: row.resolvedTenantId, actor: 'connector:webhook' }, (tx: Tx) => record(tx, row.resolvedTenantId!, systemActor('webhooks'), 'connector.webhook.received', { type: 'webhook', id: row.id }, { provider: row.provider, topic: row.topic, outcome }));
   }
   if (error) throw new Error(`webhook ${inboxId} failed: ${error}`);
   return outcome;
@@ -127,8 +125,6 @@ export async function pendingWebhooks(db: Db, olderThanMs = 60_000): Promise<str
 }
 
 export async function webhookRetentionSweep(db: Db, retainDays: number): Promise<number> {
-  const res = await withSystem(db, 'system:webhooks', (tx) =>
-    tx.execute(sql`delete from webhook_inbox where received_at < now() - (${retainDays} || ' days')::interval and status in ('processed','ignored','rejected_signature') returning id`),
-  );
+  const res = await withSystem(db, 'system:webhooks', (tx) => tx.execute(sql`delete from webhook_inbox where received_at < now() - (${retainDays} || ' days')::interval and status in ('processed','ignored','rejected_signature') returning id`));
   return res.rows.length;
 }

@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ModelProvider, ProviderOutcome, StructuredRequest } from '@futuregrow/agent-kernel';
 import { PROMPTS } from '@futuregrow/agent-kernel';
 import { publicFetch } from '@futuregrow/connectors';
 import { agentRuns, competitorObservations, competitorSources, costLedger, forecastPoints, forecastRuns, growthDecisions, killSwitches, withTenant } from '@futuregrow/db';
-import { FixtureServer } from '../../../test/helpers/fixture-server.js';
+import { eq } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import { clearModelCache, createModelGateway } from '../src/agents.js';
 import { createConnection } from '../src/modules/connections.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
@@ -169,7 +169,15 @@ describe('M06 idea lab', () => {
 
   it('creates ideas with routes, rejects unsupported evidence and detects duplicates', async () => {
     const ev = await evidence();
-    const base = { title: 'Integration-first onboarding checklist', hypothesis: 'If trial teams connect an integration in week one, 30-day retention improves', mechanism: 'Earlier time-to-value through integrations', audience: 'new trial teams', targetMetric: 'kpi.retention_30d', evidenceIds: [ev.evidenceId], killCriteria: ['retention does not improve after 2 cohorts'] };
+    const base = {
+      title: 'Integration-first onboarding checklist',
+      hypothesis: 'If trial teams connect an integration in week one, 30-day retention improves',
+      mechanism: 'Earlier time-to-value through integrations',
+      audience: 'new trial teams',
+      targetMetric: 'kpi.retention_30d',
+      evidenceIds: [ev.evidenceId],
+      killCriteria: ['retention does not improve after 2 cohorts'],
+    };
     const a = await tx((t) => ideas.createIdea(t, h.deps, h.tenantId, h.users.operator, base, 'human'));
     expect(a).toMatchObject({ route: 'discovery_test', status: 'candidate' });
     const dup = await tx((t) => ideas.createIdea(t, h.deps, h.tenantId, h.users.operator, { ...base, title: 'Integration-first onboarding checklist v2' }, 'human'));
@@ -184,7 +192,17 @@ describe('M06 idea lab', () => {
       abstain: false,
       abstainReason: '',
       ideas: [
-        { title: 'Guided CSV import wizard', hypothesis: 'A guided import reduces failed imports and support load for new accounts', mechanism: 'Removes the main activation blocker seen in tickets', audience: 'accounts in their first week', targetMetric: 'kpi.activation', evidenceIds: [ev.evidenceId], cheapFirstTest: 'smoke_test', killCriteria: ['import failure rate unchanged'], risks: [] },
+        {
+          title: 'Guided CSV import wizard',
+          hypothesis: 'A guided import reduces failed imports and support load for new accounts',
+          mechanism: 'Removes the main activation blocker seen in tickets',
+          audience: 'accounts in their first week',
+          targetMetric: 'kpi.activation',
+          evidenceIds: [ev.evidenceId],
+          cheapFirstTest: 'smoke_test',
+          killCriteria: ['import failure rate unchanged'],
+          risks: [],
+        },
         { title: 'Made-up opportunity', hypothesis: 'This cites evidence the model never saw at all', mechanism: 'none', audience: 'everyone', targetMetric: 'kpi.x', evidenceIds: [randomUUID()], cheapFirstTest: 'ab_test', killCriteria: ['n/a'], risks: [] },
       ],
     }));
@@ -222,13 +240,47 @@ describe('M07 growth brain', () => {
     await tx(async (t) => {
       const [run] = await t
         .insert(forecastRuns)
-        .values({ tenantId: h.tenantId, requestId: req.id, seriesId: s.id, horizon: 7, status: 'champion_selected', championModel: 'holt_winters_damped', baselineModel: 'seasonal_naive', candidates: [], gate: { configured: true }, selectionReason: 'test', calibration: { coverage80: 0.8, folds: 20 }, drift: {}, datasetSha256: 'a'.repeat(64), config: {}, seed: 1, codeVersion: '0.1.0' })
+        .values({
+          tenantId: h.tenantId,
+          requestId: req.id,
+          seriesId: s.id,
+          horizon: 7,
+          status: 'champion_selected',
+          championModel: 'holt_winters_damped',
+          baselineModel: 'seasonal_naive',
+          candidates: [],
+          gate: { configured: true },
+          selectionReason: 'test',
+          calibration: { coverage80: 0.8, folds: 20 },
+          drift: {},
+          datasetSha256: 'a'.repeat(64),
+          config: {},
+          seed: 1,
+          codeVersion: '0.1.0',
+        })
         .returning();
       for (let i = 0; i < 7; i++) {
         await t.insert(forecastPoints).values({ tenantId: h.tenantId, runId: run!.id, ts: new Date(Date.parse('2026-10-20T00:00:00Z') + i * 86_400_000), mean: 100, q025: 80, q10: 90, q50: 100, q90: 110, q975: 120 });
       }
     });
-    const idea = await tx((t) => ideas.createIdea(t, h.deps, h.tenantId, h.users.operator, { title: 'Scale branded search budget', hypothesis: 'Raising the branded search budget captures more high-intent signups at similar cost', mechanism: 'Impression share is budget-limited', audience: 'branded search users in US', targetMetric: 'kpi.signups', evidenceIds: [ev.evidenceId], killCriteria: ['CPA rises above target'] }, 'human'));
+    const idea = await tx((t) =>
+      ideas.createIdea(
+        t,
+        h.deps,
+        h.tenantId,
+        h.users.operator,
+        {
+          title: 'Scale branded search budget',
+          hypothesis: 'Raising the branded search budget captures more high-intent signups at similar cost',
+          mechanism: 'Impression share is budget-limited',
+          audience: 'branded search users in US',
+          targetMetric: 'kpi.signups',
+          evidenceIds: [ev.evidenceId],
+          killCriteria: ['CPA rises above target'],
+        },
+        'human',
+      ),
+    );
     ideaId = idea.id;
     connId = (await createConnection(h.deps, h.tenantId, h.users.owner, { provider: 'google_ads', externalAccountId: '1234567890', displayName: 'Ads', grantedScopes: ['https://www.googleapis.com/auth/adwords'], credentials: { clientId: 'c', clientSecret: 's', refreshToken: 'r' } })).id;
   });
@@ -285,7 +337,16 @@ describe('M07 growth brain', () => {
 
   it('abstains without a forecast and when the agent kill switch is engaged', async () => {
     const ev = await evidence();
-    const idea = await tx((t) => ideas.createIdea(t, h.deps, h.tenantId, h.users.operator, { title: 'Untracked metric idea', hypothesis: 'Something about a metric that has no series registered', mechanism: 'mechanism not yet understood', audience: 'all users', targetMetric: 'kpi.unknown', evidenceIds: [ev.evidenceId], killCriteria: ['no effect'] }, 'human'));
+    const idea = await tx((t) =>
+      ideas.createIdea(
+        t,
+        h.deps,
+        h.tenantId,
+        h.users.operator,
+        { title: 'Untracked metric idea', hypothesis: 'Something about a metric that has no series registered', mechanism: 'mechanism not yet understood', audience: 'all users', targetMetric: 'kpi.unknown', evidenceIds: [ev.evidenceId], killCriteria: ['no effect'] },
+        'human',
+      ),
+    );
     expect(await brain.proposeDecision(h.deps, h.tenantId, h.users.operator, { ideaId: idea.id, market: 'US', horizon: { value: 1, unit: 'week' } })).toMatchObject({ status: 'abstained', reason: 'INSUFFICIENT_EVIDENCE' });
     await tx((t) => t.insert(killSwitches).values({ tenantId: h.tenantId, scope: 'agent', targetRef: 'growth-brain', reason: 'review', engagedBy: 'user:test' }));
     expect(await brain.proposeDecision(h.deps, h.tenantId, h.users.operator, { ideaId, market: 'US', horizon: { value: 1, unit: 'week' } })).toMatchObject({ status: 'abstained', reason: 'KILL_SWITCH' });

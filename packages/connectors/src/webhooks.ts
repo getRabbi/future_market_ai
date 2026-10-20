@@ -21,13 +21,7 @@ export function verifyShopifyHmac(rawBody: string | Buffer, header: string | und
  * Svix (used by Resend): signature over `${id}.${timestamp}.${body}` with the base64 key after
  * the `whsec_` prefix; header may carry several space-separated `v1,<sig>` entries.
  */
-export function verifySvixSignature(
-  rawBody: string | Buffer,
-  headers: { id?: string; timestamp?: string; signature?: string },
-  secret: string,
-  now = new Date(),
-  toleranceSeconds = 300,
-): boolean {
+export function verifySvixSignature(rawBody: string | Buffer, headers: { id?: string; timestamp?: string; signature?: string }, secret: string, now = new Date(), toleranceSeconds = 300): boolean {
   const { id, timestamp, signature } = headers;
   if (!id || !timestamp || !signature) return false;
   const ts = Number(timestamp);

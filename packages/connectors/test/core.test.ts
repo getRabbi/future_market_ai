@@ -1,12 +1,12 @@
-import dns from 'node:dns';
+import type dns from 'node:dns';
 import net from 'node:net';
+import { hmacSha256Base64, hmacSha256Hex } from '@futuregrow/observability';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { HttpClient, ProviderHttpError, preWrite } from '../src/http.js';
-import { parseRobots } from '../src/robots.js';
-import { SsrfBlockedError, assertFetchableUrl, createGuardedLookup, isBlockedAddress, publicFetch } from '../src/ssrf.js';
-import { verifyMetaSignature, verifyShopifyHmac, verifySvixSignature, verifyTikTokSignature } from '../src/webhooks.js';
 import { majorToMicros, metaMinorUnitOffset, microsToDecimalString, microsToMinor } from '../src/providers/money.js';
-import { hmacSha256Base64, hmacSha256Hex } from '@futuregrow/observability';
+import { parseRobots } from '../src/robots.js';
+import { assertFetchableUrl, createGuardedLookup, isBlockedAddress, publicFetch, SsrfBlockedError } from '../src/ssrf.js';
+import { verifyMetaSignature, verifyShopifyHmac, verifySvixSignature, verifyTikTokSignature } from '../src/webhooks.js';
 import { FixtureServer } from './helpers.js';
 
 const server = new FixtureServer();

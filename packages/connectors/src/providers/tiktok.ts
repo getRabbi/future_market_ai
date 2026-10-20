@@ -1,5 +1,5 @@
 import { ProviderHttpError, preWrite } from '../http.js';
-import { type ActionExecutor, type ConnectorContext, type HealthResult, type ReadConnector, proof } from '../types.js';
+import { type ActionExecutor, type ConnectorContext, type HealthResult, proof, type ReadConnector } from '../types.js';
 
 type TikTokCreds = Extract<ConnectorContext['credentials'], { provider: 'tiktok' }>;
 
@@ -103,12 +103,7 @@ export const tiktokPublishVideo: ActionExecutor<TikTokParams> = {
     };
   },
   async verify(ctx, p, receipt) {
-    const r = await call<{ status: string; fail_reason?: string; publicaly_available_post_id?: (string | number)[] }>(
-      ctx,
-      'post/publish/status/fetch/',
-      { publish_id: receipt.providerObjectId },
-      true,
-    );
+    const r = await call<{ status: string; fail_reason?: string; publicaly_available_post_id?: (string | number)[] }>(ctx, 'post/publish/status/fetch/', { publish_id: receipt.providerObjectId }, true);
     const d = r.data.data;
     const observed = { status: d?.status ?? 'UNKNOWN', postIds: d?.publicaly_available_post_id ?? [], failReason: d?.fail_reason ?? null };
     if (d?.status === 'PUBLISH_COMPLETE') {

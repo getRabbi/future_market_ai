@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { AwsClient } from 'aws4fetch';
 import { sha256Hex } from '@futuregrow/observability';
+import { AwsClient } from 'aws4fetch';
 
 export interface PutResult {
   key: string;

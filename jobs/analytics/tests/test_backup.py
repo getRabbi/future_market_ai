@@ -61,3 +61,14 @@ def test_filesystem_store_lists_and_rejects_traversal(tmp_path):
     assert s.get("backups/2026/10/20/a.fgb") == b"x"
     with pytest.raises(ValueError):
         s.put("backups/../../escape", b"x", "text/plain")
+
+
+def test_backup_is_due_after_the_interval_only():
+    from datetime import timedelta
+
+    from futuregrow_analytics.scheduled import backup_due
+
+    now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+    assert backup_due(None, now, 24)
+    assert not backup_due(now - timedelta(hours=23, minutes=59), now, 24)
+    assert backup_due(now - timedelta(hours=24), now, 24)

@@ -3,11 +3,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { verifyAuditChain, withSystem, withTenant } from '@futuregrow/db';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { verifyAuditChain, withSystem, withTenant } from '@futuregrow/db';
-import { type CoreHarness, agentActor, createCoreHarness } from '../../../test/helpers/core.js';
-import { type TestDatabase, createTestDatabase } from '../../../test/helpers/db.js';
+import { agentActor, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { createTestDatabase, type TestDatabase } from '../../../test/helpers/db.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
 import { ingestEvents, recordConsent } from '../src/modules/m02-customers/index.js';
 import { ingestDocument, searchKnowledge } from '../src/modules/m03-knowledge/index.js';
@@ -22,8 +22,8 @@ let dir: string;
 const KEY = randomBytes(32).toString('base64');
 const tx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => withTenant(h.t.handle.db, { tenantId: h.tenantId, actor: 'user:test' }, fn);
 
-function backup(args: string[], env: Record<string, string> = {}) {
-  const r = spawnSync(py!, ['-m', 'futuregrow_analytics.backup', ...args], {
+function backup(args: string[], env: Record<string, string> = {}, module = 'futuregrow_analytics.backup') {
+  const r = spawnSync(py!, ['-m', module, ...args], {
     cwd: path.join(root, 'jobs/analytics'),
     env: { ...process.env, DATABASE_URL: h.t.url, FG_BACKUP_FS_DIR: dir, FG_BACKUP_KEY: KEY, PYTHONPATH: path.join(root, 'jobs/analytics'), ...env },
     encoding: 'utf8',
@@ -44,7 +44,20 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
         t,
         h.tenantId,
         h.users.owner,
-        { sourceType: 'internal', sourceOwner: 'acme', sourceUriOrObjectId: `doc://${randomUUID()}`, retrievedAt: h.clock.now().toISOString(), licenseOrUsageRights: 'first-party', schemaVersion: '1', piiClassification: 'none', confidence: 1, freshnessSlaHours: 720, permittedUses: ['analytics', 'autonomous_execution'], kind: 'document', content: { text: 'quoted "value", with comma\nand newline' } },
+        {
+          sourceType: 'internal',
+          sourceOwner: 'acme',
+          sourceUriOrObjectId: `doc://${randomUUID()}`,
+          retrievedAt: h.clock.now().toISOString(),
+          licenseOrUsageRights: 'first-party',
+          schemaVersion: '1',
+          piiClassification: 'none',
+          confidence: 1,
+          freshnessSlaHours: 720,
+          permittedUses: ['analytics', 'autonomous_execution'],
+          kind: 'document',
+          content: { text: 'quoted "value", with comma\nand newline' },
+        },
         { now: h.clock.now() },
       ),
     );
@@ -93,8 +106,8 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     // Append-only guards are active again after the restore.
     await expect(withSystem(target.handle.db, 'test', (t) => t.execute(sql`update audit_log set action = 'x'`))).rejects.toThrow(/IMMUTABLE/);
     // Sequences were advanced past restored ids.
-    const [{ next, max }] = (await target.handle.db.execute<{ next: string; max: string }>(sql`select nextval(pg_get_serial_sequence('audit_log','id'))::text as next, (select max(id) from audit_log)::text as max`)).rows as never;
-    expect(BigInt(next)).toBeGreaterThan(BigInt(max));
+    const seqRow = (await target.handle.db.execute<{ next: string; max: string }>(sql`select nextval(pg_get_serial_sequence('audit_log','id'))::text as next, (select max(id) from audit_log)::text as max`)).rows[0]!;
+    expect(BigInt(seqRow.next)).toBeGreaterThan(BigInt(seqRow.max));
   });
 
   it('refuses to restore over data and records every run', async () => {
@@ -109,10 +122,20 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     expect(backup(['verify'], { FG_BACKUP_KEY: randomBytes(32).toString('base64') }).out).toMatchObject({ ok: false, problems: expect.arrayContaining([expect.stringMatching(/cannot decrypt/)]) });
     const file = path.join(dir, objectKey);
     const bytes = fs.readFileSync(file);
-    bytes[bytes.length - 2000] ^= 0xff;
+    const at = bytes.length - 2000;
+    bytes[at] = bytes[at]! ^ 0xff;
     fs.writeFileSync(file, bytes);
     const r = backup(['verify']);
     expect(r.status).toBe(1);
     expect(r.out.problems.join(' ')).toMatch(/SHA-256/);
+  });
+  it('the analytics cron entry takes and verifies a backup only when one is due', () => {
+    const due = backup([], { FG_BACKUP_INTERVAL_HOURS: '0' }, 'futuregrow_analytics.scheduled');
+    expect(due.status, due.stderr).toBe(0);
+    expect(due.out.backup.objectKey).toMatch(/\.fgb$/);
+    expect(due.out.verification).toMatchObject({ ok: true, problems: [] });
+    const idle = backup([], {}, 'futuregrow_analytics.scheduled');
+    expect(idle.status, idle.stderr).toBe(0);
+    expect(idle.out).toEqual({ backups: 'nothing due' });
   });
 });

@@ -1,9 +1,9 @@
 import { createHmac, randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { governance } from '@futuregrow/core';
 import { hmacSha256Base64 } from '@futuregrow/observability';
 import { loadEnv } from '@futuregrow/runtime';
-import { governance } from '@futuregrow/core';
+import type { FastifyInstance } from 'fastify';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { buildApp } from '../src/app.js';
 

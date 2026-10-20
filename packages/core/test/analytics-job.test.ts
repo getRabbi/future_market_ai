@@ -1,29 +1,12 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { analyticsRequests, conversationMessages, conversations, customerEvents, customerProfiles, evidenceRecords, experimentResults, forecastPoints, forecastRuns, outboxEvents, propensityModels, propensityScores, topicClusters, trends, withSystem, withTenant } from '@futuregrow/db';
+import { EventBus, rowToEnvelope } from '@futuregrow/events';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
-import {
-  analyticsRequests,
-  conversationMessages,
-  conversations,
-  customerEvents,
-  customerProfiles,
-  evidenceRecords,
-  experimentResults,
-  forecastPoints,
-  forecastRuns,
-  outboxEvents,
-  propensityModels,
-  propensityScores,
-  topicClusters,
-  trends,
-  withSystem,
-  withTenant,
-} from '@futuregrow/db';
-import { EventBus, rowToEnvelope } from '@futuregrow/events';
 import { wireEventHandlers } from '../src/event-handlers.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
 import * as analytics from '../src/modules/m08-analytics/index.js';
@@ -144,10 +127,7 @@ describe.skipIf(!py)('analytics job (Python) against real PostgreSQL', () => {
         }
       }
       const [conv] = await t.insert(conversations).values({ tenantId: h.tenantId, channel: 'web_chat' }).returning();
-      const msgs = [
-        ...Array.from({ length: 15 }, (_, i) => `I want a refund for order ${i}, refund my money please`),
-        ...Array.from({ length: 15 }, (_, i) => `cannot login, password reset email never arrives ${i}`),
-      ];
+      const msgs = [...Array.from({ length: 15 }, (_, i) => `I want a refund for order ${i}, refund my money please`), ...Array.from({ length: 15 }, (_, i) => `cannot login, password reset email never arrives ${i}`)];
       for (const m of msgs) await t.insert(conversationMessages).values({ tenantId: h.tenantId, conversationId: conv!.id, role: 'customer', text: m, redactedText: m });
     });
 
@@ -200,9 +180,7 @@ describe.skipIf(!py)('analytics job (Python) against real PostgreSQL', () => {
   }, 600_000);
 
   it('feeds validated model outputs back into the evidence ledger', async () => {
-    const events = await withSystem(h.t.handle.db, 'system:test', (t) =>
-      t.select().from(outboxEvents).where(sql`${outboxEvents.eventType} = 'analytics.request.completed' and ${outboxEvents.tenantId} = ${h.tenantId}`),
-    );
+    const events = await withSystem(h.t.handle.db, 'system:test', (t) => t.select().from(outboxEvents).where(sql`${outboxEvents.eventType} = 'analytics.request.completed' and ${outboxEvents.tenantId} = ${h.tenantId}`));
     expect(events).toHaveLength(6);
     const bus = wireEventHandlers(new EventBus(), h.deps);
     for (const e of events) expect(await bus.dispatch(rowToEnvelope(e))).toEqual([]);

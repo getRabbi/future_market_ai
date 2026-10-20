@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { consentEvents, customerEvents, customerProfiles, dsarRequests, identityMerges, suppressions, withTenant } from '@futuregrow/db';
+import { identifierHash } from '@futuregrow/observability';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
-import { consentEvents, customerEvents, customerProfiles, dsarRequests, identityMerges, suppressions, withTenant } from '@futuregrow/db';
-import { identifierHash } from '@futuregrow/observability';
 import * as customers from '../src/modules/m02-customers/index.js';
 import '../src/modules/m02-customers/executors.js';
-import * as knowledge from '../src/modules/m03-knowledge/index.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
+import * as knowledge from '../src/modules/m03-knowledge/index.js';
 import { decideApproval, executeAction, proposeAction, verifyAction } from '../src/modules/m23-execution/gateway.js';
 
 let h: CoreHarness;
@@ -50,16 +50,10 @@ afterAll(async () => {
 describe('M02 identity resolution and ingestion', () => {
   it('links anonymous activity to a known user with an explainable merge record', async () => {
     const anon = `anon-${randomUUID()}`;
-    const first = await customers.ingestEvents(h.deps, h.tenantId, 'web', [
-      { messageId: `m-${randomUUID()}`, event: 'page_viewed', timestamp: ts(), anonymousId: anon, properties: { path: '/pricing' } },
-    ]);
-    const second = await customers.ingestEvents(h.deps, h.tenantId, 'web', [
-      { messageId: `m-${randomUUID()}`, event: 'signup', timestamp: ts(60), userId: 'u-42', properties: { plan: 'trial' } },
-    ]);
+    const first = await customers.ingestEvents(h.deps, h.tenantId, 'web', [{ messageId: `m-${randomUUID()}`, event: 'page_viewed', timestamp: ts(), anonymousId: anon, properties: { path: '/pricing' } }]);
+    const second = await customers.ingestEvents(h.deps, h.tenantId, 'web', [{ messageId: `m-${randomUUID()}`, event: 'signup', timestamp: ts(60), userId: 'u-42', properties: { plan: 'trial' } }]);
     expect(first.profileIds[0]).not.toBe(second.profileIds[0]);
-    const third = await customers.ingestEvents(h.deps, h.tenantId, 'web', [
-      { messageId: `m-${randomUUID()}`, event: 'identify', timestamp: ts(120), anonymousId: anon, userId: 'u-42' },
-    ]);
+    const third = await customers.ingestEvents(h.deps, h.tenantId, 'web', [{ messageId: `m-${randomUUID()}`, event: 'identify', timestamp: ts(120), anonymousId: anon, userId: 'u-42' }]);
     const merges = await tx((t) => t.select().from(identityMerges));
     expect(merges).toHaveLength(1);
     expect(merges[0]).toMatchObject({ matchRule: 'shared_user_id', matchPolicyVersion: customers.MATCH_POLICY_VERSION });
@@ -106,9 +100,7 @@ describe('M02 consent and suppression', () => {
     expect(p.consents.find((c) => c.purpose === 'marketing_email')!.status).toBe('withdrawn');
     const history = await tx((t) => t.select().from(consentEvents).where(eq(consentEvents.profileId, profileId)));
     expect(history).toHaveLength(2);
-    await expect(
-      tx((t) => customers.recordConsent(t, h.tenantId, h.users.owner, { profileId, purpose: 'marketing_email', status: 'granted', lawfulBasis: 'legitimate_interest', source: 'x', capturedAt: ts(700) })),
-    ).rejects.toThrow(/require consent/);
+    await expect(tx((t) => customers.recordConsent(t, h.tenantId, h.users.owner, { profileId, purpose: 'marketing_email', status: 'granted', lawfulBasis: 'legitimate_interest', source: 'x', capturedAt: ts(700) }))).rejects.toThrow(/require consent/);
   });
 
   it('distinguishes unsubscribe (commercial only) from hard suppression', async () => {
@@ -123,10 +115,16 @@ describe('M02 consent and suppression', () => {
 describe('M02 DSAR', () => {
   it('propagates deletion across modules and keeps only documented exemptions', async () => {
     const email = `dsar-${randomUUID().slice(0, 6)}@example.com`;
-    const r = await customers.ingestEvents(h.deps, h.tenantId, 'web', [
-      { messageId: `m-${randomUUID()}`, event: 'signup', timestamp: ts(), userId: `d-${randomUUID()}`, email },
-      { messageId: `m-${randomUUID()}`, event: 'page_viewed', timestamp: ts(5), email },
-    ], { verifiedEmail: true });
+    const r = await customers.ingestEvents(
+      h.deps,
+      h.tenantId,
+      'web',
+      [
+        { messageId: `m-${randomUUID()}`, event: 'signup', timestamp: ts(), userId: `d-${randomUUID()}`, email },
+        { messageId: `m-${randomUUID()}`, event: 'page_viewed', timestamp: ts(5), email },
+      ],
+      { verifiedEmail: true },
+    );
     const profileId = r.profileIds[0]!;
     await tx((t) => customers.recordConsent(t, h.tenantId, h.users.owner, { profileId, purpose: 'marketing_email', status: 'granted', lawfulBasis: 'consent', source: 'signup', capturedAt: ts() }));
     await evidence({ kind: 'observation', piiClassification: 'personal', lawfulBasisOrConsentId: 'consent:signup', content: { profileId, note: 'support transcript' } });
@@ -144,7 +142,12 @@ describe('M02 DSAR', () => {
     expect(await tx((t) => t.select().from(customerEvents).where(eq(customerEvents.profileId, profileId)))).toHaveLength(0);
     const erased = await tx((t) => t.execute<{ n: number }>(sql`select count(*)::int as n from evidence_records where content::text like ${`%${profileId}%`}`));
     expect(erased.rows[0]!.n).toBe(0);
-    const supp = await tx((t) => t.select().from(suppressions).where(eq(suppressions.identifierHash, identifierHash(h.deps.config.identifierPepper, 'email', email))));
+    const supp = await tx((t) =>
+      t
+        .select()
+        .from(suppressions)
+        .where(eq(suppressions.identifierHash, identifierHash(h.deps.config.identifierPepper, 'email', email))),
+    );
     expect(supp.map((s) => s.reason)).toContain('dsar_delete');
     expect(await tx((t) => t.select().from(consentEvents).where(eq(consentEvents.profileId, profileId)))).toHaveLength(1); // proof-of-consent exemption
     expect((done.propagation as { exemptions: string[] }).exemptions.length).toBeGreaterThan(0);
@@ -241,7 +244,9 @@ describe('M03 knowledge graph and claims', () => {
       },
     };
     await tx((t) => knowledge.ingestDocument(t, h.deps, h.tenantId, h.users.owner, { title: 'Refund policy', text: 'Refunds are available within 30 days of purchase.\n\nContact support for refund requests.', evidenceId: e.evidenceId, visibility: 'public' }, embedder));
-    await tx((t) => knowledge.ingestDocument(t, h.deps, h.tenantId, h.users.owner, { title: 'Pricing playbook', text: 'Internal: discount approvals above 20% need finance sign-off. Refund exceptions require a manager.', evidenceId: e2.evidenceId, visibility: 'restricted', allowedRoles: ['finance_approver'] }, embedder));
+    await tx((t) =>
+      knowledge.ingestDocument(t, h.deps, h.tenantId, h.users.owner, { title: 'Pricing playbook', text: 'Internal: discount approvals above 20% need finance sign-off. Refund exceptions require a manager.', evidenceId: e2.evidenceId, visibility: 'restricted', allowedRoles: ['finance_approver'] }, embedder),
+    );
     const pub = await tx((t) => knowledge.searchKnowledge(t, { query: 'refund', roles: [], audience: 'public', embedder }));
     expect(pub.map((r) => r.title)).toEqual(['Refund policy']);
     expect(pub[0]!.ftsRank).toBe(1);

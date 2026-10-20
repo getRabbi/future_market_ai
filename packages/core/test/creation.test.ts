@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { withTenant } from '@futuregrow/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { makePng } from '../../../test/helpers/png.js';
-import { withTenant } from '@futuregrow/db';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
 import * as knowledge from '../src/modules/m03-knowledge/index.js';
 import * as offersM from '../src/modules/m12-offers/index.js';
@@ -18,7 +18,21 @@ async function ev(over: Record<string, unknown> = {}) {
       t,
       h.tenantId,
       h.users.owner,
-      { sourceType: 'primary', sourceOwner: 'acme', sourceUriOrObjectId: `doc://${randomUUID()}`, retrievedAt: h.clock.now().toISOString(), licenseOrUsageRights: 'first-party', schemaVersion: '1', piiClassification: 'none', confidence: 0.9, freshnessSlaHours: 24 * 365, permittedUses: ['creative_generation', 'publishing'], kind: 'contract', content: { n: randomUUID() }, ...over } as never,
+      {
+        sourceType: 'primary',
+        sourceOwner: 'acme',
+        sourceUriOrObjectId: `doc://${randomUUID()}`,
+        retrievedAt: h.clock.now().toISOString(),
+        licenseOrUsageRights: 'first-party',
+        schemaVersion: '1',
+        piiClassification: 'none',
+        confidence: 0.9,
+        freshnessSlaHours: 24 * 365,
+        permittedUses: ['creative_generation', 'publishing'],
+        kind: 'contract',
+        content: { n: randomUUID() },
+        ...over,
+      } as never,
       { now: h.clock.now() },
     ),
   );
@@ -60,7 +74,17 @@ describe('M13 creative briefs', () => {
   it('requires approved claims for proof points and lints copy', async () => {
     const e = await ev({ kind: 'document' });
     const claim = await tx((t) => knowledge.proposeClaim(t, h.deps, h.tenantId, h.users.operator, { text: 'Imports 10,000 contacts in under a minute', claimType: 'statistic', evidenceIds: [e.evidenceId] }));
-    const base = { title: 'Fast import', objective: 'Activation', channel: 'tiktok', audience: 'new SMB owners', angle: 'Setup in minutes', hooks: ['Moving CRMs used to take a weekend'], proofPoints: [{ text: 'Imports 10,000 contacts in under a minute', claimId: claim.id }], cta: 'Start free', formatPlan: { format: 'short video', aspectRatio: '9:16' } };
+    const base = {
+      title: 'Fast import',
+      objective: 'Activation',
+      channel: 'tiktok',
+      audience: 'new SMB owners',
+      angle: 'Setup in minutes',
+      hooks: ['Moving CRMs used to take a weekend'],
+      proofPoints: [{ text: 'Imports 10,000 contacts in under a minute', claimId: claim.id }],
+      cta: 'Start free',
+      formatPlan: { format: 'short video', aspectRatio: '9:16' },
+    };
     const pending = await tx((t) => creative.createBrief(t, h.deps, h.tenantId, h.users.operator, base));
     expect(pending.status).toBe('lint_failed');
     await tx((t) => knowledge.reviewClaim(t, h.tenantId, h.users.approver, claim.id, 'approved'));

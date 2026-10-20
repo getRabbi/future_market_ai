@@ -71,9 +71,7 @@ export class FixtureServer {
           form: ct.includes('x-www-form-urlencoded') ? new URLSearchParams(body) : null,
         };
         this.requests.push(rec);
-        const route = [...this.routes].reverse().find(
-          (r) => r.method === rec.method && (typeof r.path === 'string' ? r.path === rec.path : r.path.test(rec.path)),
-        );
+        const route = [...this.routes].reverse().find((r) => r.method === rec.method && (typeof r.path === 'string' ? r.path === rec.path : r.path.test(rec.path)));
         if (!route) {
           res.writeHead(599, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ error: `no fixture for ${rec.method} ${rec.path}` }));

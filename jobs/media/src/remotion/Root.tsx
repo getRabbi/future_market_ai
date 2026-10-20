@@ -1,5 +1,5 @@
 import type React from 'react';
-import { AbsoluteFill, Composition, Img, OffthreadVideo, Sequence, interpolate, registerRoot, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Composition, Img, interpolate, OffthreadVideo, registerRoot, Sequence, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 
 export interface RenderProps {
   headline: string;
@@ -46,13 +46,7 @@ const MediaLayer: React.FC<{ media: RenderProps['media'] }> = ({ media }) => {
     <>
       {media.map((m, i) => (
         <Sequence key={m.file} from={i * per} durationInFrames={i === media.length - 1 ? durationInFrames - i * per : per}>
-          <AbsoluteFill>
-            {m.mime.startsWith('video/') ? (
-              <OffthreadVideo src={staticFile(m.file)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted />
-            ) : (
-              <Img src={staticFile(m.file)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            )}
-          </AbsoluteFill>
+          <AbsoluteFill>{m.mime.startsWith('video/') ? <OffthreadVideo src={staticFile(m.file)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted /> : <Img src={staticFile(m.file)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}</AbsoluteFill>
         </Sequence>
       ))}
     </>
@@ -69,9 +63,7 @@ const Captions: React.FC<{ captions: string[]; bottom?: number }> = ({ captions,
   const opacity = interpolate(local, [0, 6, per - 6, per], [0, 1, 1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
   return (
     <div style={{ position: 'absolute', left: 64, right: 64, bottom, textAlign: 'center', opacity }}>
-      <span style={{ background: 'rgba(255,255,255,0.92)', color: '#111', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: 52, fontWeight: 700, lineHeight: 1.35, padding: '8px 18px', borderRadius: 12, boxDecorationBreak: 'clone' }}>
-        {captions[idx]}
-      </span>
+      <span style={{ background: 'rgba(255,255,255,0.92)', color: '#111', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: 52, fontWeight: 700, lineHeight: 1.35, padding: '8px 18px', borderRadius: 12, boxDecorationBreak: 'clone' }}>{captions[idx]}</span>
     </div>
   );
 };
@@ -92,9 +84,7 @@ const EndCard: React.FC<{ cta: string; color: string }> = ({ cta, color }) => {
 export const ProductShowcase: React.FC<RenderProps> = (p) => (
   <AbsoluteFill style={{ background: p.brandColor }}>
     <MediaLayer media={p.media} />
-    {p.headline ? (
-      <div style={{ position: 'absolute', bottom: 520, left: 64, right: 64, color: '#fff', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: 76, fontWeight: 800, textShadow: '0 4px 24px rgba(0,0,0,0.6)' }}>{p.headline}</div>
-    ) : null}
+    {p.headline ? <div style={{ position: 'absolute', bottom: 520, left: 64, right: 64, color: '#fff', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: 76, fontWeight: 800, textShadow: '0 4px 24px rgba(0,0,0,0.6)' }}>{p.headline}</div> : null}
     <Captions captions={p.captions} />
     <EndCard cta={p.cta} color={p.brandColor} />
     <Disclosure text={p.disclosureText} />

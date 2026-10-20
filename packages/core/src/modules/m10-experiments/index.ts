@@ -1,27 +1,15 @@
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, sql } from 'drizzle-orm';
 import { proof } from '@futuregrow/connectors';
-import {
-  type DbOrTx,
-  type Tx,
-  banditStates,
-  experimentAssignments,
-  experimentExposures,
-  experimentOutcomes,
-  experimentResults,
-  experimentVariants,
-  experiments,
-  withTenant,
-  sequential,
-} from '@futuregrow/db';
+import { banditStates, type DbOrTx, experimentAssignments, experimentExposures, experimentOutcomes, experimentResults, experiments, experimentVariants, sequential, type Tx, withTenant } from '@futuregrow/db';
 import { assignVariant, inHoldout } from '@futuregrow/experiments';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, record, requireRole } from '../../util.js';
+import { requestAnalytics } from '../m08-analytics/index.js';
 import { proposeAction } from '../m23-execution/gateway.js';
 import { registerHooks, registerInternalExecutor } from '../m23-execution/registry.js';
-import { requestAnalytics } from '../m08-analytics/index.js';
 
 const GuardrailSchema = z.object({
   metric: z.string().min(1).max(100),
@@ -49,7 +37,10 @@ export const ExperimentInputSchema = z
       .max(10),
     plannedSamplePerVariant: z.number().int().positive().nullable().default(null),
     holdoutFraction: z.number().min(0).max(0.5).default(0),
-    decisionRules: z.object({ probBestThreshold: z.number().gt(0.5).lt(1), maxExpectedLoss: z.number().nonnegative() }).nullable().default(null),
+    decisionRules: z
+      .object({ probBestThreshold: z.number().gt(0.5).lt(1), maxExpectedLoss: z.number().nonnegative() })
+      .nullable()
+      .default(null),
     minExplorationShare: z.number().min(0).max(0.5).nullable().default(null),
   })
   .refine((e) => e.variants.filter((v) => v.isControl).length === 1, { message: 'exactly one control variant is required' })
@@ -124,9 +115,7 @@ registerInternalExecutor('experiment.start', {
   },
   async verify(deps, action) {
     const id = (action.params as { experimentId: string }).experimentId;
-    const [e] = await withTenant(deps.db, { tenantId: action.tenantId, actor: 'system:execution-gateway' }, (tx) =>
-      tx.select({ status: experiments.status, startedAt: experiments.startedAt }).from(experiments).where(eq(experiments.id, id)),
-    );
+    const [e] = await withTenant(deps.db, { tenantId: action.tenantId, actor: 'system:execution-gateway' }, (tx) => tx.select({ status: experiments.status, startedAt: experiments.startedAt }).from(experiments).where(eq(experiments.id, id)));
     return proof(e?.status === 'running' ? 'VERIFIED' : 'MISMATCH', 'database_readback', { status: 'running' }, { status: e?.status ?? null }, deps.clock.now());
   },
 });
@@ -139,7 +128,11 @@ registerHooks('experiment.start', {
 
 export async function stopExperiment(tx: Tx, tenantId: string, actor: Actor, id: string, reason: string) {
   requireRole(actor, ['owner', 'admin', 'growth_operator', 'approver'], 'stopping experiments');
-  const [e] = await tx.update(experiments).set({ status: 'stopped', endedAt: new Date() }).where(and(eq(experiments.id, id), eq(experiments.status, 'running'))).returning();
+  const [e] = await tx
+    .update(experiments)
+    .set({ status: 'stopped', endedAt: new Date() })
+    .where(and(eq(experiments.id, id), eq(experiments.status, 'running')))
+    .returning();
   if (!e) throw conflict('experiment is not running');
   await audit(tx, tenantId, actor, 'experiment.experiment.stopped', { type: 'experiment', id }, { reason });
   return e;
@@ -190,14 +183,20 @@ export async function assign(tx: Tx, experimentId: string, unitId: string, attrs
  * clock skew; the DB triggers compare these server times.
  */
 export async function logExposure(tx: Tx, experimentId: string, unitId: string) {
-  const [a] = await tx.select().from(experimentAssignments).where(and(eq(experimentAssignments.experimentId, experimentId), eq(experimentAssignments.unitId, unitId)));
+  const [a] = await tx
+    .select()
+    .from(experimentAssignments)
+    .where(and(eq(experimentAssignments.experimentId, experimentId), eq(experimentAssignments.unitId, unitId)));
   if (!a) throw invalid('unit has no assignment for this experiment');
   await tx.insert(experimentExposures).values({ tenantId: a.tenantId, experimentId, variantId: a.variantId, unitId, exposedAt: sql`now()` });
   return { variantId: a.variantId };
 }
 
 export async function logOutcome(tx: Tx, experimentId: string, unitId: string, metric: string, value: number) {
-  const [a] = await tx.select().from(experimentAssignments).where(and(eq(experimentAssignments.experimentId, experimentId), eq(experimentAssignments.unitId, unitId)));
+  const [a] = await tx
+    .select()
+    .from(experimentAssignments)
+    .where(and(eq(experimentAssignments.experimentId, experimentId), eq(experimentAssignments.unitId, unitId)));
   if (!a) throw invalid('unit has no assignment for this experiment');
   await tx.insert(experimentOutcomes).values({ tenantId: a.tenantId, experimentId, variantId: a.variantId, unitId, metric, value, observedAt: sql`now()` });
 }

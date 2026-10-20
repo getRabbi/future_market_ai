@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { clearGoogleTokenCache } from '@futuregrow/connectors';
+import { budgetReservations, connections, evidenceRecords, executionProofs, incidents, withTenant } from '@futuregrow/db';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { agentActor, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
-import { type CoreHarness, agentActor, createCoreHarness } from '../../../test/helpers/core.js';
-import { budgetReservations, connections, evidenceRecords, executionProofs, incidents, withTenant } from '@futuregrow/db';
-import { clearGoogleTokenCache } from '@futuregrow/connectors';
 import { createConnection } from '../src/modules/connections.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
 import { cancelAction, decideApproval, executeAction, getActionDetail, proposeAction, verifyAction } from '../src/modules/m23-execution/gateway.js';
@@ -113,15 +113,9 @@ describe('vertical slice: Facebook post read -> propose -> approve -> execute ->
     expect(await executeAction(h.deps, h.tenantId, proposed.id)).toEqual({ kind: 'noop', status: 'APPROVAL_REQUIRED' });
     expect(server.requests).toHaveLength(0);
 
-    await expect(
-      decideApproval(h.deps, h.tenantId, { ...h.users.approver, mfaVerified: false }, proposed.id, { decision: 'approved', expectedActionHash: proposed.actionHash }),
-    ).rejects.toThrow(/multi-factor/);
-    await expect(
-      decideApproval(h.deps, h.tenantId, h.users.approver, proposed.id, { decision: 'approved', expectedActionHash: 'f'.repeat(64) }),
-    ).rejects.toThrow(/hash/);
-    await expect(
-      decideApproval(h.deps, h.tenantId, h.users.finance, proposed.id, { decision: 'approved', expectedActionHash: proposed.actionHash }),
-    ).rejects.toThrow(/required role/);
+    await expect(decideApproval(h.deps, h.tenantId, { ...h.users.approver, mfaVerified: false }, proposed.id, { decision: 'approved', expectedActionHash: proposed.actionHash })).rejects.toThrow(/multi-factor/);
+    await expect(decideApproval(h.deps, h.tenantId, h.users.approver, proposed.id, { decision: 'approved', expectedActionHash: 'f'.repeat(64) })).rejects.toThrow(/hash/);
+    await expect(decideApproval(h.deps, h.tenantId, h.users.finance, proposed.id, { decision: 'approved', expectedActionHash: proposed.actionHash })).rejects.toThrow(/required role/);
 
     const partial = await decideApproval(h.deps, h.tenantId, h.users.approver, proposed.id, { decision: 'approved', expectedActionHash: proposed.actionHash });
     expect(partial.status).toBe('APPROVAL_REQUIRED');
@@ -137,16 +131,7 @@ describe('vertical slice: Facebook post read -> propose -> approve -> execute ->
     expect(ver).toMatchObject({ kind: 'done', status: 'VERIFIED', verdict: 'VERIFIED' });
 
     const detail = await withTenant(h.t.handle.db, { tenantId: h.tenantId, actor: 'user:test' }, (tx) => getActionDetail(tx, proposed.id));
-    expect(detail.transitions.map((x) => x.toStatus)).toEqual([
-      'EVIDENCE_READY',
-      'POLICY_CHECKED',
-      'APPROVAL_REQUIRED',
-      'APPROVED',
-      'PREFLIGHT_VERIFIED',
-      'EXECUTING',
-      'EXECUTED_UNVERIFIED',
-      'VERIFIED',
-    ]);
+    expect(detail.transitions.map((x) => x.toStatus)).toEqual(['EVIDENCE_READY', 'POLICY_CHECKED', 'APPROVAL_REQUIRED', 'APPROVED', 'PREFLIGHT_VERIFIED', 'EXECUTING', 'EXECUTED_UNVERIFIED', 'VERIFIED']);
     expect(detail.executions[0]!.responseArchiveKey).toMatch(new RegExp(`^t/${h.tenantId}/executions/`));
     // learn: the proof is admitted as primary evidence linked from the proof row
     const proof = detail.proofs[0]!;
@@ -160,9 +145,7 @@ describe('vertical slice: Facebook post read -> propose -> approve -> execute ->
     const a = await proposeAction(h.deps, h.tenantId, agentActor(), { actionType: 'social.facebook.publish_post', connectionId: metaConnId, params: p, evidenceIds: [evidenceId], risk: usRisk, idempotencyKey: key });
     const b = await proposeAction(h.deps, h.tenantId, agentActor(), { actionType: 'social.facebook.publish_post', connectionId: metaConnId, params: p, evidenceIds: [evidenceId], risk: usRisk, idempotencyKey: key });
     expect(b.id).toBe(a.id);
-    await expect(
-      proposeAction(h.deps, h.tenantId, agentActor(), { actionType: 'social.facebook.publish_post', connectionId: metaConnId, params: postParams('other'), evidenceIds: [evidenceId], risk: usRisk, idempotencyKey: key }),
-    ).rejects.toThrow(/idempotency key reused/);
+    await expect(proposeAction(h.deps, h.tenantId, agentActor(), { actionType: 'social.facebook.publish_post', connectionId: metaConnId, params: postParams('other'), evidenceIds: [evidenceId], risk: usRisk, idempotencyKey: key })).rejects.toThrow(/idempotency key reused/);
   });
 
   it('denies agent proposals without trusted evidence, and unknown action types', async () => {
@@ -182,9 +165,7 @@ describe('vertical slice: Facebook post read -> propose -> approve -> execute ->
   it('rolls back a post whose readback does not match, and proves the rollback', async () => {
     let deleted = false;
     server.on('POST', '/v26.0/123/feed', { json: { id: '123_777' } });
-    server.on('GET', '/v26.0/123_777', () =>
-      deleted ? { status: 400, json: { error: { code: 100, message: 'does not exist' } } } : { json: { id: '123_777', message: 'TAMPERED', is_published: true } },
-    );
+    server.on('GET', '/v26.0/123_777', () => (deleted ? { status: 400, json: { error: { code: 100, message: 'does not exist' } } } : { json: { id: '123_777', message: 'TAMPERED', is_published: true } }));
     server.on('DELETE', '/v26.0/123_777', () => {
       deleted = true;
       return { json: { success: true } };
@@ -354,9 +335,7 @@ describe('kill switches (D-021)', () => {
   it('cancels queued actions in scope and denies new ones', async () => {
     const queued = await proposeAction(h.deps, h.tenantId, h.users.operator, { actionType: 'social.facebook.publish_post', connectionId: metaConnId, params: postParams('q'), evidenceIds: [evidenceId], risk: usRisk, idempotencyKey: `fb-${randomUUID()}` });
     expect(queued.status).toBe('APPROVAL_REQUIRED');
-    const res = await withTenant(h.t.handle.db, { tenantId: h.tenantId, actor: 'user:test' }, (tx) =>
-      engageKillSwitch(tx, h.tenantId, h.users.operator, { scope: 'connector', targetRef: 'meta', reason: 'brand incident' }),
-    );
+    const res = await withTenant(h.t.handle.db, { tenantId: h.tenantId, actor: 'user:test' }, (tx) => engageKillSwitch(tx, h.tenantId, h.users.operator, { scope: 'connector', targetRef: 'meta', reason: 'brand incident' }));
     expect(res.cancelledActions).toContain(queued.id);
     const fresh = await proposeAction(h.deps, h.tenantId, agentActor(), { actionType: 'social.facebook.publish_post', connectionId: metaConnId, params: postParams('blocked'), evidenceIds: [evidenceId], risk: usRisk, idempotencyKey: `fb-${randomUUID()}` });
     expect(fresh.status).toBe('DENIED');

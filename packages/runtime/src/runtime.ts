@@ -1,10 +1,10 @@
-import { type WorkerUtils, makeWorkerUtils } from 'graphile-worker';
 import { AnthropicProvider, type ModelProvider, OpenAICompatibleEmbedder, OpenAICompatibleProvider } from '@futuregrow/agent-kernel';
 import { HttpClient } from '@futuregrow/connectors';
-import { type CoreDeps, type JobQueue, buildCoreConfig, createModelGateway, type knowledge, systemClock } from '@futuregrow/core';
+import { buildCoreConfig, type CoreDeps, createModelGateway, type JobQueue, type knowledge, systemClock } from '@futuregrow/core';
 import { configureTenantRole, createDb, probeDatabase } from '@futuregrow/db';
 import { createLogger } from '@futuregrow/observability';
 import { createObjectStore } from '@futuregrow/storage';
+import { makeWorkerUtils, type WorkerUtils } from 'graphile-worker';
 import type { Env } from './env.js';
 
 export class GraphileJobQueue implements JobQueue {
@@ -64,26 +64,14 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
   if (env.ANTHROPIC_API_KEY) providers.anthropic = new AnthropicProvider({ apiKey: env.ANTHROPIC_API_KEY });
   if (env.OPENAI_COMPATIBLE_BASE_URL) providers.openai_compatible = new OpenAICompatibleProvider({ baseUrl: env.OPENAI_COMPATIBLE_BASE_URL, ...(env.OPENAI_COMPATIBLE_API_KEY ? { apiKey: env.OPENAI_COMPATIBLE_API_KEY } : {}) });
   if (Object.keys(providers).length) {
-    const secrets = [
-      env.ANTHROPIC_API_KEY,
-      env.OPENAI_COMPATIBLE_API_KEY,
-      env.BETTER_AUTH_SECRET,
-      env.FG_SECRETS_KEY,
-      env.FG_IDENTIFIER_PEPPER,
-      env.R2_SECRET_ACCESS_KEY,
-      env.META_APP_SECRET,
-      env.SHOPIFY_WEBHOOK_SECRET,
-      env.RESEND_WEBHOOK_SECRET,
-      env.TIKTOK_CLIENT_SECRET,
-      env.NORTHFLANK_API_TOKEN,
-    ].filter((x): x is string => Boolean(x));
+    const secrets = [env.ANTHROPIC_API_KEY, env.OPENAI_COMPATIBLE_API_KEY, env.BETTER_AUTH_SECRET, env.FG_SECRETS_KEY, env.FG_IDENTIFIER_PEPPER, env.R2_SECRET_ACCESS_KEY, env.META_APP_SECRET, env.SHOPIFY_WEBHOOK_SECRET, env.RESEND_WEBHOOK_SECRET, env.TIKTOK_CLIENT_SECRET, env.NORTHFLANK_API_TOKEN].filter(
+      (x): x is string => Boolean(x),
+    );
     deps.models = createModelGateway(deps, providers, secrets);
   } else {
     logger.warn('no model provider configured: agent stages will abstain (B-003)');
   }
-  const embedder = env.EMBEDDINGS_BASE_URL && env.EMBEDDINGS_MODEL
-    ? new OpenAICompatibleEmbedder({ baseUrl: env.EMBEDDINGS_BASE_URL, model: env.EMBEDDINGS_MODEL, ...(env.EMBEDDINGS_API_KEY ? { apiKey: env.EMBEDDINGS_API_KEY } : {}) })
-    : undefined;
+  const embedder = env.EMBEDDINGS_BASE_URL && env.EMBEDDINGS_MODEL ? new OpenAICompatibleEmbedder({ baseUrl: env.EMBEDDINGS_BASE_URL, model: env.EMBEDDINGS_MODEL, ...(env.EMBEDDINGS_API_KEY ? { apiKey: env.EMBEDDINGS_API_KEY } : {}) }) : undefined;
   logger.info({ pg: caps.serverVersion, pgvector: caps.pgvectorInstalled || caps.pgvectorAvailable, storage: deps.store.kind, models: Object.keys(providers), embeddings: Boolean(embedder) }, 'runtime ready');
   return {
     deps,

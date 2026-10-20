@@ -1,42 +1,19 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import {
-  type ActionRisk,
-  ActionRequestInputSchema,
-  type ActionState,
-  type ExecutionProof,
-  type ExecutionReceipt,
-  type PolicyDecision,
-  TERMINAL_ACTION_STATES,
-  canonicalJson,
-  getActionType,
-} from '@futuregrow/contracts';
-import { type ConnectorContext, EXECUTORS, type ExecuteResult, ProviderHttpError, type ProviderCredentials, configuredApiVersion } from '@futuregrow/connectors';
-import {
-  type Tx,
-  actionRequests,
-  actionTransitions,
-  approvals,
-  assets,
-  connections,
-  executionProofs,
-  executions,
-  savepoint,
-  setTransitionReason,
-  withTenant,
-  sequential,
-} from '@futuregrow/db';
-import { approvalsSatisfy, evaluatePolicy } from '@futuregrow/policies';
+import { type ConnectorContext, configuredApiVersion, EXECUTORS, type ExecuteResult, type ProviderCredentials, ProviderHttpError } from '@futuregrow/connectors';
+import { ActionRequestInputSchema, type ActionRisk, type ActionState, canonicalJson, type ExecutionProof, type ExecutionReceipt, getActionType, type PolicyDecision, TERMINAL_ACTION_STATES } from '@futuregrow/contracts';
+import { actionRequests, actionTransitions, approvals, assets, connections, executionProofs, executions, savepoint, sequential, setTransitionReason, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, forbidden, invalid, notFound, sha256Canonical } from '@futuregrow/observability';
+import { approvalsSatisfy, evaluatePolicy } from '@futuregrow/policies';
 import { tenantKey } from '@futuregrow/storage';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
+import { loadCredentials } from '../../secrets.js';
 import { audit, emit, requireMfa } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { engagedKillSwitchesFor, getTenantPolicy, isSystemHalted, openIncident, raiseAlert } from '../m24-governance/index.js';
 import { holdReservation, lockTenantBudget, settleReservation, takeToken } from './budget.js';
 import { gatherPolicyFacts, loadCapability, objectRefs } from './facts.js';
 import { type ActionRow, getHooks, getInternalExecutor, getResolver } from './registry.js';
-import { loadCredentials } from '../../secrets.js';
 
 const GATEWAY = systemActor('execution-gateway');
 const TERMINAL_FAILURES: ActionState[] = ['FAILED', 'ROLLED_BACK', 'CANCELLED', 'DENIED', 'REJECTED'];
@@ -122,9 +99,7 @@ export async function proposeAction(deps: CoreDeps, tenantId: string, actor: Act
   const input = ActionRequestInputSchema.parse(raw);
   const def = getActionType(input.actionType);
   if (!def) {
-    await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) =>
-      audit(tx, tenantId, actor, 'action.request.rejected_unknown_type', { type: 'action_type', id: input.actionType }, {}),
-    );
+    await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) => audit(tx, tenantId, actor, 'action.request.rejected_unknown_type', { type: 'action_type', id: input.actionType }, {}));
     throw invalid(`action type ${input.actionType} is not on the allowlist (deny by default)`);
   }
   const parsed = def.paramsSchema.safeParse(input.params);
@@ -199,14 +174,33 @@ async function evaluate(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, 
     now: deps.clock.now(),
   });
   const summary = (filter: (r: PolicyDecision['reasons'][number]) => boolean) =>
-    decision.reasons.filter(filter).map((r) => `${r.code}: ${r.message}`).join('; ');
+    decision.reasons
+      .filter(filter)
+      .map((r) => `${r.code}: ${r.message}`)
+      .join('; ');
   const evidenceDeny = summary((r) => r.rule === 'R-EVIDENCE' && r.effect === 'DENY');
   if (evidenceDeny) return transition(tx, tenantId, actor, a, 'DENIED', `evidence: ${evidenceDeny}`, { policyDecision: decision, policyVersion: decision.policyVersion });
 
   let cur = await transition(tx, tenantId, actor, a, 'EVIDENCE_READY', 'evidence resolved');
   cur = await transition(tx, tenantId, actor, cur, 'POLICY_CHECKED', `policy ${decision.policyVersion}: ${decision.outcome}`, { policyDecision: decision, policyVersion: decision.policyVersion });
-  if (decision.outcome === 'DENY') return transition(tx, tenantId, actor, cur, 'DENIED', summary((r) => r.effect === 'DENY'));
-  if (decision.outcome === 'REQUIRE_APPROVAL') return transition(tx, tenantId, actor, cur, 'APPROVAL_REQUIRED', summary((r) => r.effect === 'REQUIRE_APPROVAL'));
+  if (decision.outcome === 'DENY')
+    return transition(
+      tx,
+      tenantId,
+      actor,
+      cur,
+      'DENIED',
+      summary((r) => r.effect === 'DENY'),
+    );
+  if (decision.outcome === 'REQUIRE_APPROVAL')
+    return transition(
+      tx,
+      tenantId,
+      actor,
+      cur,
+      'APPROVAL_REQUIRED',
+      summary((r) => r.effect === 'REQUIRE_APPROVAL'),
+    );
   return transition(tx, tenantId, actor, cur, 'APPROVED', 'pre-authorized within tenant policy limits');
 }
 
@@ -214,13 +208,7 @@ async function evaluate(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, 
 /* Human approval (D-020)                                              */
 /* ------------------------------------------------------------------ */
 
-export async function decideApproval(
-  deps: CoreDeps,
-  tenantId: string,
-  actor: Actor,
-  actionId: string,
-  input: { decision: 'approved' | 'rejected'; comment?: string; expectedActionHash: string },
-): Promise<ActionView> {
+export async function decideApproval(deps: CoreDeps, tenantId: string, actor: Actor, actionId: string, input: { decision: 'approved' | 'rejected'; comment?: string; expectedActionHash: string }): Promise<ActionView> {
   if (actor.type !== 'user') throw forbidden('only humans can approve actions');
   requireMfa(actor, 'approving consequential actions');
   return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
@@ -240,7 +228,10 @@ export async function decideApproval(
     if (pd.requiresDistinctApprover && a.proposedByType === 'user' && a.proposedById === actor.id) {
       throw forbidden('separation of duties: the proposer cannot approve their own action');
     }
-    const prior = await tx.select().from(approvals).where(and(eq(approvals.actionId, a.id), eq(approvals.approverUserId, actor.id)));
+    const prior = await tx
+      .select()
+      .from(approvals)
+      .where(and(eq(approvals.actionId, a.id), eq(approvals.approverUserId, actor.id)));
     if (prior.length) throw conflict('you have already recorded a decision for this action');
     const ttl = (pd.constraints.approvalTtlHours as number | undefined) ?? null;
     await tx.insert(approvals).values({
@@ -259,12 +250,19 @@ export async function decideApproval(
     if (input.decision === 'rejected') return toView(await transition(tx, tenantId, actor, a, 'REJECTED', `rejected by ${actor.id}${input.comment ? `: ${input.comment}` : ''}`));
 
     const all = await validApprovals(tx, a, deps.clock.now());
-    const sat = approvalsSatisfy(pd.approvalGroups, all.map((x) => ({ approverUserId: x.approverUserId, roles: x.approverRoles })), {
-      proposerId: a.proposedById,
-      requiresDistinctApprover: pd.requiresDistinctApprover,
-    });
+    const sat = approvalsSatisfy(
+      pd.approvalGroups,
+      all.map((x) => ({ approverUserId: x.approverUserId, roles: x.approverRoles })),
+      {
+        proposerId: a.proposedById,
+        requiresDistinctApprover: pd.requiresDistinctApprover,
+      },
+    );
     if (!sat.satisfied) {
-      await tx.update(actionRequests).set({ statusReason: `awaiting approval groups: ${sat.missing.join(', ')}` }).where(eq(actionRequests.id, a.id));
+      await tx
+        .update(actionRequests)
+        .set({ statusReason: `awaiting approval groups: ${sat.missing.join(', ')}` })
+        .where(eq(actionRequests.id, a.id));
       const [re] = await tx.select().from(actionRequests).where(eq(actionRequests.id, a.id));
       return toView(re!);
     }
@@ -273,7 +271,10 @@ export async function decideApproval(
 }
 
 async function validApprovals(tx: Tx, a: ActionRow, now: Date) {
-  const rows = await tx.select().from(approvals).where(and(eq(approvals.actionId, a.id), eq(approvals.decision, 'approved'), eq(approvals.actionHash, a.actionHash)));
+  const rows = await tx
+    .select()
+    .from(approvals)
+    .where(and(eq(approvals.actionId, a.id), eq(approvals.decision, 'approved'), eq(approvals.actionHash, a.actionHash)));
   return rows.filter((r) => !r.expiresAt || r.expiresAt > now);
 }
 
@@ -294,11 +295,7 @@ export async function cancelAction(deps: CoreDeps, tenantId: string, actor: Acto
 /* Execution                                                           */
 /* ------------------------------------------------------------------ */
 
-export type ExecutionOutcome =
-  | { kind: 'noop'; status: string }
-  | { kind: 'stopped'; status: string; reason: string }
-  | { kind: 'reschedule'; runAt: Date; reason: string }
-  | { kind: 'executed'; status: string };
+export type ExecutionOutcome = { kind: 'noop'; status: string } | { kind: 'stopped'; status: string; reason: string } | { kind: 'reschedule'; runAt: Date; reason: string } | { kind: 'executed'; status: string };
 
 async function loadAssetBytes(deps: CoreDeps, tenantId: string, assetId: string) {
   const asset = await withTenant(deps.db, { tenantId, actor: actorRef(GATEWAY) }, async (tx) => {
@@ -396,10 +393,14 @@ export async function executeAction(deps: CoreDeps, tenantId: string, actionId: 
     }
     if (decision.outcome === 'REQUIRE_APPROVAL') {
       const valid = await validApprovals(tx, a, now);
-      const sat = approvalsSatisfy(decision.approvalGroups, valid.map((x) => ({ approverUserId: x.approverUserId, roles: x.approverRoles })), {
-        proposerId: a.proposedById,
-        requiresDistinctApprover: decision.requiresDistinctApprover,
-      });
+      const sat = approvalsSatisfy(
+        decision.approvalGroups,
+        valid.map((x) => ({ approverUserId: x.approverUserId, roles: x.approverRoles })),
+        {
+          proposerId: a.proposedById,
+          requiresDistinctApprover: decision.requiresDistinctApprover,
+        },
+      );
       if (!sat.satisfied) {
         const reason = `preflight: policy now requires approval groups not covered (${sat.missing.join(', ')}); re-propose`;
         const u = await transition(tx, tenantId, GATEWAY, a, 'FAILED', reason);
@@ -465,18 +466,26 @@ export async function executeAction(deps: CoreDeps, tenantId: string, actionId: 
   const def = getActionType(action.actionType)!;
 
   // D-021: re-check kill switches immediately before the provider call.
-  const halted = await withTenant(deps.db, ctxActor, async (tx) =>
-    (await isSystemHalted(tx)) ||
-    (await engagedKillSwitchesFor(tx, {
-      provider: def.provider,
-      connectionId: action.connectionId,
-      objectRefs: objectRefs(action.params, action.target),
-      proposer: { type: action.proposedByType, id: action.proposedById, modelId: action.proposerModelId },
-    })).length > 0,
+  const halted = await withTenant(
+    deps.db,
+    ctxActor,
+    async (tx) =>
+      (await isSystemHalted(tx)) ||
+      (
+        await engagedKillSwitchesFor(tx, {
+          provider: def.provider,
+          connectionId: action.connectionId,
+          objectRefs: objectRefs(action.params, action.target),
+          proposer: { type: action.proposedByType, id: action.proposedById, modelId: action.proposerModelId },
+        })
+      ).length > 0,
   );
   if (halted) {
     return withTenant(deps.db, ctxActor, async (tx) => {
-      await tx.update(executions).set({ outcome: 'failed', finishedAt: deps.clock.now(), error: { code: 'KILL_SWITCH_BEFORE_SEND', phase: 'before_send' } }).where(eq(executions.id, executionId));
+      await tx
+        .update(executions)
+        .set({ outcome: 'failed', finishedAt: deps.clock.now(), error: { code: 'KILL_SWITCH_BEFORE_SEND', phase: 'before_send' } })
+        .where(eq(executions.id, executionId));
       await settleReservation(tx, action.id, 'released');
       const u = await transition(tx, tenantId, GATEWAY, action, 'FAILED', 'kill switch engaged immediately before send; nothing was sent');
       return { kind: 'stopped', status: u.status, reason: 'kill switch' } as const;
@@ -502,11 +511,7 @@ export async function executeAction(deps: CoreDeps, tenantId: string, actionId: 
   return withTenant(deps.db, ctxActor, async (tx) => {
     const [a] = await tx.select().from(actionRequests).where(eq(actionRequests.id, action.id)).for('update');
     if (result) {
-      const archive = await deps.store.put(
-        tenantKey(tenantId, 'executions', action.id, `${executionId}.json`),
-        canonicalJson({ receipt: result.receipt, response: result.rawResponse ?? null }),
-        'application/json',
-      );
+      const archive = await deps.store.put(tenantKey(tenantId, 'executions', action.id, `${executionId}.json`), canonicalJson({ receipt: result.receipt, response: result.rawResponse ?? null }), 'application/json');
       await tx
         .update(executions)
         .set({
@@ -562,19 +567,9 @@ export async function executeAction(deps: CoreDeps, tenantId: string, actionId: 
 /* ------------------------------------------------------------------ */
 
 /** Executors whose readback is keyed by the provider object id returned at execution time. */
-const NEEDS_OBJECT_ID = new Set([
-  'social.facebook.publish_post',
-  'social.facebook.reply_comment',
-  'social.instagram.publish_media',
-  'social.tiktok.publish_video',
-  'social.youtube.upload_video',
-  'email.send',
-]);
+const NEEDS_OBJECT_ID = new Set(['social.facebook.publish_post', 'social.facebook.reply_comment', 'social.instagram.publish_media', 'social.tiktok.publish_video', 'social.youtube.upload_video', 'email.send']);
 
-export type VerificationOutcome =
-  | { kind: 'noop'; status: string }
-  | { kind: 'reschedule'; runAt: Date; attempt: number }
-  | { kind: 'done'; status: string; verdict: string };
+export type VerificationOutcome = { kind: 'noop'; status: string } | { kind: 'reschedule'; runAt: Date; attempt: number } | { kind: 'done'; status: string; verdict: string };
 
 async function connectorFor(deps: CoreDeps, tx: Tx, tenantId: string, action: ActionRow) {
   const [conn] = await tx.select().from(connections).where(eq(connections.id, action.connectionId!));
@@ -602,7 +597,10 @@ export async function verifyAction(deps: CoreDeps, tenantId: string, actionId: s
         deps.logger.warn({ actionId: a.id, err: err instanceof Error ? err.message : String(err) }, 'param resolution failed during verification; using stored params');
       }
     }
-    const prior = await tx.select({ n: sql<number>`count(*)::int` }).from(executionProofs).where(and(eq(executionProofs.actionId, a.id), eq(executionProofs.purpose, 'postcondition')));
+    const prior = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(executionProofs)
+      .where(and(eq(executionProofs.actionId, a.id), eq(executionProofs.purpose, 'postcondition')));
     return { a, ex, def, ctx, params, attempt: (prior[0]?.n ?? 0) + 1 };
   });
   if (!loaded) return { kind: 'noop', status: 'MISSING' };

@@ -1,9 +1,9 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "includes": ["**", "!**/node_modules", "!**/dist", "!**/.astro", "!**/.tools", "!**/.data", "!**/drizzle/meta", "!**/*.md"]
+    "includes": ["**", "!**/node_modules", "!**/dist", "!**/.astro", "!**/.tools", "!**/.data", "!**/.venv", "!**/__pycache__", "!**/drizzle/meta", "!**/*.md"]
   },
-  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 110 },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 320 },
   "javascript": { "formatter": { "quoteStyle": "single", "semicolons": "always", "trailingCommas": "all" } },
   "linter": {
     "enabled": true,

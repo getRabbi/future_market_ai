@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
-import { type DbOrTx, type Tx, commissionLedger, creatorContracts, creatorSubmissions, creators, evidenceRecords, fraudFlags, referralClicks, referralConversions, referralLinks, withSystem, withTenant, sequential } from '@futuregrow/db';
+import { commissionLedger, creatorContracts, creatorSubmissions, creators, type DbOrTx, evidenceRecords, fraudFlags, referralClicks, referralConversions, referralLinks, sequential, type Tx, withSystem, withTenant } from '@futuregrow/db';
 import { FgError, identifierHash, invalid, notFound } from '@futuregrow/observability';
+import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, record, requireRole } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { proposeAction } from '../m23-execution/gateway.js';
@@ -36,7 +36,10 @@ export async function createCreator(tx: Tx, tenantId: string, actor: Actor, raw:
   const input = CreatorInputSchema.parse(raw);
   if (input.contactEmail && !input.contactConsentEvidenceId) throw invalid('storing creator contact details requires consent/contract evidence');
   if (input.contactConsentEvidenceId) await requireEvidence(tx, input.contactConsentEvidenceId, ['consent', 'contract']);
-  const [row] = await tx.insert(creators).values({ tenantId, ...input }).returning();
+  const [row] = await tx
+    .insert(creators)
+    .values({ tenantId, ...input })
+    .returning();
   await audit(tx, tenantId, actor, 'creator.creator.created', { type: 'creator', id: row!.id }, { name: input.name });
   return row!;
 }
@@ -93,7 +96,10 @@ export async function createReferralLink(tx: Tx, tenantId: string, actor: Actor,
     throw invalid('invalid destination URL');
   }
   if (dest.protocol !== 'https:') throw invalid('destination must be https');
-  const [k] = await tx.select().from(creatorContracts).where(and(eq(creatorContracts.id, input.contractId), eq(creatorContracts.creatorId, input.creatorId)));
+  const [k] = await tx
+    .select()
+    .from(creatorContracts)
+    .where(and(eq(creatorContracts.id, input.contractId), eq(creatorContracts.creatorId, input.creatorId)));
   if (!k) throw notFound('contract for this creator');
   const [row] = await tx.insert(referralLinks).values({ tenantId, creatorId: input.creatorId, contractId: input.contractId, code: newReferralCode(), destinationUrl: dest.toString() }).returning();
   await audit(tx, tenantId, actor, 'creator.referral_link.created', { type: 'referral_link', id: row!.id }, { code: row!.code });
@@ -131,7 +137,10 @@ async function flagOnce(tx: Tx, tenantId: string, f: { creatorId: string | null;
     .from(fraudFlags)
     .where(and(eq(fraudFlags.kind, f.kind), eq(fraudFlags.status, 'open'), f.linkId ? eq(fraudFlags.linkId, f.linkId) : sql`true`, f.creatorId ? eq(fraudFlags.creatorId, f.creatorId) : sql`true`));
   if (open) return open.id;
-  const [row] = await tx.insert(fraudFlags).values({ tenantId, ...f }).returning();
+  const [row] = await tx
+    .insert(fraudFlags)
+    .values({ tenantId, ...f })
+    .returning();
   await audit(tx, tenantId, systemActor('referral-fraud'), 'creator.fraud.flagged', { type: 'fraud_flag', id: row!.id }, { kind: f.kind });
   return row!.id;
 }
@@ -169,7 +178,9 @@ export function referralCodeOf(o: ShopifyOrder): string[] {
 }
 
 const toMicros = (s: string) => {
-  const m = String(s).trim().match(/^(\d+)(?:\.(\d{1,6}))?$/);
+  const m = String(s)
+    .trim()
+    .match(/^(\d+)(?:\.(\d{1,6}))?$/);
   if (!m) throw new Error(`invalid money amount ${s}`);
   return Number(m[1]) * 1_000_000 + Number((m[2] ?? '').padEnd(6, '0'));
 };
@@ -181,7 +192,15 @@ export async function recordOrder(deps: CoreDeps, tenantId: string, o: ShopifyOr
   if (codes.length === 0) return 'no_referral';
   const actor = systemActor('referral-attribution');
   return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
-    const links = await tx.select().from(referralLinks).where(sql`${referralLinks.code} in (${sql.join(codes.map((c) => sql`${c}`), sql`, `)})`);
+    const links = await tx
+      .select()
+      .from(referralLinks)
+      .where(
+        sql`${referralLinks.code} in (${sql.join(
+          codes.map((c) => sql`${c}`),
+          sql`, `,
+        )})`,
+      );
     const link = links[0];
     if (!link) return 'unknown_code';
     const [contract] = await tx.select().from(creatorContracts).where(eq(creatorContracts.id, link.contractId));
@@ -205,11 +224,7 @@ export async function recordOrder(deps: CoreDeps, tenantId: string, o: ShopifyOr
       observedAt: occurredAt,
       now: deps.clock.now(),
     });
-    const [conv] = await tx
-      .insert(referralConversions)
-      .values({ tenantId, linkId: link.id, orderRef, amountMicros: amount, currency: o.currency.toUpperCase(), customerHash, evidenceId: ev.evidenceId, occurredAt })
-      .onConflictDoNothing()
-      .returning();
+    const [conv] = await tx.insert(referralConversions).values({ tenantId, linkId: link.id, orderRef, amountMicros: amount, currency: o.currency.toUpperCase(), customerHash, evidenceId: ev.evidenceId, occurredAt }).onConflictDoNothing().returning();
     if (!conv) return 'duplicate';
     await record(tx, tenantId, actor, 'creator.conversion.recorded', { type: 'referral_conversion', id: conv.id }, { linkId: link.id, amountMicros: amount, currency: conv.currency });
 
@@ -252,19 +267,32 @@ export async function recordRefund(deps: CoreDeps, tenantId: string, r: ShopifyR
   const refunded = (r.transactions ?? []).filter((t) => t.kind === 'refund' && t.status === 'success').reduce((s, t) => s + toMicros(t.amount), 0);
   if (refunded <= 0) return 'no_refund_amount';
   return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
-    const [conv] = await tx.select().from(referralConversions).where(eq(referralConversions.orderRef, `shopify:${r.order_id}`)).for('update');
+    const [conv] = await tx
+      .select()
+      .from(referralConversions)
+      .where(eq(referralConversions.orderRef, `shopify:${r.order_id}`))
+      .for('update');
     if (!conv) return 'not_referred';
     const total = Math.min(conv.amountMicros, conv.refundedMicros + refunded);
     const delta = total - conv.refundedMicros;
     if (delta <= 0) return 'already_refunded';
-    await tx.update(referralConversions).set({ refundedMicros: total, status: total >= conv.amountMicros ? 'refunded' : 'partially_refunded' }).where(eq(referralConversions.id, conv.id));
+    await tx
+      .update(referralConversions)
+      .set({ refundedMicros: total, status: total >= conv.amountMicros ? 'refunded' : 'partially_refunded' })
+      .where(eq(referralConversions.id, conv.id));
     const [link] = await tx.select().from(referralLinks).where(eq(referralLinks.id, conv.linkId));
     const [contract] = await tx.select().from(creatorContracts).where(eq(creatorContracts.id, link!.contractId));
-    const [accrual] = await tx.select().from(commissionLedger).where(eq(commissionLedger.ref, `accrual:${conv.orderRef}`));
+    const [accrual] = await tx
+      .select()
+      .from(commissionLedger)
+      .where(eq(commissionLedger.ref, `accrual:${conv.orderRef}`));
     if (accrual && contract) {
       // Claw back proportionally to the refunded share of the attributed amount.
       const claw = Math.round((accrual.amountMicros * delta) / conv.amountMicros);
-      await tx.insert(commissionLedger).values({ tenantId, creatorId: link!.creatorId, conversionId: conv.id, kind: 'clawback', amountMicros: -claw, currency: accrual.currency, ref: `clawback:shopify:${r.id}` }).onConflictDoNothing();
+      await tx
+        .insert(commissionLedger)
+        .values({ tenantId, creatorId: link!.creatorId, conversionId: conv.id, kind: 'clawback', amountMicros: -claw, currency: accrual.currency, ref: `clawback:shopify:${r.id}` })
+        .onConflictDoNothing();
     }
     const [stats] = await tx
       .select({ n: sql<number>`count(*)::int`, refunded: sql<number>`count(*) filter (where ${referralConversions.refundedMicros} > 0)::int` })
@@ -308,7 +336,10 @@ export function disclosureCheck(text: string, required: string[]) {
 export async function submitContent(tx: Tx, tenantId: string, actor: Actor, input: { creatorId: string; contractId: string; contentUrl?: string | null; contentText: string }) {
   requireRole(actor, STAFF, 'recording creator submissions');
   if (!input.contentText.trim()) throw invalid('content text (caption/script) is required');
-  const [k] = await tx.select().from(creatorContracts).where(and(eq(creatorContracts.id, input.contractId), eq(creatorContracts.creatorId, input.creatorId)));
+  const [k] = await tx
+    .select()
+    .from(creatorContracts)
+    .where(and(eq(creatorContracts.id, input.contractId), eq(creatorContracts.creatorId, input.creatorId)));
   if (!k) throw notFound('contract for this creator');
   const check = disclosureCheck(input.contentText, k.requiredDisclosures);
   const [row] = await tx
@@ -326,7 +357,11 @@ export async function reviewSubmission(tx: Tx, tenantId: string, actor: Actor, i
   if (!s) throw notFound('submission');
   if (s.status !== 'pending_review') throw invalid(`submission is ${s.status}`);
   if (decision === 'approved' && !(s.disclosureCheck as { passed?: boolean }).passed) throw invalid('content without a conspicuous disclosure cannot be approved');
-  const [row] = await tx.update(creatorSubmissions).set({ status: decision, reviewedBy: actorRef(actor) }).where(eq(creatorSubmissions.id, id)).returning();
+  const [row] = await tx
+    .update(creatorSubmissions)
+    .set({ status: decision, reviewedBy: actorRef(actor) })
+    .where(eq(creatorSubmissions.id, id))
+    .returning();
   await audit(tx, tenantId, actor, `creator.submission.${decision}`, { type: 'creator_submission', id }, {});
   return row!;
 }

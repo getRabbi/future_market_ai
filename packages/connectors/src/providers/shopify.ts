@@ -1,5 +1,5 @@
 import { ProviderHttpError, preWrite } from '../http.js';
-import { type ActionExecutor, type ConnectorContext, type HealthResult, type ReadConnector, compareProof, proof } from '../types.js';
+import { type ActionExecutor, type ConnectorContext, compareProof, type HealthResult, proof, type ReadConnector } from '../types.js';
 
 type ShopCreds = Extract<ConnectorContext['credentials'], { provider: 'shopify' }>;
 
@@ -81,12 +81,7 @@ interface DiscountParams {
 }
 
 async function findByCode(ctx: ConnectorContext, code: string): Promise<DiscountNode | null> {
-  const r = await gql<{ codeDiscountNodeByCode: DiscountNode | null }>(
-    ctx,
-    `query($code: String!) { codeDiscountNodeByCode(code: $code) { ${DISCOUNT_FIELDS} } }`,
-    { code },
-    true,
-  );
+  const r = await gql<{ codeDiscountNodeByCode: DiscountNode | null }>(ctx, `query($code: String!) { codeDiscountNodeByCode(code: $code) { ${DISCOUNT_FIELDS} } }`, { code }, true);
   return r.data.data?.codeDiscountNodeByCode ?? null;
 }
 
@@ -137,20 +132,10 @@ export const shopifyCreateDiscount: ActionExecutor<DiscountParams> = {
     const node = await findByCode(ctx, p.code);
     if (!node) return proof('PENDING', 'read_after_write', { exists: true }, { exists: false }, ctx.now());
     const d = node.codeDiscount ?? {};
-    return compareProof(
-      'read_after_write',
-      { title: p.title, code: p.code, percentage: p.percentage, usageLimit: p.usageLimit },
-      { title: d.title, code: d.codes?.nodes[0]?.code, percentage: d.customerGets?.value?.percentage, usageLimit: d.usageLimit ?? null, status: d.status },
-      ctx.now(),
-    );
+    return compareProof('read_after_write', { title: p.title, code: p.code, percentage: p.percentage, usageLimit: p.usageLimit }, { title: d.title, code: d.codes?.nodes[0]?.code, percentage: d.customerGets?.value?.percentage, usageLimit: d.usageLimit ?? null, status: d.status }, ctx.now());
   },
   async rollback(ctx, _p, receipt) {
-    const res = await gql<{ discountCodeDeactivate: { userErrors: { message: string }[] } }>(
-      ctx,
-      'mutation($id: ID!) { discountCodeDeactivate(id: $id) { codeDiscountNode { id } userErrors { field code message } } }',
-      { id: receipt.providerObjectId },
-      true,
-    );
+    const res = await gql<{ discountCodeDeactivate: { userErrors: { message: string }[] } }>(ctx, 'mutation($id: ID!) { discountCodeDeactivate(id: $id) { codeDiscountNode { id } userErrors { field code message } } }', { id: receipt.providerObjectId }, true);
     return {
       receipt: { providerRequestId: res.requestId, providerObjectId: receipt.providerObjectId, httpStatus: res.status, responseSha256: res.sha256, observedAt: ctx.now().toISOString(), details: { rollback: 'deactivate' } },
       beforeState: null,
@@ -160,9 +145,7 @@ export const shopifyCreateDiscount: ActionExecutor<DiscountParams> = {
   async verifyRollback(ctx, p) {
     const node = await findByCode(ctx, p.code);
     const status = node?.codeDiscount?.status ?? null;
-    return status === 'EXPIRED' || node === null
-      ? proof('VERIFIED', 'read_after_write', { active: false }, { status }, ctx.now())
-      : proof('MISMATCH', 'read_after_write', { active: false }, { status }, ctx.now());
+    return status === 'EXPIRED' || node === null ? proof('VERIFIED', 'read_after_write', { active: false }, { status }, ctx.now()) : proof('MISMATCH', 'read_after_write', { active: false }, { status }, ctx.now());
   },
 };
 
@@ -170,12 +153,7 @@ export const shopifyRead: ReadConnector = {
   provider: 'shopify',
   async healthCheck(ctx): Promise<HealthResult> {
     try {
-      const r = await gql<{ shop: { name: string; currencyCode: string }; currentAppInstallation?: { accessScopes: { handle: string }[] } }>(
-        ctx,
-        '{ shop { name currencyCode } currentAppInstallation { accessScopes { handle } } }',
-        {},
-        true,
-      );
+      const r = await gql<{ shop: { name: string; currencyCode: string }; currentAppInstallation?: { accessScopes: { handle: string }[] } }>(ctx, '{ shop { name currencyCode } currentAppInstallation { accessScopes { handle } } }', {}, true);
       return {
         healthy: true,
         status: 'healthy',

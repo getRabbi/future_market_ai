@@ -1,10 +1,10 @@
-import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MODULES } from '@futuregrow/contracts';
 import { loadEnv } from '@futuregrow/runtime';
+import type { FastifyInstance } from 'fastify';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { buildApp } from '../../api/src/app.js';
-import { SECTIONS, SECTION_GROUPS } from '../src/lib/catalog.js';
+import { SECTION_GROUPS, SECTIONS } from '../src/lib/catalog.js';
 
 let h: CoreHarness;
 let app: FastifyInstance;

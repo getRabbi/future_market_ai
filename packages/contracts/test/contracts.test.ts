@@ -1,14 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  ACTION_STATES,
-  ACTION_TRANSITIONS,
-  ACTION_TYPES,
-  GrowthDecisionSchema,
-  MODULES,
-  TERMINAL_ACTION_STATES,
-  canTransition,
-  canonicalJson,
-} from '../src/index.js';
+import { ACTION_STATES, ACTION_TRANSITIONS, ACTION_TYPES, canonicalJson, canTransition, GrowthDecisionSchema, MODULES, TERMINAL_ACTION_STATES } from '../src/index.js';
 
 describe('canonical module registry (FG-P0-001)', () => {
   it('has exactly 24 active modules with unique ids M01..M24', () => {
@@ -56,7 +47,7 @@ describe('execution state machine (D-011)', () => {
     const queue: string[] = ['PROPOSED'];
     while (queue.length) {
       const s = queue.shift() as (typeof ACTION_STATES)[number];
-      for (const n of ACTION_TRANSITIONS[s]) if (!seen.has(n)) (seen.add(n), queue.push(n));
+      for (const n of ACTION_TRANSITIONS[s]) if (!seen.has(n)) seen.add(n), queue.push(n);
     }
     expect(seen.size).toBe(ACTION_STATES.length);
   });
@@ -80,9 +71,7 @@ describe('action type allowlist', () => {
 
 describe('canonicalJson', () => {
   it('is key-order independent and stable', () => {
-    expect(canonicalJson({ b: 1, a: { d: [1, { z: 1, y: 2 }], c: null } })).toBe(
-      canonicalJson({ a: { c: null, d: [1, { y: 2, z: 1 }] }, b: 1 }),
-    );
+    expect(canonicalJson({ b: 1, a: { d: [1, { z: 1, y: 2 }], c: null } })).toBe(canonicalJson({ a: { c: null, d: [1, { y: 2, z: 1 }] }, b: 1 }));
     expect(canonicalJson({ a: undefined, b: 'x' })).toBe('{"b":"x"}');
   });
 

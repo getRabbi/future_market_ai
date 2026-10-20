@@ -23,43 +23,13 @@ export const EVIDENCE_KINDS = ['metric', 'document', 'observation', 'api_respons
 export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 
 /** Purposes for which evidence/personal data may be used (purpose limitation). */
-export const DATA_PURPOSES = [
-  'analytics',
-  'forecasting',
-  'causal_measurement',
-  'experimentation',
-  'personalization',
-  'targeting',
-  'creative_generation',
-  'publishing',
-  'messaging',
-  'competitive_analysis',
-  'support',
-  'autonomous_execution',
-] as const;
+export const DATA_PURPOSES = ['analytics', 'forecasting', 'causal_measurement', 'experimentation', 'personalization', 'targeting', 'creative_generation', 'publishing', 'messaging', 'competitive_analysis', 'support', 'autonomous_execution'] as const;
 export type DataPurpose = (typeof DATA_PURPOSES)[number];
 
 /**
  * Execution state machine (product plan, D-011). There is deliberately no SUCCESS state.
  */
-export const ACTION_STATES = [
-  'PROPOSED',
-  'EVIDENCE_READY',
-  'POLICY_CHECKED',
-  'APPROVAL_REQUIRED',
-  'APPROVED',
-  'PREFLIGHT_VERIFIED',
-  'EXECUTING',
-  'EXECUTED_UNVERIFIED',
-  'VERIFIED',
-  'FAILED',
-  'ROLLBACK_REQUIRED',
-  'ROLLED_BACK',
-  'ESCALATED',
-  'DENIED',
-  'REJECTED',
-  'CANCELLED',
-] as const;
+export const ACTION_STATES = ['PROPOSED', 'EVIDENCE_READY', 'POLICY_CHECKED', 'APPROVAL_REQUIRED', 'APPROVED', 'PREFLIGHT_VERIFIED', 'EXECUTING', 'EXECUTED_UNVERIFIED', 'VERIFIED', 'FAILED', 'ROLLBACK_REQUIRED', 'ROLLED_BACK', 'ESCALATED', 'DENIED', 'REJECTED', 'CANCELLED'] as const;
 export type ActionState = (typeof ACTION_STATES)[number];
 
 export const ACTION_TRANSITIONS: Readonly<Record<ActionState, readonly ActionState[]>> = {
@@ -81,9 +51,7 @@ export const ACTION_TRANSITIONS: Readonly<Record<ActionState, readonly ActionSta
   CANCELLED: [],
 };
 
-export const TERMINAL_ACTION_STATES: readonly ActionState[] = ACTION_STATES.filter(
-  (s) => ACTION_TRANSITIONS[s].length === 0,
-);
+export const TERMINAL_ACTION_STATES: readonly ActionState[] = ACTION_STATES.filter((s) => ACTION_TRANSITIONS[s].length === 0);
 
 export function canTransition(from: ActionState, to: ActionState): boolean {
   return ACTION_TRANSITIONS[from].includes(to);
@@ -101,20 +69,7 @@ export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];
 export const KILL_SWITCH_SCOPES = ['system', 'tenant', 'connector', 'object', 'model', 'agent'] as const;
 export type KillSwitchScope = (typeof KILL_SWITCH_SCOPES)[number];
 
-export const PROVIDERS = [
-  'internal',
-  'meta',
-  'google_ads',
-  'tiktok',
-  'youtube',
-  'shopify',
-  'app_store_connect',
-  'google_play',
-  'resend',
-  'posthog',
-  'chatwoot',
-  'search_console',
-] as const;
+export const PROVIDERS = ['internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export const CAPABILITY_FALLBACKS = ['queue_for_human', 'disable', 'read_only'] as const;
@@ -126,33 +81,11 @@ export type TriState = (typeof TRI_STATE)[number];
 export const ARTIFACT_TYPES = ['code', 'weights', 'lora', 'embedding', 'voice', 'dataset', 'plugin', 'stock_media', 'music', 'font', 'likeness'] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
-export const RISK_CATEGORIES = [
-  'SPEND',
-  'PRICING',
-  'PUBLIC_PUBLISHING',
-  'MESSAGING',
-  'TARGETING',
-  'DATA_EXPORT',
-  'SYNTHETIC_PERSONA',
-  'EXPERIMENT',
-  'STORE_METADATA',
-  'PAYOUT',
-  'INTERNAL',
-] as const;
+export const RISK_CATEGORIES = ['SPEND', 'PRICING', 'PUBLIC_PUBLISHING', 'MESSAGING', 'TARGETING', 'DATA_EXPORT', 'SYNTHETIC_PERSONA', 'EXPERIMENT', 'STORE_METADATA', 'PAYOUT', 'INTERNAL'] as const;
 export type RiskCategory = (typeof RISK_CATEGORIES)[number];
 
 /** Organization roles (Better Auth member.role may hold several, comma separated). */
-export const TENANT_ROLES = [
-  'owner',
-  'admin',
-  'growth_operator',
-  'approver',
-  'finance_approver',
-  'legal_approver',
-  'privacy_officer',
-  'analyst',
-  'viewer',
-] as const;
+export const TENANT_ROLES = ['owner', 'admin', 'growth_operator', 'approver', 'finance_approver', 'legal_approver', 'privacy_officer', 'analyst', 'viewer'] as const;
 export type TenantRole = (typeof TENANT_ROLES)[number];
 
 export const CONSENT_STATUSES = ['granted', 'denied', 'withdrawn'] as const;
@@ -161,16 +94,7 @@ export type ConsentStatus = (typeof CONSENT_STATUSES)[number];
 export const LAWFUL_BASES = ['consent', 'contract', 'legitimate_interest', 'legal_obligation', 'vital_interest', 'public_task'] as const;
 export type LawfulBasis = (typeof LAWFUL_BASES)[number];
 
-export const CONSENT_PURPOSES = [
-  'marketing_email',
-  'marketing_sms',
-  'marketing_push',
-  'analytics',
-  'personalization',
-  'ads_customer_match',
-  'sale_or_share',
-  'profiling',
-] as const;
+export const CONSENT_PURPOSES = ['marketing_email', 'marketing_sms', 'marketing_push', 'analytics', 'personalization', 'ads_customer_match', 'sale_or_share', 'profiling'] as const;
 export type ConsentPurpose = (typeof CONSENT_PURPOSES)[number];
 
 export const MESSAGE_CHANNELS = ['email', 'sms', 'push', 'whatsapp'] as const;
@@ -179,16 +103,7 @@ export type MessageChannel = (typeof MESSAGE_CHANNELS)[number];
 export const SUPPRESSION_CHANNELS = ['email', 'sms', 'push', 'whatsapp', 'ads', 'all'] as const;
 export type SuppressionChannel = (typeof SUPPRESSION_CHANNELS)[number];
 
-export const ANALYTICS_KINDS = [
-  'forecast',
-  'mmm',
-  'experiment_analysis',
-  'trend_detection',
-  'topic_clustering',
-  'propensity_training',
-  'anomaly_scan',
-  'backup_verification',
-] as const;
+export const ANALYTICS_KINDS = ['forecast', 'mmm', 'experiment_analysis', 'trend_detection', 'topic_clustering', 'propensity_training', 'anomaly_scan', 'backup_verification'] as const;
 export type AnalyticsKind = (typeof ANALYTICS_KINDS)[number];
 
 export const ESTIMATE_METHODS = ['experiment', 'mmm', 'causal_model', 'unknown'] as const;

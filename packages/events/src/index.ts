@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EVENT_TYPES, type EventEnvelope, EventEnvelopeSchema, type EventType } from '@futuregrow/contracts';
-import { type Tx, outboxEvents } from '@futuregrow/db';
+import { outboxEvents, type Tx } from '@futuregrow/db';
 
 export interface EmitInput {
   tenantId: string;

@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
 import type { ResolvedEmail } from '@futuregrow/connectors';
-import { type DbOrTx, type Tx, customerEvents, customerProfiles, executions, journeyEnrollments, journeys, messageTemplates, messages, withSystem, withTenant } from '@futuregrow/db';
+import { customerEvents, customerProfiles, type DbOrTx, executions, journeyEnrollments, journeys, messages, messageTemplates, type Tx, withSystem, withTenant } from '@futuregrow/db';
 import { conflict, hmacSha256Hex, invalid, notFound, safeEqual, sha256Hex } from '@futuregrow/observability';
+import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, record, requireRole } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { addSuppression, recordConsent } from '../m02-customers/index.js';
@@ -69,9 +69,22 @@ export async function approveTemplate(tx: Tx, deps: CoreDeps, tenantId: string, 
   if (t.createdBy === actorRef(actor)) throw invalid('the author cannot approve their own template');
   // Re-lint at approval: claims may have expired since drafting.
   const lint = await lintCopy(tx, `${t.subject}\n${t.bodyText}`, { claimIds: t.claimIds, channel: 'email', now: deps.clock.now() });
-  if (!lint.passed) throw invalid(`template fails lint: ${lint.violations.filter((v) => v.severity === 'block').map((v) => v.code).join(', ')}`);
-  await tx.update(messageTemplates).set({ status: 'archived' }).where(and(eq(messageTemplates.name, t.name), eq(messageTemplates.status, 'approved')));
-  const [row] = await tx.update(messageTemplates).set({ status: 'approved', approvedBy: actorRef(actor), lint: lint as unknown as Record<string, unknown> }).where(eq(messageTemplates.id, id)).returning();
+  if (!lint.passed)
+    throw invalid(
+      `template fails lint: ${lint.violations
+        .filter((v) => v.severity === 'block')
+        .map((v) => v.code)
+        .join(', ')}`,
+    );
+  await tx
+    .update(messageTemplates)
+    .set({ status: 'archived' })
+    .where(and(eq(messageTemplates.name, t.name), eq(messageTemplates.status, 'approved')));
+  const [row] = await tx
+    .update(messageTemplates)
+    .set({ status: 'approved', approvedBy: actorRef(actor), lint: lint as unknown as Record<string, unknown> })
+    .where(eq(messageTemplates.id, id))
+    .returning();
   await audit(tx, tenantId, actor, 'lifecycle.template.approved', { type: 'message_template', id }, { name: t.name, version: t.version });
   return row!;
 }
@@ -154,12 +167,7 @@ const DENIED_STATES = new Set(['DENIED', 'REJECTED']);
  * sender identity and jurisdiction are all evaluated by policy at proposal AND again at preflight,
  * immediately before the provider call.
  */
-async function submitMessage(
-  deps: CoreDeps,
-  tenantId: string,
-  proposer: Actor,
-  args: { messageId: string; profileId: string; templateId: string; journeyId?: string | null; enrollmentId?: string | null; evidenceIds: string[]; connectionId: string },
-) {
+async function submitMessage(deps: CoreDeps, tenantId: string, proposer: Actor, args: { messageId: string; profileId: string; templateId: string; journeyId?: string | null; enrollmentId?: string | null; evidenceIds: string[]; connectionId: string }) {
   const prep = await withTenant(deps.db, { tenantId, actor: actorRef(proposer) }, async (tx) => {
     const [t] = await tx.select().from(messageTemplates).where(eq(messageTemplates.id, args.templateId));
     if (!t || t.status !== 'approved') throw invalid('template is not approved');
@@ -243,7 +251,10 @@ async function setMessageStatus(tx: Tx, tenantId: string, messageId: string, sta
   if (!m) return false;
   if ((STATUS_RANK[status] ?? 0) <= (STATUS_RANK[m.status] ?? 0) && status !== m.status) return false;
   if (status === m.status && Object.keys(extra).length === 0) return false;
-  await tx.update(messages).set({ status, lastEventAt: new Date(), ...(reason ? { statusReason: reason.slice(0, 1000) } : {}), ...extra }).where(eq(messages.id, messageId));
+  await tx
+    .update(messages)
+    .set({ status, lastEventAt: new Date(), ...(reason ? { statusReason: reason.slice(0, 1000) } : {}), ...extra })
+    .where(eq(messages.id, messageId));
   if (status !== m.status) await record(tx, tenantId, systemActor('lifecycle'), 'lifecycle.message.status_changed', { type: 'message', id: messageId }, { from: m.status, to: status });
   return true;
 }
@@ -270,9 +281,7 @@ registerWebhookHandler('resend', async ({ deps, payload }) => {
   const p = payload as { type?: string; data?: { email_id?: string; bounce?: { type?: string } } };
   const emailId = p.data?.email_id;
   if (!p.type?.startsWith('email.') || !emailId) return 'ignored';
-  const [ex] = await withSystem(deps.db, 'system:webhooks', (tx) =>
-    tx.select({ tenantId: executions.tenantId, actionId: executions.actionId }).from(executions).where(eq(executions.providerObjectId, emailId)).limit(1),
-  );
+  const [ex] = await withSystem(deps.db, 'system:webhooks', (tx) => tx.select({ tenantId: executions.tenantId, actionId: executions.actionId }).from(executions).where(eq(executions.providerObjectId, emailId)).limit(1));
   if (!ex) return 'ignored';
   const map: Record<string, string> = { 'email.sent': 'sent_unverified', 'email.delivered': 'delivered', 'email.bounced': 'bounced', 'email.complained': 'complained', 'email.failed': 'failed' };
   const status = map[p.type];
@@ -296,7 +305,13 @@ registerWebhookHandler('resend', async ({ deps, payload }) => {
 /* ------------------------------------------------------------------ */
 
 export const JourneyStepSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('wait'), hours: z.number().positive().max(24 * 90) }),
+  z.object({
+    type: z.literal('wait'),
+    hours: z
+      .number()
+      .positive()
+      .max(24 * 90),
+  }),
   z.object({ type: z.literal('send_email'), templateId: z.string().uuid() }),
   /** Next-best-message: the variant assigned by an M10 experiment (bandit or fixed) picks the template. */
   z.object({ type: z.literal('send_experiment'), experimentId: z.string().uuid() }),
@@ -306,7 +321,11 @@ export type JourneyStep = z.infer<typeof JourneyStepSchema>;
 
 export const JourneyInputSchema = z.object({
   name: z.string().min(2).max(200),
-  triggerEvent: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\- ]+$/),
+  triggerEvent: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[A-Za-z0-9_.:\- ]+$/),
   steps: z.array(JourneyStepSchema).min(1).max(30),
   evidenceFreshnessHours: z.number().int().min(1).max(720).default(168),
   connectionId: z.string().uuid(),
@@ -337,17 +356,28 @@ export async function activateJourney(tx: Tx, tenantId: string, actor: Actor, id
   const { steps } = journeyParts(j);
   const templateIds = steps.flatMap((s) => (s.type === 'send_email' ? [s.templateId] : []));
   if (templateIds.length) {
-    const ok = await tx.select({ id: messageTemplates.id }).from(messageTemplates).where(and(inArray(messageTemplates.id, templateIds), eq(messageTemplates.status, 'approved')));
+    const ok = await tx
+      .select({ id: messageTemplates.id })
+      .from(messageTemplates)
+      .where(and(inArray(messageTemplates.id, templateIds), eq(messageTemplates.status, 'approved')));
     if (ok.length !== new Set(templateIds).size) throw invalid('every template in the journey must be approved');
   }
-  const [row] = await tx.update(journeys).set({ status: 'active', approvedBy: j.approvedBy ?? actorRef(actor), activatedAt: j.activatedAt ?? new Date() }).where(eq(journeys.id, id)).returning();
+  const [row] = await tx
+    .update(journeys)
+    .set({ status: 'active', approvedBy: j.approvedBy ?? actorRef(actor), activatedAt: j.activatedAt ?? new Date() })
+    .where(eq(journeys.id, id))
+    .returning();
   await record(tx, tenantId, actor, 'lifecycle.journey.activated', { type: 'journey', id }, { name: j.name });
   return row!;
 }
 
 export async function pauseJourney(tx: Tx, tenantId: string, actor: Actor, id: string, reason: string) {
   requireRole(actor, ['owner', 'admin', 'approver', 'growth_operator'], 'pausing journeys');
-  const [row] = await tx.update(journeys).set({ status: 'paused' }).where(and(eq(journeys.id, id), eq(journeys.status, 'active'))).returning();
+  const [row] = await tx
+    .update(journeys)
+    .set({ status: 'paused' })
+    .where(and(eq(journeys.id, id), eq(journeys.status, 'active')))
+    .returning();
   if (!row) throw conflict('journey is not active');
   await audit(tx, tenantId, actor, 'lifecycle.journey.paused', { type: 'journey', id }, { reason });
   return row;
@@ -367,14 +397,7 @@ export async function enrollFromEvents(deps: CoreDeps, tenantId: string, limit =
       const evs = await tx
         .select({ id: customerEvents.id, profileId: customerEvents.profileId, occurredAt: customerEvents.occurredAt })
         .from(customerEvents)
-        .where(
-          and(
-            eq(customerEvents.eventName, j.triggerEvent),
-            gte(customerEvents.receivedAt, j.activatedAt!),
-            sql`${customerEvents.profileId} is not null`,
-            sql`not exists (select 1 from journey_enrollments e where e.journey_id = ${j.id} and e.trigger_event_id = ${customerEvents.id})`,
-          ),
-        )
+        .where(and(eq(customerEvents.eventName, j.triggerEvent), gte(customerEvents.receivedAt, j.activatedAt!), sql`${customerEvents.profileId} is not null`, sql`not exists (select 1 from journey_enrollments e where e.journey_id = ${j.id} and e.trigger_event_id = ${customerEvents.id})`))
         .orderBy(asc(customerEvents.receivedAt))
         .limit(limit);
       for (const e of evs) {
@@ -392,11 +415,7 @@ export async function enrollFromEvents(deps: CoreDeps, tenantId: string, limit =
           freshnessSlaHours: j.evidenceFreshnessHours,
           now: deps.clock.now(),
         });
-        const ins = await tx
-          .insert(journeyEnrollments)
-          .values({ tenantId, journeyId: j.id, profileId: e.profileId!, nextRunAt: deps.clock.now(), enrolledAt: deps.clock.now(), triggerEventId: e.id, evidenceId: ev.evidenceId })
-          .onConflictDoNothing()
-          .returning({ id: journeyEnrollments.id });
+        const ins = await tx.insert(journeyEnrollments).values({ tenantId, journeyId: j.id, profileId: e.profileId!, nextRunAt: deps.clock.now(), enrolledAt: deps.clock.now(), triggerEventId: e.id, evidenceId: ev.evidenceId }).onConflictDoNothing().returning({ id: journeyEnrollments.id });
         if (ins.length) {
           enrolled++;
           await record(tx, tenantId, actor, 'lifecycle.enrollment.created', { type: 'journey_enrollment', id: ins[0]!.id }, { journeyId: j.id });
@@ -421,7 +440,16 @@ export async function tickJourneys(deps: CoreDeps, tenantId: string, limit = 100
       .orderBy(asc(journeyEnrollments.nextRunAt))
       .limit(limit)
       .for('update', { skipLocked: true });
-    if (rows.length) await tx.update(journeyEnrollments).set({ nextRunAt: new Date(now.getTime() + LEASE_MS) }).where(inArray(journeyEnrollments.id, rows.map((r) => r.id)));
+    if (rows.length)
+      await tx
+        .update(journeyEnrollments)
+        .set({ nextRunAt: new Date(now.getTime() + LEASE_MS) })
+        .where(
+          inArray(
+            journeyEnrollments.id,
+            rows.map((r) => r.id),
+          ),
+        );
     return rows;
   });
   const results: { enrollmentId: string; outcome: string }[] = [];
@@ -443,11 +471,15 @@ async function advance(deps: CoreDeps, tenantId: string, actor: Actor, en: typeo
     j: (await tx.select().from(journeys).where(eq(journeys.id, en.journeyId)))[0]!,
     profile: (await tx.select().from(customerProfiles).where(eq(customerProfiles.id, en.profileId)))[0],
   }));
-  const exit = (reason: string, state: 'exited' | 'completed' = 'exited') =>
-    withTenant(deps.db, ctx, (tx) => tx.update(journeyEnrollments).set({ state, exitReason: reason, updatedAt: now }).where(eq(journeyEnrollments.id, en.id))).then(() => reason);
+  const exit = (reason: string, state: 'exited' | 'completed' = 'exited') => withTenant(deps.db, ctx, (tx) => tx.update(journeyEnrollments).set({ state, exitReason: reason, updatedAt: now }).where(eq(journeyEnrollments.id, en.id))).then(() => reason);
   if (!profile || profile.deletedAt) return exit('profile_deleted');
   if (j.status === 'paused') {
-    await withTenant(deps.db, ctx, (tx) => tx.update(journeyEnrollments).set({ nextRunAt: new Date(now.getTime() + 3_600_000) }).where(eq(journeyEnrollments.id, en.id)));
+    await withTenant(deps.db, ctx, (tx) =>
+      tx
+        .update(journeyEnrollments)
+        .set({ nextRunAt: new Date(now.getTime() + 3_600_000) })
+        .where(eq(journeyEnrollments.id, en.id)),
+    );
     return 'paused';
   }
   if (j.status !== 'active') return exit(`journey_${j.status}`);
@@ -458,12 +490,21 @@ async function advance(deps: CoreDeps, tenantId: string, actor: Actor, en: typeo
     const step = steps[idx];
     if (!step) return exit('completed', 'completed');
     if (step.type === 'wait') {
-      await withTenant(deps.db, ctx, (tx) => tx.update(journeyEnrollments).set({ stepIndex: idx + 1, nextRunAt: new Date(now.getTime() + step.hours * 3_600_000), updatedAt: now }).where(eq(journeyEnrollments.id, en.id)));
+      await withTenant(deps.db, ctx, (tx) =>
+        tx
+          .update(journeyEnrollments)
+          .set({ stepIndex: idx + 1, nextRunAt: new Date(now.getTime() + step.hours * 3_600_000), updatedAt: now })
+          .where(eq(journeyEnrollments.id, en.id)),
+      );
       return 'waiting';
     }
     if (step.type === 'exit_if_event') {
       const [hit] = await withTenant(deps.db, ctx, (tx) =>
-        tx.select({ id: customerEvents.id }).from(customerEvents).where(and(eq(customerEvents.profileId, en.profileId), eq(customerEvents.eventName, step.eventName), gte(customerEvents.occurredAt, en.enrolledAt))).limit(1),
+        tx
+          .select({ id: customerEvents.id })
+          .from(customerEvents)
+          .where(and(eq(customerEvents.profileId, en.profileId), eq(customerEvents.eventName, step.eventName), gte(customerEvents.occurredAt, en.enrolledAt)))
+          .limit(1),
       );
       if (hit) return exit('goal_reached', 'completed');
     } else {

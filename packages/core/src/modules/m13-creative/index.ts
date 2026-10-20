@@ -1,10 +1,10 @@
-import { desc, eq, inArray } from 'drizzle-orm';
 import { PROMPTS, untrustedBlock } from '@futuregrow/agent-kernel';
-import { type DbOrTx, type Tx, claims, creativeBriefs, growthIdeas, withTenant } from '@futuregrow/db';
+import { claims, creativeBriefs, type DbOrTx, growthIdeas, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef } from '../../deps.js';
 import { runAgent } from '../../agents.js';
+import { type Actor, actorRef, type CoreDeps } from '../../deps.js';
 import { record, requireRole } from '../../util.js';
 import { lintCopy } from '../m03-knowledge/index.js';
 
@@ -21,7 +21,10 @@ export const BriefSchema = z.object({
   cta: z.string().min(2).max(120),
   formatPlan: z.object({ format: z.string().max(100), aspectRatio: z.enum(['9:16', '1:1', '4:5', '16:9', 'n/a']), durationSeconds: z.number().int().positive().max(600).nullable().default(null), notes: z.string().max(1000).default('') }),
   prohibitedClaims: z.array(z.string().max(300)).max(20).default([]),
-  experimentMatrix: z.array(z.object({ variant: z.string().max(40), hook: z.string().max(300), cta: z.string().max(120) })).max(8).default([]),
+  experimentMatrix: z
+    .array(z.object({ variant: z.string().max(40), hook: z.string().max(300), cta: z.string().max(120) }))
+    .max(8)
+    .default([]),
   ideaId: z.string().uuid().nullable().default(null),
 });
 export type BriefInput = z.infer<typeof BriefSchema>;

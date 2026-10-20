@@ -1,10 +1,10 @@
-import { desc, eq, sql } from 'drizzle-orm';
 import { fetchSalesReport } from '@futuregrow/connectors';
-import { type DbOrTx, appInstalls, appStoreReports, customerEvents, withTenant } from '@futuregrow/db';
+import { appInstalls, appStoreReports, customerEvents, type DbOrTx, withTenant } from '@futuregrow/db';
 import { invalid, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
+import { desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { record } from '../../util.js';
 import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
@@ -68,17 +68,16 @@ export async function recordInstall(deps: CoreDeps, tenantId: string, source: st
     profileId = res.profileIds[0] ?? null;
     if (!profileId) {
       const [ev] = await withTenant(deps.db, { tenantId, actor: `ingest:${source}` }, (tx) =>
-        tx.select({ profileId: customerEvents.profileId }).from(customerEvents).where(eq(customerEvents.messageId, `install:${i.platform}:${i.installId}`)),
+        tx
+          .select({ profileId: customerEvents.profileId })
+          .from(customerEvents)
+          .where(eq(customerEvents.messageId, `install:${i.platform}:${i.installId}`)),
       );
       profileId = ev?.profileId ?? null;
     }
   }
   const referrer = consented && i.platform === 'android' && i.installReferrer ? parseInstallReferrer(i.installReferrer) : {};
-  const method =
-    !consented ? 'unattributed'
-    : i.platform === 'android' && Object.keys(referrer).length ? 'play_install_referrer'
-    : i.selfReportedSource ? 'self_reported'
-    : 'unattributed';
+  const method = !consented ? 'unattributed' : i.platform === 'android' && Object.keys(referrer).length ? 'play_install_referrer' : i.selfReportedSource ? 'self_reported' : 'unattributed';
   const [row] = await withTenant(deps.db, { tenantId, actor: `ingest:${source}` }, (tx) =>
     tx
       .insert(appInstalls)
@@ -99,9 +98,7 @@ export async function recordInstall(deps: CoreDeps, tenantId: string, source: st
       .returning(),
   );
   if (row) {
-    await withTenant(deps.db, { tenantId, actor: `ingest:${source}` }, (tx) =>
-      record(tx, tenantId, systemActor('app-growth'), 'app.install.recorded', { type: 'app_install', id: row.id }, { platform: i.platform, method }),
-    );
+    await withTenant(deps.db, { tenantId, actor: `ingest:${source}` }, (tx) => record(tx, tenantId, systemActor('app-growth'), 'app.install.recorded', { type: 'app_install', id: row.id }, { platform: i.platform, method }));
   }
   return { recorded: Boolean(row), attributionMethod: method, profileLinked: Boolean(profileId) };
 }
@@ -222,4 +219,3 @@ export async function installStats(tx: DbOrTx) {
 export async function listReports(tx: DbOrTx) {
   return tx.select().from(appStoreReports).orderBy(desc(appStoreReports.period)).limit(400);
 }
-

@@ -1,6 +1,6 @@
 import { type SQL, sql } from 'drizzle-orm';
-import { bigint, check, doublePrecision, jsonb, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { bigint, check, doublePrecision, jsonb, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 export const pk = () => uuid('id').primaryKey().defaultRandom();
 export const tenantId = () => text('tenant_id').notNull();

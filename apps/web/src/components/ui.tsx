@@ -9,14 +9,7 @@ export function Badge({ value }: { value: unknown }) {
 export function ErrorNotice({ error }: { error: unknown }) {
   if (!error) return null;
   const e = error as ApiError;
-  const hint =
-    e.code === 'MFA_REQUIRED' || /multi-factor/i.test(e.message ?? '')
-      ? 'This action needs a two-factor session. Enrol TOTP under Account & security, sign out and sign back in.'
-      : e.status === 401
-        ? 'Your session has ended. Sign in again.'
-        : e.status === 403
-          ? 'Your role does not allow this action.'
-          : null;
+  const hint = e.code === 'MFA_REQUIRED' || /multi-factor/i.test(e.message ?? '') ? 'This action needs a two-factor session. Enrol TOTP under Account & security, sign out and sign back in.' : e.status === 401 ? 'Your session has ended. Sign in again.' : e.status === 403 ? 'Your role does not allow this action.' : null;
   return (
     <div className="notice error" role="alert">
       <strong>{e.message ?? String(error)}</strong>
@@ -81,12 +74,12 @@ export function DataTable({ rows, columns, onRowClick, actions, empty = 'Nothing
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={String(r.id ?? i)} className={onRowClick ? 'clickable' : undefined} onClick={onRowClick ? () => onRowClick(r) : undefined}>
+            <tr key={String(r.id ?? i)} className={onRowClick ? 'clickable' : undefined} tabIndex={onRowClick ? 0 : undefined} onClick={onRowClick ? () => onRowClick(r) : undefined} onKeyDown={onRowClick ? (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onRowClick(r)) : undefined}>
               {cols.map((c) => (
                 <td key={c}>{isStatusKey(c) && r[c] !== null && r[c] !== undefined ? <Badge value={r[c]} /> : <span className="cell">{formatValue(c, r[c])}</span>}</td>
               ))}
               {actions ? (
-                <td onClick={(e) => e.stopPropagation()}>
+                <td onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                   <div className="row">{actions(r)}</div>
                 </td>
               ) : null}
@@ -153,7 +146,7 @@ export function Drawer({ title, onClose, children }: { title: string; onClose: (
   }, [onClose]);
   return (
     <>
-      <div className="backdrop" onClick={onClose} />
+      <button type="button" className="backdrop" aria-label="Close dialog" tabIndex={-1} onClick={onClose} />
       <aside className="drawer" role="dialog" aria-modal="true" aria-label={title}>
         <header className="row" style={{ justifyContent: 'space-between', marginBottom: '0.75rem' }}>
           <h2>{title}</h2>

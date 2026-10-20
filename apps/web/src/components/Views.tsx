@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { type Me, api, uploadBinary } from '../lib/api.js';
+import { api, type Me, uploadBinary } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
 import { Badge, DataTable, ErrorNotice, Json, useApi } from './ui.js';
 
@@ -30,11 +30,7 @@ export function Audit() {
         </header>
         <p className="small muted">Each record stores SHA-256(previous hash ‖ canonical record). Verification recomputes every link; any edit, deletion or reordering breaks the chain.</p>
         <ErrorNotice error={error} />
-        {result ? (
-          <div className={`notice ${result.valid ? 'ok' : 'error'}`}>
-            {result.valid ? `Chain intact: ${result.checked} records verified (head #${result.headSeq ?? '—'}).` : `Chain broken at #${result.firstInvalidSeq}: ${result.reason}`}
-          </div>
-        ) : null}
+        {result ? <div className={`notice ${result.valid ? 'ok' : 'error'}`}>{result.valid ? `Chain intact: ${result.checked} records verified (head #${result.headSeq ?? '—'}).` : `Chain broken at #${result.firstInvalidSeq}: ${result.reason}`}</div> : null}
       </section>
       <section className="card">
         <header>
@@ -168,15 +164,21 @@ export function Settings({ me, onTenant }: { me: Me; onTenant: (id: string) => v
           <div className="stack">
             <p className="small">Add this account to your authenticator app using the setup key, then enter the 6-digit code.</p>
             <div className="field">
-              <label>Setup key</label>
-              <code className="mono" style={{ fontSize: '1rem', letterSpacing: '0.08em' }}>{totp.secret.replace(/(.{4})/g, '$1 ').trim()}</code>
+              <p className="small">
+                <strong>Setup key</strong>
+              </p>
+              <code className="mono" style={{ fontSize: '1rem', letterSpacing: '0.08em' }}>
+                {totp.secret.replace(/(.{4})/g, '$1 ').trim()}
+              </code>
             </div>
             <details className="small">
               <summary>otpauth URI</summary>
               <code>{totp.uri}</code>
             </details>
             <div className="field">
-              <label>Backup codes (store them offline; each works once)</label>
+              <p className="small">
+                <strong>Backup codes</strong> (store them offline; each works once)
+              </p>
               <pre>{totp.backupCodes.join('\n')}</pre>
             </div>
             <div className="row" style={{ alignItems: 'end' }}>
@@ -195,7 +197,19 @@ export function Settings({ me, onTenant }: { me: Me; onTenant: (id: string) => v
       </section>
       <section className="card">
         <h2>Organizations</h2>
-        <DataTable rows={me.memberships as unknown as Record<string, unknown>[]} columns={['name', 'slug', 'role']} actions={(r) => (r.organizationId === me.tenantId ? <Badge value="active" /> : <button type="button" onClick={() => onTenant(String(r.organizationId))}>Switch</button>)} />
+        <DataTable
+          rows={me.memberships as unknown as Record<string, unknown>[]}
+          columns={['name', 'slug', 'role']}
+          actions={(r) =>
+            r.organizationId === me.tenantId ? (
+              <Badge value="active" />
+            ) : (
+              <button type="button" onClick={() => onTenant(String(r.organizationId))}>
+                Switch
+              </button>
+            )
+          }
+        />
         <div className="row" style={{ alignItems: 'end', marginTop: '0.75rem' }}>
           <div className="field">
             <label htmlFor="org-name">New organization name</label>

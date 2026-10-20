@@ -1,13 +1,13 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { injectionSignals } from '@futuregrow/agent-kernel';
-import { type DbOrTx, type Tx, brandRules, claims, evidenceRecords, kgEntities, kgRelations, knowledgeChunks, knowledgeDocuments } from '@futuregrow/db';
+import { brandRules, claims, type DbOrTx, evidenceRecords, kgEntities, kgRelations, knowledgeChunks, knowledgeDocuments, type Tx } from '@futuregrow/db';
 import { conflict, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps } from '../../deps.js';
 import { audit, normalizeText, record, requireRole } from '../../util.js';
-import { raiseAlert } from '../m24-governance/index.js';
 import { effectiveFreshness } from '../m23-execution/facts.js';
+import { raiseAlert } from '../m24-governance/index.js';
 
 export interface Embedder {
   model: string;
@@ -29,7 +29,11 @@ async function requireTrustedEvidence(tx: Tx, ids: string[], now: Date) {
 
 export const EntityInputSchema = z.object({
   kind: z.enum(['product', 'feature', 'plan', 'price', 'policy', 'faq', 'brand_guide', 'release', 'integration', 'audience']),
-  key: z.string().min(1).max(200).regex(/^[a-z0-9][a-z0-9._:-]*$/),
+  key: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-z0-9][a-z0-9._:-]*$/),
   name: z.string().min(1).max(300),
   attributes: z.record(z.string(), z.unknown()).default({}),
   evidenceId: z.string().uuid(),
@@ -86,7 +90,10 @@ export async function resolveConflict(tx: Tx, tenantId: string, actor: Actor, ke
   requireRole(actor, ['owner', 'admin', 'approver'], 'resolving knowledge conflicts');
   const [keep] = await tx.select().from(kgEntities).where(eq(kgEntities.id, keepEntityId));
   if (!keep) throw notFound('entity');
-  await tx.update(kgEntities).set({ status: 'superseded' }).where(and(eq(kgEntities.kind, keep.kind), eq(kgEntities.key, keep.key), eq(kgEntities.status, 'conflict'), sql`${kgEntities.id} <> ${keep.id}`));
+  await tx
+    .update(kgEntities)
+    .set({ status: 'superseded' })
+    .where(and(eq(kgEntities.kind, keep.kind), eq(kgEntities.key, keep.key), eq(kgEntities.status, 'conflict'), sql`${kgEntities.id} <> ${keep.id}`));
   const [row] = await tx.update(kgEntities).set({ status: 'active' }).where(eq(kgEntities.id, keep.id)).returning();
   await audit(tx, tenantId, actor, 'knowledge.conflict.resolved', { type: 'kg_entity', id: keep.id }, {});
   return row!;
@@ -94,7 +101,11 @@ export async function resolveConflict(tx: Tx, tenantId: string, actor: Actor, ke
 
 export async function relate(tx: Tx, tenantId: string, actor: Actor, input: { fromEntityId: string; relation: string; toEntityId: string; evidenceId: string }) {
   if (!/^[a-z_]{2,40}$/.test(input.relation)) throw invalid('relation must be snake_case');
-  const [row] = await tx.insert(kgRelations).values({ tenantId, ...input }).onConflictDoNothing().returning();
+  const [row] = await tx
+    .insert(kgRelations)
+    .values({ tenantId, ...input })
+    .onConflictDoNothing()
+    .returning();
   await audit(tx, tenantId, actor, 'knowledge.relation.created', { type: 'kg_relation', id: row?.id ?? 'existing' }, input);
   return row ?? null;
 }
@@ -218,7 +229,10 @@ export async function addBrandRule(tx: Tx, tenantId: string, actor: Actor, raw: 
     if (input.pattern.length > 200 || /(\+|\*|\{\d+,?\d*\})\s*\)?\s*(\+|\*)/.test(input.pattern)) throw invalid('regex too complex (nested quantifiers are not allowed)');
   }
   if (input.kind === 'max_exclamations' && !/^\d{1,2}$/.test(input.pattern)) throw invalid('max_exclamations pattern must be a number');
-  const [row] = await tx.insert(brandRules).values({ tenantId, ...input, createdBy: actorRef(actor) }).returning();
+  const [row] = await tx
+    .insert(brandRules)
+    .values({ tenantId, ...input, createdBy: actorRef(actor) })
+    .returning();
   await audit(tx, tenantId, actor, 'knowledge.brand_rule.added', { type: 'brand_rule', id: row!.id }, { kind: input.kind });
   return row!;
 }
@@ -257,7 +271,11 @@ function sentences(text: string): string[] {
 }
 
 function tokenSet(s: string): Set<string> {
-  return new Set(normalizeText(s).split(' ').filter((w) => w.length > 2));
+  return new Set(
+    normalizeText(s)
+      .split(' ')
+      .filter((w) => w.length > 2),
+  );
 }
 
 function covered(sentence: string, claimTexts: string[]): boolean {
@@ -312,7 +330,11 @@ export async function lintCopy(tx: DbOrTx, text: string, opts: { claimIds: strin
 /* ------------------------------------------------------------------ */
 
 export function chunkText(text: string, target = 1000, overlap = 150): string[] {
-  const paras = text.replace(/\r\n/g, '\n').split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const paras = text
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
   const chunks: string[] = [];
   let cur = '';
   const flush = () => {
@@ -393,10 +415,7 @@ export interface RetrievedChunk {
  * rankings are fused with reciprocal-rank fusion. Only documents backed by admitted evidence and
  * visible to the caller's roles are returned.
  */
-export async function searchKnowledge(
-  tx: DbOrTx,
-  args: { query: string; limit?: number; roles: string[]; audience: 'internal' | 'public'; embedder?: Embedder; /** 'any' ORs the terms (conversational questions); default 'all'. */ match?: 'all' | 'any' },
-): Promise<RetrievedChunk[]> {
+export async function searchKnowledge(tx: DbOrTx, args: { query: string; limit?: number; roles: string[]; audience: 'internal' | 'public'; embedder?: Embedder /** 'any' ORs the terms (conversational questions); default 'all'. */; match?: 'all' | 'any' }): Promise<RetrievedChunk[]> {
   const limit = Math.min(args.limit ?? 8, 50);
   const tsq = args.match === 'any' ? sql`to_tsquery('simple', replace(plainto_tsquery('english', ${args.query})::text, '&', '|'))` : sql`websearch_to_tsquery('english', ${args.query})`;
   const visibility = args.audience === 'public' ? sql`d.visibility = 'public'` : sql`(d.visibility in ('public','internal') or (d.visibility = 'restricted' and d.allowed_roles && ${sql.raw(`'{${args.roles.map((r) => r.replace(/[^a-z_]/g, '')).join(',')}}'`)}::text[]))`;
@@ -452,6 +471,10 @@ export function screenRetrieved(chunks: RetrievedChunk[]): { kept: RetrievedChun
 }
 
 export async function listClaims(tx: DbOrTx, status?: string) {
-  return tx.select().from(claims).where(status ? eq(claims.status, status) : undefined).orderBy(desc(claims.createdAt)).limit(500);
+  return tx
+    .select()
+    .from(claims)
+    .where(status ? eq(claims.status, status) : undefined)
+    .orderBy(desc(claims.createdAt))
+    .limit(500);
 }
-

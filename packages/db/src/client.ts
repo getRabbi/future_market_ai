@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { type NodePgDatabase, drizzle } from 'drizzle-orm/node-postgres';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import * as schema from './schema/index.js';
 
@@ -35,7 +35,13 @@ export function createDb(opts: CreateDbOptions): DbHandle {
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   });
-  pool.on('error', opts.onPoolError ?? ((err) => console.error('[db] idle client error', err.message)));
+  const onError = opts.onPoolError ?? ((err: Error) => console.error('[db] client error', err.message));
+  pool.on('error', onError);
+  // A checked-out client that loses its connection emits 'error' on the client itself; without a
+  // listener Node would crash the process (Graphile Worker shares this pool).
+  pool.on('connect', (client) => {
+    client.on('error', onError);
+  });
   const db = drizzle(pool, { schema });
   return {
     db,

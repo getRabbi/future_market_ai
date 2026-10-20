@@ -60,10 +60,7 @@ export async function posthogCaptureBatch(ctx: ConnectorContext, events: Posthog
 
 /* --------------------------- Chatwoot handoff (M21) --------------------------- */
 
-export async function chatwootCreateHandoff(
-  ctx: ConnectorContext,
-  args: { inboxId: number; contactName: string; transcript: string },
-): Promise<{ conversationId: number; contactId: number }> {
+export async function chatwootCreateHandoff(ctx: ConnectorContext, args: { inboxId: number; contactName: string; transcript: string }): Promise<{ conversationId: number; contactId: number }> {
   if (ctx.credentials.provider !== 'chatwoot') throw new Error('chatwoot credentials required');
   const { baseUrl, apiAccessToken, accountId } = ctx.credentials;
   const base = `${baseUrl.replace(/\/$/, '')}/api/v1/accounts/${encodeURIComponent(accountId)}`;

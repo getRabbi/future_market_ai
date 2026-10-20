@@ -1,17 +1,4 @@
-import {
-  type ActionRisk,
-  type ActionTypeDefinition,
-  type ApprovalGroup,
-  type CategoryPolicy,
-  type DataPurpose,
-  type PlatformCapability,
-  type PolicyDecision,
-  type PolicyOutcome,
-  type Proposer,
-  type RiskCategory,
-  type TenantPolicy,
-  type TenantRole,
-} from '@futuregrow/contracts';
+import type { ActionRisk, ActionTypeDefinition, ApprovalGroup, CategoryPolicy, DataPurpose, PlatformCapability, PolicyDecision, PolicyOutcome, Proposer, RiskCategory, TenantPolicy, TenantRole } from '@futuregrow/contracts';
 
 export const POLICY_VERSION = 'fg-policy-1.0.0';
 
@@ -407,11 +394,7 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const autonomy = ruleAutonomy(input);
   findings.push(...autonomy.findings);
 
-  const outcome: PolicyOutcome = findings.some((f) => f.effect === 'DENY')
-    ? 'DENY'
-    : findings.some((f) => f.effect === 'REQUIRE_APPROVAL')
-      ? 'REQUIRE_APPROVAL'
-      : 'PRE_AUTHORIZED';
+  const outcome: PolicyOutcome = findings.some((f) => f.effect === 'DENY') ? 'DENY' : findings.some((f) => f.effect === 'REQUIRE_APPROVAL') ? 'REQUIRE_APPROVAL' : 'PRE_AUTHORIZED';
 
   const groups = new Map<string, ApprovalGroup>();
   if (outcome === 'REQUIRE_APPROVAL') {
@@ -462,11 +445,7 @@ export function defaultTenantPolicy(): TenantPolicy {
  * both finance and legal roles cannot clear both groups alone. Uses backtracking (groups are few)
  * so a valid assignment is found whenever one exists.
  */
-export function approvalsSatisfy(
-  groups: readonly ApprovalGroup[],
-  approvals: readonly { approverUserId: string; roles: readonly string[] }[],
-  opts: { proposerId: string; requiresDistinctApprover: boolean },
-): { satisfied: boolean; missing: string[] } {
+export function approvalsSatisfy(groups: readonly ApprovalGroup[], approvals: readonly { approverUserId: string; roles: readonly string[] }[], opts: { proposerId: string; requiresDistinctApprover: boolean }): { satisfied: boolean; missing: string[] } {
   const byUser = new Map<string, Set<string>>();
   for (const a of approvals) {
     if (opts.requiresDistinctApprover && a.approverUserId === opts.proposerId) continue;

@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { READ_CONNECTORS, type SpendRow } from '@futuregrow/connectors';
-import { type DbOrTx, type Tx, actionRequests, adBudgetHistory, adCampaigns, adDailyMetrics, spendLedger, spendReconciliations, withTenant } from '@futuregrow/db';
+import { type actionRequests, adBudgetHistory, adCampaigns, adDailyMetrics, type DbOrTx, spendLedger, spendReconciliations, type Tx, withTenant } from '@futuregrow/db';
 import { invalid, notFound } from '@futuregrow/observability';
+import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { record, requireRole } from '../../util.js';
 import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
@@ -65,7 +65,10 @@ export async function syncCampaigns(deps: CoreDeps, tenantId: string, connection
     });
     let drift = 0;
     for (const s of snapshots) {
-      const [prev] = await tx.select().from(adCampaigns).where(and(eq(adCampaigns.connectionId, connectionId), eq(adCampaigns.externalCampaignId, s.externalCampaignId)));
+      const [prev] = await tx
+        .select()
+        .from(adCampaigns)
+        .where(and(eq(adCampaigns.connectionId, connectionId), eq(adCampaigns.externalCampaignId, s.externalCampaignId)));
       const [row] = await tx
         .insert(adCampaigns)
         .values({ tenantId, connectionId, platform: PLATFORM_BY_PROVIDER[provider], externalCampaignId: s.externalCampaignId, externalBudgetId: s.externalBudgetId, name: s.name, status: s.status, dailyBudgetMicros: s.dailyBudgetMicros, currency: s.currency, objective: s.objective, raw: s.raw, lastSyncedAt: now })
@@ -213,11 +216,7 @@ export interface ReconcileResult {
  * than `tolerance` (fraction), when one day exceeds MAX_DAILY_OVERDELIVERY × its budget, or when
  * currencies disagree. Unknown budgets make the result insufficient_data — never "ok".
  */
-export function reconcile(
-  spend: { campaignRef: string; date: string; currency: string; amountMicros: number }[],
-  budgets: Map<string, BudgetPoint[]>,
-  tolerance: number,
-): ReconcileResult {
+export function reconcile(spend: { campaignRef: string; date: string; currency: string; amountMicros: number }[], budgets: Map<string, BudgetPoint[]>, tolerance: number): ReconcileResult {
   const findings: ReconcileResult['findings'] = [];
   const currencies = new Set(spend.map((s) => s.currency));
   let authorized = 0;
@@ -260,7 +259,16 @@ export async function reconcileSpend(deps: CoreDeps, tenantId: string, connectio
       .where(and(eq(spendLedger.connectionId, connectionId), gte(spendLedger.spendDate, period.start), lte(spendLedger.spendDate, period.end)));
     const camps = await tx.select().from(adCampaigns).where(eq(adCampaigns.connectionId, connectionId));
     const hist = camps.length
-      ? await tx.select().from(adBudgetHistory).where(inArray(adBudgetHistory.campaignId, camps.map((c) => c.id))).orderBy(asc(adBudgetHistory.effectiveFrom))
+      ? await tx
+          .select()
+          .from(adBudgetHistory)
+          .where(
+            inArray(
+              adBudgetHistory.campaignId,
+              camps.map((c) => c.id),
+            ),
+          )
+          .orderBy(asc(adBudgetHistory.effectiveFrom))
       : [];
     const extById = new Map(camps.map((c) => [c.id, c.externalCampaignId]));
     const budgets = new Map<string, BudgetPoint[]>();
@@ -385,7 +393,10 @@ for (const t of ['ads.google.set_campaign_status', 'ads.meta.set_campaign_status
     async onVerified(tx, action) {
       const c = await campaignFor(tx, action);
       if (!c) return;
-      await tx.update(adCampaigns).set({ status: (action.params as { status: string }).status }).where(eq(adCampaigns.id, c.id));
+      await tx
+        .update(adCampaigns)
+        .set({ status: (action.params as { status: string }).status })
+        .where(eq(adCampaigns.id, c.id));
     },
   });
 }

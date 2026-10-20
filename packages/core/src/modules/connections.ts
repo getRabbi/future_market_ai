@@ -1,10 +1,10 @@
-import { desc, eq } from 'drizzle-orm';
-import { PROVIDERS } from '@futuregrow/contracts';
 import { type ProviderCredentials, READ_CONNECTORS } from '@futuregrow/connectors';
-import { type Tx, connections, withTenant } from '@futuregrow/db';
+import { PROVIDERS } from '@futuregrow/contracts';
+import { connections, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
+import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../deps.js';
 import { loadCredentials, storeCredentials } from '../secrets.js';
 import { ADMIN_ROLES, audit, record, requireMfa, requireRole } from '../util.js';
 import { connectorContext } from './m23-execution/gateway.js';
@@ -124,9 +124,7 @@ export async function checkConnectionHealth(deps: CoreDeps, tenantId: string, id
   });
   const reader = READ_CONNECTORS[prep.c.provider as keyof typeof READ_CONNECTORS];
   if (!reader) throw invalid(`no health check for ${prep.c.provider}`);
-  const result = prep.loaded
-    ? await reader.healthCheck(connectorContext(deps, tenantId, prep.loaded.creds, prep.c))
-    : { healthy: false, status: 'failing' as const, grantedScopes: null, details: { error: 'credentials missing' } };
+  const result = prep.loaded ? await reader.healthCheck(connectorContext(deps, tenantId, prep.loaded.creds, prep.c)) : { healthy: false, status: 'failing' as const, grantedScopes: null, details: { error: 'credentials missing' } };
   return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
     const nextStatus = result.status === 'failing' && prep.c.status === 'active' ? 'reauth_required' : prep.c.status;
     const [u] = await tx

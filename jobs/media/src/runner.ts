@@ -2,11 +2,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import { type CoreDeps, assetsModule, evidence, record, systemActor } from '@futuregrow/core';
+import { assetsModule, type CoreDeps, evidence, record, systemActor } from '@futuregrow/core';
 import { assetRights, assets, renderJobs, tenantSettings, withSystem, withTenant } from '@futuregrow/db';
 import { sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 export interface RenderInput {
   file: string;
@@ -34,8 +34,15 @@ export class RemotionRenderer implements Renderer {
   private async bundleOnce(): Promise<string> {
     if (!this.bundleDir) {
       this.bundleDir = (async () => {
-        const { bundle } = await import('@remotion/bundler');
         const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fg-remotion-'));
+        // Container images ship a bundle built at image-build time; copy it so job inputs can be
+        // written into its public/ directory without touching the read-only image layer.
+        const prebuilt = process.env.FG_REMOTION_BUNDLE_DIR;
+        if (prebuilt) {
+          await fs.cp(prebuilt, outDir, { recursive: true });
+          return outDir;
+        }
+        const { bundle } = await import('@remotion/bundler');
         return bundle({ entryPoint: path.join(here, 'remotion', 'Root.tsx'), outDir, publicDir: null });
       })();
     }
@@ -93,7 +100,10 @@ export async function processNextRender(deps: CoreDeps, renderer: Renderer, work
     await withTenant(deps.db, tctx, async (tx) => {
       const [j] = await tx.select().from(renderJobs).where(eq(renderJobs.id, job.id));
       const final = terminal || (j?.attempts ?? MAX_ATTEMPTS) >= MAX_ATTEMPTS;
-      await tx.update(renderJobs).set({ status: final ? 'failed' : 'queued', statusReason: reason.slice(0, 2000), lockedBy: null, finishedAt: final ? new Date() : null }).where(eq(renderJobs.id, job.id));
+      await tx
+        .update(renderJobs)
+        .set({ status: final ? 'failed' : 'queued', statusReason: reason.slice(0, 2000), lockedBy: null, finishedAt: final ? new Date() : null })
+        .where(eq(renderJobs.id, job.id));
     });
     return { kind: 'failed', jobId: job.id, reason };
   };
@@ -187,7 +197,14 @@ export async function processNextRender(deps: CoreDeps, renderer: Renderer, work
         })
         .onConflictDoNothing()
         .returning();
-      const target = asset ?? (await tx.select().from(assets).where(and(eq(assets.sha256, sha))))[0]!;
+      const target =
+        asset ??
+        (
+          await tx
+            .select()
+            .from(assets)
+            .where(and(eq(assets.sha256, sha)))
+        )[0]!;
       if (asset) {
         await tx.insert(assetRights).values({
           tenantId,
@@ -203,7 +220,10 @@ export async function processNextRender(deps: CoreDeps, renderer: Renderer, work
         }
       }
       await assetsModule.recomputeEligibility(tx, deps, tenantId, target.id);
-      await tx.update(renderJobs).set({ status: 'completed', outputAssetId: target.id, finishedAt: new Date(), lockedBy: null, statusReason: problems.length ? `technical QA: ${problems.join('; ')}` : null }).where(eq(renderJobs.id, job.id));
+      await tx
+        .update(renderJobs)
+        .set({ status: 'completed', outputAssetId: target.id, finishedAt: new Date(), lockedBy: null, statusReason: problems.length ? `technical QA: ${problems.join('; ')}` : null })
+        .where(eq(renderJobs.id, job.id));
       await record(tx, tenantId, actor, 'media.render.completed', { type: 'render_job', id: job.id }, { assetId: target.id, sha256: sha, qaPassed: problems.length === 0 });
       return target.id;
     });

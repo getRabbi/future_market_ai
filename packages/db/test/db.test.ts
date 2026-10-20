@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type TestDatabase, createTestDatabase } from '../../../test/helpers/db.js';
+import { createTestDatabase, type TestDatabase } from '../../../test/helpers/db.js';
 import {
   actionRequests,
   appendAudit,
@@ -14,8 +14,8 @@ import {
   experimentAssignments,
   experimentExposures,
   experimentOutcomes,
-  experimentVariants,
   experiments,
+  experimentVariants,
   organization,
   outboxEvents,
   probeDatabase,
@@ -100,34 +100,22 @@ describe('tenant isolation via row-level security (D-008)', () => {
   });
 
   it('a tenant cannot read, update or forge another tenant’s rows', async () => {
-    await withTenant(t.handle.db, ctx(A), (tx) =>
-      tx.insert(sources).values({ tenantId: A, name: 'crm', sourceType: 'primary', owner: 'A', uri: 'crm://a' }),
-    );
+    await withTenant(t.handle.db, ctx(A), (tx) => tx.insert(sources).values({ tenantId: A, name: 'crm', sourceType: 'primary', owner: 'A', uri: 'crm://a' }));
     const seenByB = await withTenant(t.handle.db, ctx(B), (tx) => tx.select().from(sources));
     expect(seenByB).toHaveLength(0);
 
-    const updated = await withTenant(t.handle.db, ctx(B), (tx) =>
-      tx.update(sources).set({ name: 'hijacked' }).returning({ id: sources.id }),
-    );
+    const updated = await withTenant(t.handle.db, ctx(B), (tx) => tx.update(sources).set({ name: 'hijacked' }).returning({ id: sources.id }));
     expect(updated).toHaveLength(0);
 
-    await expect(
-      withTenant(t.handle.db, ctx(B), (tx) =>
-        tx.insert(sources).values({ tenantId: A, name: 'forged', sourceType: 'primary', owner: 'B', uri: 'crm://forged' }),
-      ),
-    ).rejects.toThrow(/row-level security/);
+    await expect(withTenant(t.handle.db, ctx(B), (tx) => tx.insert(sources).values({ tenantId: A, name: 'forged', sourceType: 'primary', owner: 'B', uri: 'crm://forged' }))).rejects.toThrow(/row-level security/);
 
     const seenByA = await withTenant(t.handle.db, ctx(A), (tx) => tx.select().from(sources));
     expect(seenByA.map((s) => s.name)).toEqual(['crm']);
   });
 
   it('the tenant role cannot touch auth tables or the webhook inbox', async () => {
-    await expect(
-      withTenant(t.handle.db, ctx(A), (tx) => tx.execute(sql`select count(*) from auth_user`)),
-    ).rejects.toThrow(/permission denied/);
-    await expect(
-      withTenant(t.handle.db, ctx(A), (tx) => tx.execute(sql`select count(*) from webhook_inbox`)),
-    ).rejects.toThrow(/permission denied/);
+    await expect(withTenant(t.handle.db, ctx(A), (tx) => tx.execute(sql`select count(*) from auth_user`))).rejects.toThrow(/permission denied/);
+    await expect(withTenant(t.handle.db, ctx(A), (tx) => tx.execute(sql`select count(*) from webhook_inbox`))).rejects.toThrow(/permission denied/);
   });
 });
 
@@ -168,13 +156,7 @@ describe('immutable hash-chained audit (M24)', () => {
   });
 
   it('concurrent appends never fork the chain', async () => {
-    await Promise.all(
-      Array.from({ length: 12 }, (_, i) =>
-        withTenant(t.handle.db, ctx(B), (tx) =>
-          appendAudit(tx, { tenantId: B, actorType: 'system', actorId: 's', action: 'concurrent', subjectType: 'x', subjectId: String(i) }),
-        ),
-      ),
-    );
+    await Promise.all(Array.from({ length: 12 }, (_, i) => withTenant(t.handle.db, ctx(B), (tx) => appendAudit(tx, { tenantId: B, actorType: 'system', actorId: 's', action: 'concurrent', subjectType: 'x', subjectId: String(i) }))));
     const v = await verifyAuditChain(t.handle.db, B);
     expect(v).toMatchObject({ valid: true, checked: 12 });
   });
@@ -231,25 +213,19 @@ describe('execution state machine enforced by the database (D-011)', () => {
     });
     await setStatus(A, a.id, 'VERIFIED');
 
-    const history = await withTenant(t.handle.db, ctx(A), (tx) =>
-      tx.execute<{ to_status: string; actor: string }>(sql`select to_status, actor from action_transitions where action_id = ${a.id} order by id`),
-    );
-    expect(history.rows.map((r) => r.to_status)).toEqual([
-      'EVIDENCE_READY',
-      'POLICY_CHECKED',
-      'APPROVAL_REQUIRED',
-      'APPROVED',
-      'PREFLIGHT_VERIFIED',
-      'EXECUTING',
-      'EXECUTED_UNVERIFIED',
-      'VERIFIED',
-    ]);
+    const history = await withTenant(t.handle.db, ctx(A), (tx) => tx.execute<{ to_status: string; actor: string }>(sql`select to_status, actor from action_transitions where action_id = ${a.id} order by id`));
+    expect(history.rows.map((r) => r.to_status)).toEqual(['EVIDENCE_READY', 'POLICY_CHECKED', 'APPROVAL_REQUIRED', 'APPROVED', 'PREFLIGHT_VERIFIED', 'EXECUTING', 'EXECUTED_UNVERIFIED', 'VERIFIED']);
     expect(history.rows.every((r) => r.actor === `user:test-${A}`)).toBe(true);
 
     // Terminal: nothing leaves VERIFIED, and the payload is immutable.
     await expect(setStatus(A, a.id, 'FAILED')).rejects.toThrow(/illegal transition/);
     await expect(
-      withTenant(t.handle.db, ctx(A), (tx) => tx.update(actionRequests).set({ params: { x: 1 } }).where(eq(actionRequests.id, a.id))),
+      withTenant(t.handle.db, ctx(A), (tx) =>
+        tx
+          .update(actionRequests)
+          .set({ params: { x: 1 } })
+          .where(eq(actionRequests.id, a.id)),
+      ),
     ).rejects.toThrow(/immutable after proposal/);
   });
 });
@@ -290,9 +266,7 @@ describe('transactional outbox (D-009)', () => {
       }),
     ).rejects.toThrow('boom');
 
-    const jobs = await t.handle.db.execute<{ key: string }>(
-      sql`select key from graphile_worker.jobs where task_identifier = 'dispatch_event'`,
-    );
+    const jobs = await t.handle.db.execute<{ key: string }>(sql`select key from graphile_worker.jobs where task_identifier = 'dispatch_event'`);
     const keys = jobs.rows.map((r) => r.key);
     expect(keys).toContain(`evt:${committedId}`);
     expect(keys).not.toContain(`evt:${rolledBackId}`);
@@ -332,9 +306,7 @@ describe('evidence integrity guards', () => {
       content: { email: 'x@example.com' },
       contentSha256: 'd'.repeat(64),
     };
-    await expect(
-      withTenant(t.handle.db, ctx(A), (tx) => tx.insert(evidenceRecords).values({ ...base, status: 'admitted' })),
-    ).rejects.toThrow(/evidence_admitted_complete_chk/);
+    await expect(withTenant(t.handle.db, ctx(A), (tx) => tx.insert(evidenceRecords).values({ ...base, status: 'admitted' }))).rejects.toThrow(/evidence_admitted_complete_chk/);
 
     const [row] = await withTenant(t.handle.db, ctx(A), (tx) =>
       tx
@@ -343,11 +315,14 @@ describe('evidence integrity guards', () => {
         .returning(),
     );
     await expect(
-      withTenant(t.handle.db, ctx(A), (tx) => tx.update(evidenceRecords).set({ content: { email: 'y@example.com' } }).where(eq(evidenceRecords.id, row!.id))),
+      withTenant(t.handle.db, ctx(A), (tx) =>
+        tx
+          .update(evidenceRecords)
+          .set({ content: { email: 'y@example.com' } })
+          .where(eq(evidenceRecords.id, row!.id)),
+      ),
     ).rejects.toThrow(/FG_IMMUTABLE/);
-    await withTenant(t.handle.db, ctx(A), (tx) =>
-      tx.update(evidenceRecords).set({ content: null, status: 'expired' }).where(eq(evidenceRecords.id, row!.id)),
-    );
+    await withTenant(t.handle.db, ctx(A), (tx) => tx.update(evidenceRecords).set({ content: null, status: 'expired' }).where(eq(evidenceRecords.id, row!.id)));
   });
 });
 
@@ -370,15 +345,9 @@ describe('experiment logging order (M10 AC)', () => {
         })
         .returning();
       const [v] = await tx.insert(experimentVariants).values({ tenantId: A, experimentId: exp!.id, key: 'control', description: 'c', isControl: true }).returning();
-      await expect(
-        savepoint(tx, (sp) => sp.insert(experimentExposures).values({ tenantId: A, experimentId: exp!.id, variantId: v!.id, unitId: 'p1' })),
-      ).rejects.toThrow(/exposure without a prior matching assignment/);
+      await expect(savepoint(tx, (sp) => sp.insert(experimentExposures).values({ tenantId: A, experimentId: exp!.id, variantId: v!.id, unitId: 'p1' }))).rejects.toThrow(/exposure without a prior matching assignment/);
       await tx.insert(experimentAssignments).values({ tenantId: A, experimentId: exp!.id, variantId: v!.id, unitId: 'p1', allocationSnapshot: {} });
-      await expect(
-        savepoint(tx, (sp) =>
-          sp.insert(experimentOutcomes).values({ tenantId: A, experimentId: exp!.id, variantId: v!.id, unitId: 'p1', metric: 'signup', value: 1, observedAt: new Date() }),
-        ),
-      ).rejects.toThrow(/outcome without a prior logged exposure/);
+      await expect(savepoint(tx, (sp) => sp.insert(experimentOutcomes).values({ tenantId: A, experimentId: exp!.id, variantId: v!.id, unitId: 'p1', metric: 'signup', value: 1, observedAt: new Date() }))).rejects.toThrow(/outcome without a prior logged exposure/);
       await tx.insert(experimentExposures).values({ tenantId: A, experimentId: exp!.id, variantId: v!.id, unitId: 'p1' });
       await tx.insert(experimentOutcomes).values({
         tenantId: A,

@@ -1,7 +1,7 @@
 import dns from 'node:dns';
 import net from 'node:net';
-import { Agent, fetch as undiciFetch } from 'undici';
 import { sha256Hex } from '@futuregrow/observability';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 /**
  * SSRF guard for fetching *public* third-party content (competitor pages, SEO audits of the

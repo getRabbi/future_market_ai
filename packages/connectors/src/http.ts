@@ -15,10 +15,7 @@ export class ProviderHttpError extends Error {
   readonly retryAfterMs: number | null;
   readonly providerRequestId: string | null;
 
-  constructor(
-    message: string,
-    opts: { status: number | null; phase: FailurePhase; body?: unknown; retryAfterMs?: number | null; providerRequestId?: string | null },
-  ) {
+  constructor(message: string, opts: { status: number | null; phase: FailurePhase; body?: unknown; retryAfterMs?: number | null; providerRequestId?: string | null }) {
     super(message);
     this.name = 'ProviderHttpError';
     this.status = opts.status;
@@ -101,10 +98,7 @@ export class HttpClient {
         return await this.once<T>(req);
       } catch (err) {
         if (!(err instanceof ProviderHttpError)) throw err;
-        const retryable =
-          err.phase === 'before_send' ||
-          err.isRateLimited ||
-          (req.idempotent === true && err.phase === 'ambiguous');
+        const retryable = err.phase === 'before_send' || err.isRateLimited || (req.idempotent === true && err.phase === 'ambiguous');
         if (!retryable || attempt >= this.maxRetries) throw err;
         const backoff = err.retryAfterMs ?? this.baseBackoffMs * 2 ** attempt + Math.floor(Math.random() * this.baseBackoffMs);
         await sleep(backoff);
@@ -138,9 +132,7 @@ export class HttpClient {
       const codes = [causeObj?.code, ...(causeObj?.errors ?? []).map((e) => e.code)].filter(Boolean) as string[];
       const cause = codes[0] ?? '';
       // Connection never established (or refused by fetch itself) => provider never saw the request.
-      const neverSent =
-        codes.some((c) => ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'EHOSTUNREACH', 'ENETUNREACH'].includes(c)) ||
-        causeObj?.message === 'bad port';
+      const neverSent = codes.some((c) => ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'EHOSTUNREACH', 'ENETUNREACH'].includes(c)) || causeObj?.message === 'bad port';
       throw new ProviderHttpError(`network error: ${msg}${cause ? ` (${cause})` : ''}`, {
         status: null,
         phase: neverSent ? 'before_send' : 'ambiguous',

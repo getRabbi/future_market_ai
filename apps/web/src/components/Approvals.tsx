@@ -131,17 +131,13 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
                 Policy {a.policyDecision.policyVersion}: <Badge value={a.policyDecision.outcome} />
               </h3>
               <ul className="small">
-                {a.policyDecision.reasons.map((r, i) => (
-                  <li key={i}>
+                {a.policyDecision.reasons.map((r) => (
+                  <li key={`${r.rule}:${r.code}:${r.effect}`}>
                     <Badge value={r.effect === 'DENY' ? 'DENIED' : r.effect === 'REQUIRE_APPROVAL' ? 'APPROVAL_REQUIRED' : 'ok'} /> <code>{r.rule}</code> {r.code}: {r.message}
                   </li>
                 ))}
               </ul>
-              {a.policyDecision.approvalGroups?.length ? (
-                <p className="small muted">
-                  Approval groups: {a.policyDecision.approvalGroups.map((g) => `${g.name} (${g.anyOfRoles.join(' / ')})`).join(' + ')}. Each group needs a different person; the proposer cannot approve.
-                </p>
-              ) : null}
+              {a.policyDecision.approvalGroups?.length ? <p className="small muted">Approval groups: {a.policyDecision.approvalGroups.map((g) => `${g.name} (${g.anyOfRoles.join(' / ')})`).join(' + ')}. Each group needs a different person; the proposer cannot approve.</p> : null}
             </section>
           ) : null}
 
@@ -181,8 +177,8 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
               <p className="small muted">None yet.</p>
             ) : (
               <ul className="small">
-                {d.data.approvals.map((x, i) => (
-                  <li key={i}>
+                {d.data.approvals.map((x) => (
+                  <li key={`${x.approverUserId}:${x.decidedAt}`}>
                     <Badge value={x.decision} /> {x.approverUserId} ({x.approverRoles.join(', ')}) · {formatValue('decidedAt', x.decidedAt)}
                     {x.comment ? ` — ${x.comment}` : ''}
                   </li>
@@ -199,8 +195,8 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
                 {x.receiptSha256 ? <span className="muted mono"> receipt {x.receiptSha256.slice(0, 16)}…</span> : null}
               </p>
             ))}
-            {d.data.proofs.map((p, i) => (
-              <div key={i} className="small">
+            {d.data.proofs.map((p) => (
+              <div key={`${p.purpose}:${p.checkedAt}:${p.verdict}`} className="small">
                 <Badge value={p.verdict} /> {p.purpose} via {p.method} · {formatValue('checkedAt', p.checkedAt)} {p.notes ? `— ${p.notes}` : ''}
                 {Array.isArray(p.diff) && p.diff.length ? <Json value={p.diff} /> : null}
               </div>
@@ -211,9 +207,12 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
           <section>
             <h3>State history</h3>
             <ol className="timeline small">
-              {d.data.transitions.map((t, i) => (
-                <li key={i}>
-                  <strong>{t.toStatus}</strong> <span className="muted">· {formatValue('at', t.at)} · {t.actor}</span>
+              {d.data.transitions.map((t) => (
+                <li key={`${t.at}:${t.toStatus}`}>
+                  <strong>{t.toStatus}</strong>{' '}
+                  <span className="muted">
+                    · {formatValue('at', t.at)} · {t.actor}
+                  </span>
                   <div>{t.reason}</div>
                 </li>
               ))}

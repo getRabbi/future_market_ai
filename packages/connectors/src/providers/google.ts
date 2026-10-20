@@ -1,25 +1,13 @@
 import { sha256Hex } from '@futuregrow/observability';
 import { type HttpClient, type HttpResponse, ProviderHttpError, preWrite } from '../http.js';
-import {
-  type ActionExecutor,
-  type CampaignSnapshot,
-  type ConnectorContext,
-  type HealthResult,
-  type ReadConnector,
-  type SpendRow,
-  compareProof,
-} from '../types.js';
+import { type ActionExecutor, type CampaignSnapshot, type ConnectorContext, compareProof, type HealthResult, type ReadConnector, type SpendRow } from '../types.js';
 import { majorToMicros } from './money.js';
 
 /* --------------------------- OAuth 2.0 (shared by Ads/YouTube/Search Console) --------------------------- */
 
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
-export async function googleAccessToken(
-  http: HttpClient,
-  tokenUrl: string,
-  c: { clientId: string; clientSecret: string; refreshToken: string },
-): Promise<string> {
+export async function googleAccessToken(http: HttpClient, tokenUrl: string, c: { clientId: string; clientSecret: string; refreshToken: string }): Promise<string> {
   const cacheKey = sha256Hex(`${c.clientId}:${c.refreshToken}`);
   const hit = tokenCache.get(cacheKey);
   if (hit && hit.expiresAt > Date.now() + 60_000) return hit.token;
@@ -112,11 +100,7 @@ async function assertCurrency(ctx: ConnectorContext, customerId: string, currenc
 }
 
 async function readBudgetMicros(ctx: ConnectorContext, customerId: string, budgetId: string): Promise<number | null> {
-  const rows = await gaqlSearch<{ campaignBudget: { amountMicros?: string } }>(
-    ctx,
-    customerId,
-    `SELECT campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign_budget WHERE campaign_budget.id = ${budgetId}`,
-  );
+  const rows = await gaqlSearch<{ campaignBudget: { amountMicros?: string } }>(ctx, customerId, `SELECT campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign_budget WHERE campaign_budget.id = ${budgetId}`);
   const v = rows[0]?.campaignBudget.amountMicros;
   return v === undefined ? null : Number(v);
 }
@@ -252,11 +236,7 @@ export const googleAdsRead: ReadConnector = {
     const rows = await gaqlSearch<{
       campaign: { id: string; name: string; status: string; advertisingChannelType?: string };
       campaignBudget?: { id?: string; amountMicros?: string };
-    }>(
-      ctx,
-      cid,
-      "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.id, campaign_budget.amount_micros FROM campaign WHERE campaign.status != 'REMOVED'",
-    );
+    }>(ctx, cid, "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.id, campaign_budget.amount_micros FROM campaign WHERE campaign.status != 'REMOVED'");
     return rows.map((r) => ({
       externalCampaignId: r.campaign.id,
       externalBudgetId: r.campaignBudget?.id ?? null,
@@ -276,11 +256,7 @@ export const googleAdsRead: ReadConnector = {
       campaign: { id: string };
       segments: { date: string };
       metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: number; conversionsValue?: number };
-    }>(
-      ctx,
-      cid,
-      `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '${from}' AND '${to}'`,
-    );
+    }>(ctx, cid, `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '${from}' AND '${to}'`);
     return rows.map((r) => ({
       campaignRef: r.campaign.id,
       date: r.segments.date,

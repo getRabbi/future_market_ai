@@ -1,9 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { and, eq } from 'drizzle-orm';
 import { AbstainError, type ApprovedModel, type GenerateResult, ModelGateway, type ModelProvider, type PromptDefinition, type StructuredRequest, type UsageRecord } from '@futuregrow/agent-kernel';
-import { type Db, agentRuns, killSwitches, modelRegistry, withSystem, withTenant } from '@futuregrow/db';
+import { agentRuns, type Db, killSwitches, modelRegistry, withSystem, withTenant } from '@futuregrow/db';
+import { and, eq } from 'drizzle-orm';
 import type { z } from 'zod';
-import { type CoreDeps, actorRef, systemActor } from './deps.js';
+import { actorRef, type CoreDeps, systemActor } from './deps.js';
 import { recordCost } from './modules/m24-governance/index.js';
 import { audit } from './util.js';
 
@@ -13,7 +13,10 @@ let cache: { at: number; models: ApprovedModel[] } | null = null;
 export async function approvedModels(db: Db): Promise<ApprovedModel[]> {
   if (cache && Date.now() - cache.at < 60_000) return cache.models;
   const rows = await withSystem(db, 'system:model-registry', (tx) =>
-    tx.select().from(modelRegistry).where(and(eq(modelRegistry.approvedForProduction, true), eq(modelRegistry.status, 'active'))),
+    tx
+      .select()
+      .from(modelRegistry)
+      .where(and(eq(modelRegistry.approvedForProduction, true), eq(modelRegistry.status, 'active'))),
   );
   cache = {
     at: Date.now(),
@@ -79,16 +82,9 @@ export type AgentOutcome<R> = { status: 'completed'; result: R; runId: string } 
  * Run an agent workflow. Agent- and model-scoped kill switches are checked before the first
  * model call; abstentions are recorded, never converted into fabricated output.
  */
-export async function runAgent<R>(
-  deps: CoreDeps,
-  tenantId: string,
-  args: { kind: string; agentId: string; triggeredBy: string; input: Record<string, unknown> },
-  fn: (ctx: AgentRunContext) => Promise<R>,
-): Promise<AgentOutcome<R>> {
+export async function runAgent<R>(deps: CoreDeps, tenantId: string, args: { kind: string; agentId: string; triggeredBy: string; input: Record<string, unknown> }, fn: (ctx: AgentRunContext) => Promise<R>): Promise<AgentOutcome<R>> {
   const actor = systemActor(`agent:${args.agentId}`);
-  const [run] = await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) =>
-    tx.insert(agentRuns).values({ tenantId, kind: args.kind, input: args.input, triggeredBy: args.triggeredBy }).returning(),
-  );
+  const [run] = await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) => tx.insert(agentRuns).values({ tenantId, kind: args.kind, input: args.input, triggeredBy: args.triggeredBy }).returning());
   const stages: StageRecord[] = [];
   let inTok = 0;
   let outTok = 0;
@@ -118,9 +114,7 @@ export async function runAgent<R>(
       const modelBlocked = engaged.find((k) => k.scope === 'model');
       if (modelBlocked) throw new AbstainError('MODEL_UNAVAILABLE', `model kill switch engaged: ${modelBlocked.reason}`);
       const startedAt = deps.clock.now().toISOString();
-      const r = await usageScope.run({ tenantId, runId: run!.id }, () =>
-        deps.models!.generate({ ...req, system: prompt.system } as StructuredRequest<unknown>, validate ? { validate: validate as z.ZodType<unknown> } : {}),
-      );
+      const r = await usageScope.run({ tenantId, runId: run!.id }, () => deps.models!.generate({ ...req, system: prompt.system } as StructuredRequest<unknown>, validate ? { validate: validate as z.ZodType<unknown> } : {}));
       inTok += r.usage.inputTokens;
       outTok += r.usage.outputTokens;
       stages.push({

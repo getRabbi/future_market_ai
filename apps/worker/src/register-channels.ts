@@ -1,6 +1,6 @@
-import { and, inArray } from 'drizzle-orm';
 import { appGrowth, discovery, lifecycle, paidMedia, social } from '@futuregrow/core';
 import { connections, withTenant } from '@futuregrow/db';
+import { and, inArray } from 'drizzle-orm';
 import { forEachTenant, registerTasks } from './tasks.js';
 
 const day = (d: Date) => d.toISOString().slice(0, 10);
@@ -8,7 +8,10 @@ const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
 
 async function activeConnections(deps: Parameters<Parameters<typeof registerTasks>[0]>[0], tenantId: string, providers: string[]) {
   return withTenant(deps.db, { tenantId, actor: 'system:scheduler' }, (tx) =>
-    tx.select().from(connections).where(and(inArray(connections.provider, providers), inArray(connections.status, ['active', 'read_only']))),
+    tx
+      .select()
+      .from(connections)
+      .where(and(inArray(connections.provider, providers), inArray(connections.status, ['active', 'read_only']))),
   );
 }
 
@@ -89,12 +92,4 @@ registerTasks((deps) => ({
   },
 }));
 
-export const CHANNEL_CRONTAB = [
-  '* * * * * social_dispatch',
-  '* * * * * journey_tick',
-  '37 */6 * * * ads_sync',
-  '15 7 * * * spend_reconcile',
-  '45 5 * * * search_console_sync',
-  '5 9 * * * app_store_sales_sync',
-];
-
+export const CHANNEL_CRONTAB = ['* * * * * social_dispatch', '* * * * * journey_tick', '37 */6 * * * ads_sync', '15 7 * * * spend_reconcile', '45 5 * * * search_console_sync', '5 9 * * * app_store_sales_sync'];

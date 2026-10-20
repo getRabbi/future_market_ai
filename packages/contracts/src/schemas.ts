@@ -1,23 +1,5 @@
 import { z } from 'zod';
-import {
-  ACTION_STATES,
-  ARTIFACT_TYPES,
-  CAPABILITY_FALLBACKS,
-  DATA_PURPOSES,
-  ESTIMATE_METHODS,
-  EVIDENCE_KINDS,
-  FRESHNESS_STATUSES,
-  KILL_SWITCH_SCOPES,
-  PII_CLASSES,
-  POLICY_OUTCOMES,
-  PROOF_VERDICTS,
-  PROVIDERS,
-  RISK_CATEGORIES,
-  SOURCE_TYPES,
-  TENANT_ROLES,
-  TRI_STATE,
-  VERIFICATION_METHODS,
-} from './enums.js';
+import { ACTION_STATES, ARTIFACT_TYPES, CAPABILITY_FALLBACKS, DATA_PURPOSES, ESTIMATE_METHODS, EVIDENCE_KINDS, FRESHNESS_STATUSES, KILL_SWITCH_SCOPES, PII_CLASSES, POLICY_OUTCOMES, PROOF_VERDICTS, PROVIDERS, RISK_CATEGORIES, SOURCE_TYPES, TENANT_ROLES, TRI_STATE, VERIFICATION_METHODS } from './enums.js';
 
 const isoDate = z.string().datetime({ offset: true });
 const confidence = z.number().min(0).max(1);
@@ -47,7 +29,11 @@ export const EvidenceInputSchema = z.object({
   summary: z.string().max(4000).nullable().default(null),
   content: z.unknown().optional(),
   contentObjectKey: z.string().nullable().default(null),
-  contentSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable().default(null),
+  contentSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable()
+    .default(null),
   /** Whether the source is an external platform (then platformTermsVersion is required). */
   externalPlatform: z.boolean().default(false),
   /** Hours after observedAt/retrievedAt after which the evidence is stale. Null = unknown. */
@@ -202,9 +188,7 @@ export type ApprovalGroup = z.infer<typeof ApprovalGroupSchema>;
 
 export const PolicyDecisionSchema = z.object({
   outcome: z.enum(POLICY_OUTCOMES),
-  reasons: z.array(
-    z.object({ code: z.string(), message: z.string(), rule: z.string(), effect: z.enum(POLICY_OUTCOMES) }),
-  ),
+  reasons: z.array(z.object({ code: z.string(), message: z.string(), rule: z.string(), effect: z.enum(POLICY_OUTCOMES) })),
   approvalGroups: z.array(ApprovalGroupSchema),
   requiresDistinctApprover: z.boolean(),
   policyVersion: z.string(),
@@ -232,7 +216,10 @@ export const ExecutionReceiptSchema = z.object({
   providerRequestId: z.string().nullable(),
   providerObjectId: z.string().nullable(),
   httpStatus: z.number().int().nullable(),
-  responseSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  responseSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
   observedAt: isoDate,
   details: z.record(z.string(), z.unknown()).default({}),
 });
@@ -343,10 +330,7 @@ export const TenantPolicySchema = z.object({
   version: z.number().int().positive(),
   configured: z.boolean(),
   categories: z.partialRecord(z.enum(RISK_CATEGORIES), CategoryPolicySchema).default({}),
-  lambdas: z
-    .object({ risk: z.number().nonnegative(), cost: z.number().nonnegative(), uncertainty: z.number().nonnegative() })
-    .nullable()
-    .default(null),
+  lambdas: z.object({ risk: z.number().nonnegative(), cost: z.number().nonnegative(), uncertainty: z.number().nonnegative() }).nullable().default(null),
   currency: z.string().length(3).nullable().default(null),
   approvalTtlHours: z.number().positive().max(720).nullable().default(null),
   messaging: z
@@ -364,7 +348,10 @@ export const TenantPolicySchema = z.object({
     })
     .nullable()
     .default(null),
-  mmmGates: z.object({ maxRhat: z.number().gt(1), minEss: z.number().positive() }).nullable().default(null),
+  mmmGates: z
+    .object({ maxRhat: z.number().gt(1), minEss: z.number().positive() })
+    .nullable()
+    .default(null),
   approvedJurisdictions: z.array(z.string().min(2)).default([]),
   evidenceMaxAgeHours: z.number().positive().nullable().default(null),
 });

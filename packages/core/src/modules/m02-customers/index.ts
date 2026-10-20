@@ -1,9 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { CONSENT_PURPOSES, CONSENT_STATUSES, LAWFUL_BASES, SUPPRESSION_CHANNELS } from '@futuregrow/contracts';
+import { CONSENT_PURPOSES, CONSENT_STATUSES, LAWFUL_BASES, type SUPPRESSION_CHANNELS } from '@futuregrow/contracts';
 import {
-  type DbOrTx,
-  type Tx,
   appInstalls,
   consentEvents,
   consentState,
@@ -11,6 +8,7 @@ import {
   conversations,
   customerEvents,
   customerProfiles,
+  type DbOrTx,
   dsarRequests,
   evidenceRecords,
   identityIdentifiers,
@@ -19,13 +17,15 @@ import {
   journeyEnrollments,
   propensityScores,
   segmentMembers,
-  suppressions,
-  withTenant,
   sequential,
+  suppressions,
+  type Tx,
+  withTenant,
 } from '@futuregrow/db';
 import { conflict, forbidden, identifierHash, invalid, notFound, sha256Hex } from '@futuregrow/observability';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { ADMIN_ROLES, audit, record, requireRole } from '../../util.js';
 
 export const MATCH_POLICY_VERSION = 'identity-match-v1';
@@ -71,7 +71,11 @@ export async function revokeIngestionKey(tx: Tx, tenantId: string, actor: Actor,
 
 export const IngestEventSchema = z.object({
   messageId: z.string().min(8).max(200),
-  event: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\- ]+$/),
+  event: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[A-Za-z0-9_.:\- ]+$/),
   timestamp: z.string().datetime({ offset: true }),
   anonymousId: z.string().min(1).max(200).optional(),
   userId: z.string().min(1).max(200).optional(),
@@ -118,7 +122,12 @@ async function resolveIdentity(tx: Tx, deps: CoreDeps, tenantId: string, ids: { 
     ? await tx
         .select()
         .from(identityIdentifiers)
-        .where(sql`(${identityIdentifiers.kind}, ${identityIdentifiers.valueHash}) in (${sql.join(hashed.map((h) => sql`(${h.kind}, ${h.hash})`), sql`, `)})`)
+        .where(
+          sql`(${identityIdentifiers.kind}, ${identityIdentifiers.valueHash}) in (${sql.join(
+            hashed.map((h) => sql`(${h.kind}, ${h.hash})`),
+            sql`, `,
+          )})`,
+        )
     : [];
 
   // Follow merge chains to survivors.
@@ -170,10 +179,7 @@ async function resolveIdentity(tx: Tx, deps: CoreDeps, tenantId: string, ids: { 
     await tx.update(customerProfiles).set(updates).where(eq(customerProfiles.id, profileId));
   }
   for (const h of hashed) {
-    await tx
-      .insert(identityIdentifiers)
-      .values({ tenantId, profileId, kind: h.kind, valueHash: h.hash, verified: h.verified })
-      .onConflictDoNothing();
+    await tx.insert(identityIdentifiers).values({ tenantId, profileId, kind: h.kind, valueHash: h.hash, verified: h.verified }).onConflictDoNothing();
   }
   return { profileId, merged };
 }
@@ -298,13 +304,7 @@ export async function recordConsent(tx: Tx, tenantId: string, actor: Actor, raw:
   return ev!;
 }
 
-export async function addSuppression(
-  tx: Tx,
-  deps: CoreDeps,
-  tenantId: string,
-  actor: Actor,
-  input: { channel: (typeof SUPPRESSION_CHANNELS)[number]; identifier?: { kind: 'email' | 'phone'; value: string }; identifierHash?: string; reason: string; source: string },
-) {
+export async function addSuppression(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, input: { channel: (typeof SUPPRESSION_CHANNELS)[number]; identifier?: { kind: 'email' | 'phone'; value: string }; identifierHash?: string; reason: string; source: string }) {
   const hash = input.identifierHash ?? (input.identifier ? identifierHash(deps.config.identifierPepper, input.identifier.kind, input.identifier.value) : null);
   if (!hash) throw invalid('identifier or identifierHash required');
   // A harder reason (bounce, complaint, DSAR, legal, manual) upgrades an existing unsubscribe.
@@ -322,7 +322,10 @@ export async function addSuppression(
 /** Suppression state for one address. `unsubscribe` only blocks commercial mail. */
 export async function emailSuppression(tx: DbOrTx, deps: CoreDeps, email: string): Promise<{ any: boolean; commercialOnly: boolean }> {
   const hash = identifierHash(deps.config.identifierPepper, 'email', email);
-  const rows = await tx.select({ reason: suppressions.reason }).from(suppressions).where(and(eq(suppressions.identifierHash, hash), inArray(suppressions.channel, ['email', 'all'])));
+  const rows = await tx
+    .select({ reason: suppressions.reason })
+    .from(suppressions)
+    .where(and(eq(suppressions.identifierHash, hash), inArray(suppressions.channel, ['email', 'all'])));
   const hard = rows.some((r) => r.reason !== 'unsubscribe');
   return { any: rows.length > 0, commercialOnly: rows.length > 0 && !hard };
 }
@@ -370,7 +373,10 @@ const PRIVACY_ROLES = ['owner', 'privacy_officer'] as const;
 export async function createDsar(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
   const input = DsarInputSchema.parse(raw);
   const hash = identifierHash(deps.config.identifierPepper, input.identifier.kind, input.identifier.value);
-  const matches = await tx.select({ profileId: identityIdentifiers.profileId }).from(identityIdentifiers).where(and(eq(identityIdentifiers.kind, input.identifier.kind), eq(identityIdentifiers.valueHash, hash)));
+  const matches = await tx
+    .select({ profileId: identityIdentifiers.profileId })
+    .from(identityIdentifiers)
+    .where(and(eq(identityIdentifiers.kind, input.identifier.kind), eq(identityIdentifiers.valueHash, hash)));
   const [row] = await tx
     .insert(dsarRequests)
     .values({
@@ -406,7 +412,15 @@ async function profileClosure(tx: Tx, ids: string[]): Promise<string[]> {
     const rows = await tx
       .select({ id: customerProfiles.id, mergedIntoId: customerProfiles.mergedIntoId })
       .from(customerProfiles)
-      .where(sql`${customerProfiles.id} in (${sql.join([...set].map((x) => sql`${x}::uuid`), sql`, `)}) or ${customerProfiles.mergedIntoId} in (${sql.join([...set].map((x) => sql`${x}::uuid`), sql`, `)})`);
+      .where(
+        sql`${customerProfiles.id} in (${sql.join(
+          [...set].map((x) => sql`${x}::uuid`),
+          sql`, `,
+        )}) or ${customerProfiles.mergedIntoId} in (${sql.join(
+          [...set].map((x) => sql`${x}::uuid`),
+          sql`, `,
+        )})`,
+      );
     const before = set.size;
     for (const r of rows) {
       set.add(r.id);
@@ -444,29 +458,52 @@ export async function executeDsarDeletion(deps: CoreDeps, tenantId: string, acto
       await del('propensity_scores', tx.delete(propensityScores).where(inArray(propensityScores.profileId, ids)).returning({ p: propensityScores.profileId }));
       await del(
         'journey_enrollments',
-        tx.update(journeyEnrollments).set({ state: 'exited', exitReason: 'dsar_delete' }).where(and(inArray(journeyEnrollments.profileId, ids), eq(journeyEnrollments.state, 'active'))).returning({ id: journeyEnrollments.id }),
+        tx
+          .update(journeyEnrollments)
+          .set({ state: 'exited', exitReason: 'dsar_delete' })
+          .where(and(inArray(journeyEnrollments.profileId, ids), eq(journeyEnrollments.state, 'active')))
+          .returning({ id: journeyEnrollments.id }),
       );
       await del('app_installs', tx.update(appInstalls).set({ profileId: null, referrer: {} }).where(inArray(appInstalls.profileId, ids)).returning({ id: appInstalls.id }));
       const convs = await tx.select({ id: conversations.id }).from(conversations).where(inArray(conversations.profileId, ids));
       if (convs.length) {
         await del(
           'conversation_messages',
-          tx.update(conversationMessages).set({ text: '[erased: data subject request]', redactedText: '[erased]' }).where(inArray(conversationMessages.conversationId, convs.map((c) => c.id))).returning({ id: conversationMessages.id }),
+          tx
+            .update(conversationMessages)
+            .set({ text: '[erased: data subject request]', redactedText: '[erased]' })
+            .where(
+              inArray(
+                conversationMessages.conversationId,
+                convs.map((c) => c.id),
+              ),
+            )
+            .returning({ id: conversationMessages.id }),
         );
-        await tx.update(conversations).set({ profileId: null, visitorTokenHash: null }).where(inArray(conversations.id, convs.map((c) => c.id)));
+        await tx
+          .update(conversations)
+          .set({ profileId: null, visitorTokenHash: null })
+          .where(
+            inArray(
+              conversations.id,
+              convs.map((c) => c.id),
+            ),
+          );
       }
       await del(
         'evidence_content',
         tx
           .update(evidenceRecords)
           .set({ content: null, status: 'expired' })
-          .where(sql`${evidenceRecords.content} is not null and (${sql.join(ids.map((id) => sql`${evidenceRecords.content}::text like ${`%${id}%`}`), sql` or `)})`)
+          .where(
+            sql`${evidenceRecords.content} is not null and (${sql.join(
+              ids.map((id) => sql`${evidenceRecords.content}::text like ${`%${id}%`}`),
+              sql` or `,
+            )})`,
+          )
           .returning({ id: evidenceRecords.id }),
       );
-      await del(
-        'customer_profiles',
-        tx.update(customerProfiles).set({ email: null, phone: null, displayName: null, traits: {}, region: null, deletedAt: new Date(), updatedAt: new Date() }).where(inArray(customerProfiles.id, ids)).returning({ id: customerProfiles.id }),
-      );
+      await del('customer_profiles', tx.update(customerProfiles).set({ email: null, phone: null, displayName: null, traits: {}, region: null, deletedAt: new Date(), updatedAt: new Date() }).where(inArray(customerProfiles.id, ids)).returning({ id: customerProfiles.id }));
       for (const e of emails) {
         if (e.email) {
           await tx
@@ -494,8 +531,15 @@ export async function executeDsarOptOut(deps: CoreDeps, tenantId: string, actor:
         await recordConsent(tx, tenantId, actor, { profileId, purpose, status: 'withdrawn', lawfulBasis: 'consent', jurisdiction: d.jurisdiction, source: `dsar:${dsarId}`, capturedAt: now });
       }
     }
-    await tx.insert(suppressions).values({ tenantId, channel: 'ads', identifierHash: d.subjectIdentifierHash, reason: 'dsar_opt_out', source: `dsar:${dsarId}` }).onConflictDoNothing();
-    const [done] = await tx.update(dsarRequests).set({ status: 'completed', completedAt: new Date(), propagation: { withdrawn: ['sale_or_share', 'ads_customer_match', 'profiling'] } }).where(eq(dsarRequests.id, dsarId)).returning();
+    await tx
+      .insert(suppressions)
+      .values({ tenantId, channel: 'ads', identifierHash: d.subjectIdentifierHash, reason: 'dsar_opt_out', source: `dsar:${dsarId}` })
+      .onConflictDoNothing();
+    const [done] = await tx
+      .update(dsarRequests)
+      .set({ status: 'completed', completedAt: new Date(), propagation: { withdrawn: ['sale_or_share', 'ads_customer_match', 'profiling'] } })
+      .where(eq(dsarRequests.id, dsarId))
+      .returning();
     await record(tx, tenantId, actor, 'customer.dsar.completed', { type: 'dsar', id: dsarId }, { kind: 'opt_out_sale_share' });
     return done!;
   });
@@ -530,4 +574,3 @@ export async function profileFeatures(tx: Tx, since: Date) {
     group by p.id`);
   return res.rows;
 }
-

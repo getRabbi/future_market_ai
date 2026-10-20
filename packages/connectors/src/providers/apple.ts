@@ -1,7 +1,7 @@
 import { createPrivateKey, sign } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { ProviderHttpError, preWrite } from '../http.js';
-import { type ActionExecutor, type ConnectorContext, type HealthResult, type ReadConnector, compareProof } from '../types.js';
+import { type ActionExecutor, type ConnectorContext, compareProof, type HealthResult, type ReadConnector } from '../types.js';
 
 type AscCreds = Extract<ConnectorContext['credentials'], { provider: 'app_store_connect' }>;
 

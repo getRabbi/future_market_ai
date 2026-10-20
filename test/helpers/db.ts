@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { inject } from 'vitest';
-import { type DbHandle, createDb } from '../../packages/db/src/client.js';
+import { createDb, type DbHandle } from '../../packages/db/src/client.js';
 
 export interface TestDatabase {
   url: string;

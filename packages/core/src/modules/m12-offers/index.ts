@@ -1,8 +1,8 @@
-import { desc, eq, inArray } from 'drizzle-orm';
-import { type DbOrTx, type Tx, croHypotheses, evidenceRecords, offers, priceGuardrails, withTenant } from '@futuregrow/db';
+import { croHypotheses, type DbOrTx, evidenceRecords, offers, priceGuardrails, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, requireMfa, requireRole } from '../../util.js';
 import { lintCopy } from '../m03-knowledge/index.js';
 import { proposeAction } from '../m23-execution/gateway.js';
@@ -46,7 +46,10 @@ export const OfferSchema = z.object({
     amountMicros: z.number().int().positive().optional(),
     bundlePriceMicros: z.number().int().positive().optional(),
     extraTrialDays: z.number().int().positive().max(365).optional(),
-    code: z.string().regex(/^[A-Z0-9_-]{4,40}$/).optional(),
+    code: z
+      .string()
+      .regex(/^[A-Z0-9_-]{4,40}$/)
+      .optional(),
     usageLimit: z.number().int().positive().optional(),
   }),
   copy: z.string().max(2000).default(''),
@@ -192,7 +195,10 @@ export function darkPatternCheck(text: string): { passed: boolean; findings: str
 export const CroSchema = z.object({
   pageUrl: z.string().url(),
   hypothesis: z.string().min(10).max(2000),
-  changes: z.array(z.object({ element: z.string().min(1).max(200), change: z.string().min(3).max(1000) })).min(1).max(20),
+  changes: z
+    .array(z.object({ element: z.string().min(1).max(200), change: z.string().min(3).max(1000) }))
+    .min(1)
+    .max(20),
   evidenceIds: z.array(z.string().uuid()).min(1),
 });
 

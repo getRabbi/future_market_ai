@@ -1,19 +1,13 @@
+import { budgetReservations, rateLimitBuckets, type Tx } from '@futuregrow/db';
 import { and, eq, sql } from 'drizzle-orm';
-import { type Tx, budgetReservations, rateLimitBuckets } from '@futuregrow/db';
 
 /** Serialise budget decisions per tenant so concurrent actions cannot oversubscribe a ceiling. */
 export async function lockTenantBudget(tx: Tx, tenantId: string): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`budget:${tenantId}`}, 0))`);
 }
 
-export async function holdReservation(
-  tx: Tx,
-  args: { tenantId: string; actionId: string; connectionId: string | null; currency: string; amountMicros: number; now: Date },
-): Promise<void> {
-  await tx
-    .insert(budgetReservations)
-    .values({ tenantId: args.tenantId, actionId: args.actionId, connectionId: args.connectionId, currency: args.currency, amountMicros: args.amountMicros, createdAt: args.now })
-    .onConflictDoNothing();
+export async function holdReservation(tx: Tx, args: { tenantId: string; actionId: string; connectionId: string | null; currency: string; amountMicros: number; now: Date }): Promise<void> {
+  await tx.insert(budgetReservations).values({ tenantId: args.tenantId, actionId: args.actionId, connectionId: args.connectionId, currency: args.currency, amountMicros: args.amountMicros, createdAt: args.now }).onConflictDoNothing();
 }
 
 export async function settleReservation(tx: Tx, actionId: string, to: 'committed' | 'released'): Promise<void> {
@@ -28,10 +22,7 @@ export async function settleReservation(tx: Tx, actionId: string, to: 'committed
  * otherwise the milliseconds to wait before one becomes available.
  */
 export async function takeToken(tx: Tx, args: { tenantId: string; key: string; capacity: number; refillPerSecond: number; now: Date }): Promise<number> {
-  await tx
-    .insert(rateLimitBuckets)
-    .values({ tenantId: args.tenantId, bucketKey: args.key, tokens: args.capacity, capacity: args.capacity, refillPerSecond: args.refillPerSecond, updatedAt: args.now })
-    .onConflictDoNothing();
+  await tx.insert(rateLimitBuckets).values({ tenantId: args.tenantId, bucketKey: args.key, tokens: args.capacity, capacity: args.capacity, refillPerSecond: args.refillPerSecond, updatedAt: args.now }).onConflictDoNothing();
   const [b] = await tx
     .select()
     .from(rateLimitBuckets)

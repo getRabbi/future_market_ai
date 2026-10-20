@@ -1,9 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { proof } from '@futuregrow/connectors';
 import { canonicalJson } from '@futuregrow/contracts';
 import { dsarRequests, withTenant } from '@futuregrow/db';
 import { sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
-import { proof } from '@futuregrow/connectors';
+import { eq } from 'drizzle-orm';
 import { actorRef, systemActor } from '../../deps.js';
 import { record } from '../../util.js';
 import { registerHooks, registerInternalExecutor } from '../m23-execution/registry.js';

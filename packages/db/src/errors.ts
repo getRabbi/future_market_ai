@@ -38,13 +38,7 @@ interface PgLike {
 }
 
 function isPgLike(e: unknown): e is PgLike {
-  return (
-    typeof e === 'object' &&
-    e !== null &&
-    typeof (e as PgLike).code === 'string' &&
-    /^[0-9A-Z]{5}$/.test((e as PgLike).code) &&
-    typeof (e as PgLike).message === 'string'
-  );
+  return typeof e === 'object' && e !== null && typeof (e as PgLike).code === 'string' && /^[0-9A-Z]{5}$/.test((e as PgLike).code) && typeof (e as PgLike).message === 'string';
 }
 
 export function findPgError(err: unknown): PgLike | null {

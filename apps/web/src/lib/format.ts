@@ -1,5 +1,29 @@
 const OK = new Set(['VERIFIED', 'ROLLED_BACK', 'approved', 'active', 'admitted', 'completed', 'delivered', 'published_verified', 'live_verified', 'sent_verified', 'healthy', 'ok', 'confirmed', 'qualified', 'running', 'current', 'granted']);
-const WARN = new Set(['APPROVAL_REQUIRED', 'PROPOSED', 'EVIDENCE_READY', 'POLICY_CHECKED', 'EXECUTED_UNVERIFIED', 'ESCALATED', 'ROLLBACK_REQUIRED', 'quarantined', 'pending_review', 'draft', 'queued', 'submitted', 'scheduled', 'handoff', 'degraded', 'reauth_required', 'insufficient_data', 'paused', 'stale', 'open', 'warning', 'drafted', 'sent_unverified']);
+const WARN = new Set([
+  'APPROVAL_REQUIRED',
+  'PROPOSED',
+  'EVIDENCE_READY',
+  'POLICY_CHECKED',
+  'EXECUTED_UNVERIFIED',
+  'ESCALATED',
+  'ROLLBACK_REQUIRED',
+  'quarantined',
+  'pending_review',
+  'draft',
+  'queued',
+  'submitted',
+  'scheduled',
+  'handoff',
+  'degraded',
+  'reauth_required',
+  'insufficient_data',
+  'paused',
+  'stale',
+  'open',
+  'warning',
+  'drafted',
+  'sent_unverified',
+]);
 const DANGER = new Set(['FAILED', 'DENIED', 'REJECTED', 'blocked', 'failed', 'rejected', 'bounced', 'complained', 'suppressed', 'invalid', 'discrepancy', 'failing', 'revoked', 'critical', 'sev1', 'sev2', 'rejected_missing_disclosure', 'blocked_dark_pattern', 'expired']);
 
 export function tone(v: unknown): 'ok' | 'warn' | 'danger' | 'info' | 'muted' {

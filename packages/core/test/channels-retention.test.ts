@@ -1,29 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ModelProvider, ProviderOutcome, StructuredRequest } from '@futuregrow/agent-kernel';
 import { PROMPTS } from '@futuregrow/agent-kernel';
+import { actionRequests, commissionLedger, consentState, conversationMessages, conversations, creatorSubmissions, customerProfiles, fraudFlags, journeyEnrollments, leads, messages, referralClicks, referralConversions, supportTickets, suppressions, withTenant } from '@futuregrow/db';
 import { identifierHash } from '@futuregrow/observability';
-import {
-  actionRequests,
-  commissionLedger,
-  consentState,
-  conversationMessages,
-  conversations,
-  creatorSubmissions,
-  customerProfiles,
-  fraudFlags,
-  journeyEnrollments,
-  leads,
-  messages,
-  referralClicks,
-  referralConversions,
-  supportTickets,
-  suppressions,
-  withTenant,
-} from '@futuregrow/db';
-import { FixtureServer } from '../../../test/helpers/fixture-server.js';
+import { and, eq } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import { clearModelCache, createModelGateway } from '../src/agents.js';
 import { createConnection } from '../src/modules/connections.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
@@ -161,7 +144,9 @@ describe('M20 lifecycle messaging', () => {
   });
 
   it('runs a triggered journey: evidence-backed, policy pre-authorized, rendered at the boundary, verified', async () => {
-    const welcome = await tx((t) => life.createTemplate(t, h.deps, h.tenantId, h.users.operator, { name: 'welcome', category: 'commercial', subject: 'Welcome, {{first_name}}', bodyText: 'Thanks for joining {{company_name}}. Connect your first data source from Settings.', bodyHtml: '<p>Thanks for joining {{company_name}}.</p>' }));
+    const welcome = await tx((t) =>
+      life.createTemplate(t, h.deps, h.tenantId, h.users.operator, { name: 'welcome', category: 'commercial', subject: 'Welcome, {{first_name}}', bodyText: 'Thanks for joining {{company_name}}. Connect your first data source from Settings.', bodyHtml: '<p>Thanks for joining {{company_name}}.</p>' }),
+    );
     const follow = await tx((t) => life.createTemplate(t, h.deps, h.tenantId, h.users.operator, { name: 'follow-up', category: 'commercial', subject: 'Need a hand?', bodyText: 'Reply to this email and our team will help you set up.' }));
     await expect(tx((t) => life.approveTemplate(t, h.deps, h.tenantId, { ...h.users.operator, roles: ['admin'] }, welcome.id))).rejects.toThrow(/author/);
     welcomeId = (await tx((t) => life.approveTemplate(t, h.deps, h.tenantId, h.users.approver, welcome.id))).id;
@@ -172,7 +157,12 @@ describe('M20 lifecycle messaging', () => {
         name: 'Onboarding',
         triggerEvent: 'signup',
         connectionId: resendConn,
-        steps: [{ type: 'send_email', templateId: welcomeId }, { type: 'wait', hours: 24 }, { type: 'exit_if_event', eventName: 'integration_connected' }, { type: 'send_email', templateId: followId }],
+        steps: [
+          { type: 'send_email', templateId: welcomeId },
+          { type: 'wait', hours: 24 },
+          { type: 'exit_if_event', eventName: 'integration_connected' },
+          { type: 'send_email', templateId: followId },
+        ],
       }),
     );
     journeyId = j.id;
@@ -221,7 +211,12 @@ describe('M20 lifecycle messaging', () => {
     expect(await life.processUnsubscribe(h.deps, `${token}x`)).toEqual({ ok: false });
     expect(await life.processUnsubscribe(h.deps, token)).toEqual({ ok: true });
     expect(await life.processUnsubscribe(h.deps, token)).toEqual({ ok: true }); // idempotent
-    const [c] = await tx((t) => t.select().from(consentState).where(and(eq(consentState.profileId, m!.profileId), eq(consentState.purpose, 'marketing_email'))));
+    const [c] = await tx((t) =>
+      t
+        .select()
+        .from(consentState)
+        .where(and(eq(consentState.profileId, m!.profileId), eq(consentState.purpose, 'marketing_email'))),
+    );
     expect(c!.status).toBe('withdrawn');
     const again = await life.sendOneOff(h.deps, h.tenantId, h.users.operator, { profileId: m!.profileId, templateId: followId, connectionId: resendConn });
     expect(again.status).toBe('DENIED');
@@ -242,7 +237,12 @@ describe('M20 lifecycle messaging', () => {
     expect(await processWebhook(h.deps, inbox.id)).toBe('processed');
     const [msg] = await tx((t) => t.select().from(messages).where(eq(messages.id, r.messageId)));
     expect(msg!.status).toBe('bounced');
-    const sup = await tx((t) => t.select().from(suppressions).where(eq(suppressions.identifierHash, identifierHash(h.deps.config.identifierPepper, 'email', 'bouncy@example.com'))));
+    const sup = await tx((t) =>
+      t
+        .select()
+        .from(suppressions)
+        .where(eq(suppressions.identifierHash, identifierHash(h.deps.config.identifierPepper, 'email', 'bouncy@example.com'))),
+    );
     expect(sup[0]!.reason).toBe('bounce');
   });
 
@@ -327,7 +327,14 @@ describe('M21 conversational support', () => {
     });
     const promise = await ask('Can I import contacts from a CSV file?');
     expect(promise.reply.handoff).toBe(true);
-    const [sys] = await tx((t) => t.select().from(conversationMessages).where(and(eq(conversationMessages.conversationId, promise.s.conversationId), eq(conversationMessages.role, 'system'))).orderBy(conversationMessages.createdAt).offset(1));
+    const [sys] = await tx((t) =>
+      t
+        .select()
+        .from(conversationMessages)
+        .where(and(eq(conversationMessages.conversationId, promise.s.conversationId), eq(conversationMessages.role, 'system')))
+        .orderBy(conversationMessages.createdAt)
+        .offset(1),
+    );
     expect(sys!.handoffReason).toMatch(/commitment/);
 
     const noKnowledge = await ask('What is the weather on Mars?');

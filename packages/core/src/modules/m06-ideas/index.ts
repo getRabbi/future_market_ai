@@ -1,14 +1,14 @@
-import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { PROMPTS, untrustedBlock } from '@futuregrow/agent-kernel';
-import { type DbOrTx, type Tx, evidenceRecords, growthIdeas, topicClusters, trends, withTenant } from '@futuregrow/db';
+import { type DbOrTx, evidenceRecords, growthIdeas, type Tx, topicClusters, trends, withTenant } from '@futuregrow/db';
 import { invalid, notFound } from '@futuregrow/observability';
+import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
 import { runAgent } from '../../agents.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { normalizeText, record, requireRole } from '../../util.js';
-import { getTenantPolicy } from '../m24-governance/index.js';
 import { featureGaps, listObservations } from '../m05-competitors/index.js';
 import { effectiveFreshness } from '../m23-execution/facts.js';
+import { getTenantPolicy } from '../m24-governance/index.js';
 
 /* ------------------------------------------------------------------ */
 /* Screening                                                           */
@@ -130,10 +130,27 @@ export function sampleSizeTwoProportions(baseline: number, mde: number, alpha = 
   if (p1 <= 0 || p1 >= 1 || p2 <= 0 || p2 >= 1) throw invalid('baseline and lifted rate must be in (0, 1)');
   const z = (p: number): number => {
     // Acklam inverse normal (sufficient precision for planning)
-    const a1 = -39.69683028665376, a2 = 220.9460984245205, a3 = -275.928510446969, a4 = 138.357751867269, a5 = -30.66479806614716, a6 = 2.506628277459239;
-    const b1 = -54.47609879822406, b2 = 161.5858368580409, b3 = -155.6989798598866, b4 = 66.80131188771972, b5 = -13.28068155288572;
-    const c1 = -0.007784894002430293, c2 = -0.3223964580411365, c3 = -2.400758277161838, c4 = -2.549732539343734, c5 = 4.374664141464968, c6 = 2.938163982698783;
-    const d1 = 0.007784695709041462, d2 = 0.3224671290700398, d3 = 2.445134137142996, d4 = 3.754408661907416;
+    const a1 = -39.69683028665376,
+      a2 = 220.9460984245205,
+      a3 = -275.928510446969,
+      a4 = 138.357751867269,
+      a5 = -30.66479806614716,
+      a6 = 2.506628277459239;
+    const b1 = -54.47609879822406,
+      b2 = 161.5858368580409,
+      b3 = -155.6989798598866,
+      b4 = 66.80131188771972,
+      b5 = -13.28068155288572;
+    const c1 = -0.007784894002430293,
+      c2 = -0.3223964580411365,
+      c3 = -2.400758277161838,
+      c4 = -2.549732539343734,
+      c5 = 4.374664141464968,
+      c6 = 2.938163982698783;
+    const d1 = 0.007784695709041462,
+      d2 = 0.3224671290700398,
+      d3 = 2.445134137142996,
+      d4 = 3.754408661907416;
     if (p < 0.02425) {
       const qq = Math.sqrt(-2 * Math.log(p));
       return (((((c1 * qq + c2) * qq + c3) * qq + c4) * qq + c5) * qq + c6) / ((((d1 * qq + d2) * qq + d3) * qq + d4) * qq + 1);
@@ -159,8 +176,16 @@ async function historicalPrior(tx: DbOrTx) {
 }
 
 function jaccard(a: string, b: string) {
-  const A = new Set(normalizeText(a).split(' ').filter((w) => w.length > 2));
-  const B = new Set(normalizeText(b).split(' ').filter((w) => w.length > 2));
+  const A = new Set(
+    normalizeText(a)
+      .split(' ')
+      .filter((w) => w.length > 2),
+  );
+  const B = new Set(
+    normalizeText(b)
+      .split(' ')
+      .filter((w) => w.length > 2),
+  );
   const inter = [...A].filter((x) => B.has(x)).length;
   return A.size + B.size === 0 ? 0 : inter / (A.size + B.size - inter);
 }
@@ -176,12 +201,20 @@ export const IdeaInputSchema = z.object({
   audience: z.string().min(3).max(500),
   targetMetric: z.string().min(2).max(100),
   evidenceIds: z.array(z.string().uuid()).min(1).max(30),
-  impact: z.object({ p10: z.number(), p90: z.number(), periods: z.number().int().positive(), basis: z.string().min(3) }).refine((i) => i.p90 >= i.p10, 'p90 must be >= p10').nullable().default(null),
-  valuePerUnit: z.object({ amount: z.number().nonnegative(), currency: z.string().length(3), evidenceId: z.string().uuid() }).nullable().default(null),
-  expectedCost: z.object({ amount: z.number().nonnegative(), currency: z.string().length(3), basis: z.string().min(3) }).nullable().default(null),
-  test: z
-    .object({ type: z.enum(['ab_test', 'holdout', 'discovery_survey', 'smoke_test', 'geo_test']), baselineRate: z.number().gt(0).lt(1).optional(), minimumDetectableEffect: z.number().gt(0).lt(5).optional() })
-    .default({ type: 'ab_test' }),
+  impact: z
+    .object({ p10: z.number(), p90: z.number(), periods: z.number().int().positive(), basis: z.string().min(3) })
+    .refine((i) => i.p90 >= i.p10, 'p90 must be >= p10')
+    .nullable()
+    .default(null),
+  valuePerUnit: z
+    .object({ amount: z.number().nonnegative(), currency: z.string().length(3), evidenceId: z.string().uuid() })
+    .nullable()
+    .default(null),
+  expectedCost: z
+    .object({ amount: z.number().nonnegative(), currency: z.string().length(3), basis: z.string().min(3) })
+    .nullable()
+    .default(null),
+  test: z.object({ type: z.enum(['ab_test', 'holdout', 'discovery_survey', 'smoke_test', 'geo_test']), baselineRate: z.number().gt(0).lt(1).optional(), minimumDetectableEffect: z.number().gt(0).lt(5).optional() }).default({ type: 'ab_test' }),
   killCriteria: z.array(z.string().min(5).max(500)).min(1).max(10),
   risks: z.array(z.string().max(500)).max(10).default([]),
 });
@@ -208,7 +241,7 @@ export async function createIdea(tx: Tx, deps: CoreDeps, tenantId: string, actor
   const policy = await getTenantPolicy(tx, tenantId);
   const currencyOk = !input.expectedCost || !input.valuePerUnit || input.expectedCost.currency === input.valuePerUnit.currency;
   if (!currencyOk) throw invalid('cost and value per unit must use the same currency');
-  const riskScore = Math.min(1, (input.risks.length * 0.1) + (screening.passed ? 0 : 1));
+  const riskScore = Math.min(1, input.risks.length * 0.1 + (screening.passed ? 0 : 1));
   const value = scoreIdea({
     prior: await historicalPrior(tx),
     impact: input.impact,
@@ -261,8 +294,13 @@ export async function setIdeaStatus(tx: Tx, tenantId: string, actor: Actor, id: 
 }
 
 export async function rankedIdeas(tx: DbOrTx, limit = 100) {
-  const rows = await tx.select().from(growthIdeas).where(inArray(growthIdeas.status, ['candidate', 'queued_for_test', 'testing', 'validated'])).orderBy(desc(growthIdeas.createdAt)).limit(500);
-  const key = (r: typeof rows[number]) => {
+  const rows = await tx
+    .select()
+    .from(growthIdeas)
+    .where(inArray(growthIdeas.status, ['candidate', 'queued_for_test', 'testing', 'validated']))
+    .orderBy(desc(growthIdeas.createdAt))
+    .limit(500);
+  const key = (r: (typeof rows)[number]) => {
     const v = r.valueSummary as { riskAdjustedMean?: number | null; value?: { mean: number } };
     return v.riskAdjustedMean ?? v.value?.mean ?? Number.NEGATIVE_INFINITY;
   };
@@ -338,15 +376,7 @@ export async function generateIdeas(deps: CoreDeps, tenantId: string, actor: Act
           continue;
         }
         try {
-          const row = await createIdea(
-            tx,
-            deps,
-            tenantId,
-            systemActor('idea-lab'),
-            { ...idea, evidenceIds: cited, test: { type: idea.cheapFirstTest }, killCriteria: idea.killCriteria.length ? idea.killCriteria : ['no measurable improvement in the target metric'] },
-            'agent',
-            ctx.runId,
-          );
+          const row = await createIdea(tx, deps, tenantId, systemActor('idea-lab'), { ...idea, evidenceIds: cited, test: { type: idea.cheapFirstTest }, killCriteria: idea.killCriteria.length ? idea.killCriteria : ['no measurable improvement in the target metric'] }, 'agent', ctx.runId);
           created.push(row.id);
         } catch (err) {
           rejected.push({ title: idea.title, reason: err instanceof Error ? err.message : String(err) });
@@ -357,4 +387,3 @@ export async function generateIdeas(deps: CoreDeps, tenantId: string, actor: Act
     return { created, rejected };
   });
 }
-

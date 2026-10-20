@@ -1,29 +1,16 @@
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { AbstainError, PROMPTS, untrustedBlock } from '@futuregrow/agent-kernel';
 import { type ActionRisk, type GrowthDecision, GrowthDecisionSchema, getActionType, listActionTypes } from '@futuregrow/contracts';
-import {
-  type DbOrTx,
-  type Tx,
-  connections,
-  evidenceRecords,
-  experimentResults,
-  experiments,
-  forecastPoints,
-  forecastRuns,
-  growthDecisions,
-  growthIdeas,
-  metricSeries,
-  withTenant,
-} from '@futuregrow/db';
-import { evaluatePolicy } from '@futuregrow/policies';
+import { connections, type DbOrTx, evidenceRecords, experimentResults, experiments, forecastPoints, forecastRuns, growthDecisions, growthIdeas, metricSeries, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
+import { evaluatePolicy } from '@futuregrow/policies';
+import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef } from '../../deps.js';
 import { runAgent } from '../../agents.js';
+import { type Actor, actorRef, type CoreDeps } from '../../deps.js';
 import { record, requireRole } from '../../util.js';
-import { getTenantPolicy } from '../m24-governance/index.js';
 import { gatherPolicyFacts } from '../m23-execution/facts.js';
 import { proposeAction } from '../m23-execution/gateway.js';
+import { getTenantPolicy } from '../m24-governance/index.js';
 
 const BRAIN_AGENT = 'growth-brain';
 
@@ -104,16 +91,36 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
       const [idea] = await tx.select().from(growthIdeas).where(eq(growthIdeas.id, input.ideaId));
       if (!idea) throw notFound('idea');
       if (['rejected', 'duplicate', 'invalidated'].includes(idea.status)) throw invalid(`idea is ${idea.status}`);
-      const [series] = input.seriesId
-        ? await tx.select().from(metricSeries).where(eq(metricSeries.id, input.seriesId))
-        : await tx.select().from(metricSeries).where(eq(metricSeries.key, idea.targetMetric));
+      const [series] = input.seriesId ? await tx.select().from(metricSeries).where(eq(metricSeries.id, input.seriesId)) : await tx.select().from(metricSeries).where(eq(metricSeries.key, idea.targetMetric));
       const [run] = series
-        ? await tx.select().from(forecastRuns).where(and(eq(forecastRuns.seriesId, series.id), ne(forecastRuns.status, 'abstained'))).orderBy(desc(forecastRuns.createdAt)).limit(1)
+        ? await tx
+            .select()
+            .from(forecastRuns)
+            .where(and(eq(forecastRuns.seriesId, series.id), ne(forecastRuns.status, 'abstained')))
+            .orderBy(desc(forecastRuns.createdAt))
+            .limit(1)
         : [];
       const points = run ? await tx.select().from(forecastPoints).where(eq(forecastPoints.runId, run.id)).orderBy(forecastPoints.ts) : [];
       const exps = await tx.select().from(experiments).where(eq(experiments.ideaId, idea.id));
-      const results = exps.length ? await tx.select().from(experimentResults).where(inArray(experimentResults.experimentId, exps.map((e) => e.id))).orderBy(desc(experimentResults.computedAt)).limit(1) : [];
-      const fcEvidence = run ? await tx.select({ id: evidenceRecords.id }).from(evidenceRecords).where(eq(evidenceRecords.sourceUriOrObjectId, `analytics://forecast/${run.id}`)) : [];
+      const results = exps.length
+        ? await tx
+            .select()
+            .from(experimentResults)
+            .where(
+              inArray(
+                experimentResults.experimentId,
+                exps.map((e) => e.id),
+              ),
+            )
+            .orderBy(desc(experimentResults.computedAt))
+            .limit(1)
+        : [];
+      const fcEvidence = run
+        ? await tx
+            .select({ id: evidenceRecords.id })
+            .from(evidenceRecords)
+            .where(eq(evidenceRecords.sourceUriOrObjectId, `analytics://forecast/${run.id}`))
+        : [];
       const conns = await tx.select({ id: connections.id, provider: connections.provider, displayName: connections.displayName, externalAccountId: connections.externalAccountId, status: connections.status }).from(connections);
       return { idea, series: series ?? null, run: run ?? null, points, result: results[0] ?? null, fcEvidence: fcEvidence.map((e) => e.id), conns };
     });
@@ -125,7 +132,9 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
     ctx.note('observe', { seriesId: obs.series.id, forecastRunId: obs.run.id, periods, baselineMean: baseline.mean, experimentResultId: obs.result?.id ?? null });
 
     /* ---------- Strategist ---------- */
-    const allow = listActionTypes().filter((a) => a.supported).map((a) => `${a.type} (${a.category}${a.provider === 'internal' ? ', internal' : `, ${a.provider}`}): ${a.description}`);
+    const allow = listActionTypes()
+      .filter((a) => a.supported)
+      .map((a) => `${a.type} (${a.category}${a.provider === 'internal' ? ', internal' : `, ${a.provider}`}): ${a.description}`);
     const strat = await ctx.think('strategist', PROMPTS.brainStrategist, {
       purpose: 'planning',
       outputSchema: StrategistSchema,
@@ -218,17 +227,16 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
       approval = { required: decision.outcome !== 'PRE_AUTHORIZED', roles: [...new Set(decision.approvalGroups.flatMap((g) => g.anyOfRoles))] };
     }
     const valuePerUnit = (obs.idea.valueSummary as { valuePerUnit?: { amount: number } | null }).valuePerUnit?.amount ?? null;
-    const utility: GrowthDecision['utility'] =
-      !policy.lambdas
-        ? { status: 'UNSCORED_LAMBDAS_UNCONFIGURED', value: null, components: null }
-        : !effect || valuePerUnit === null
-          ? { status: 'UNSCORED_INSUFFICIENT_EVIDENCE', value: null, components: null }
-          : (() => {
-              const ev = effect.value * valuePerUnit;
-              const width = (effect.high - effect.low) * valuePerUnit;
-              const components = { expectedValue: ev, costTerm: policy.lambdas!.cost * expectedCost.amount, riskTerm: policy.lambdas!.risk * riskScore * Math.abs(ev), uncertaintyTerm: policy.lambdas!.uncertainty * width };
-              return { status: 'SCORED' as const, value: ev - components.costTerm - components.riskTerm - components.uncertaintyTerm, components };
-            })();
+    const utility: GrowthDecision['utility'] = !policy.lambdas
+      ? { status: 'UNSCORED_LAMBDAS_UNCONFIGURED', value: null, components: null }
+      : !effect || valuePerUnit === null
+        ? { status: 'UNSCORED_INSUFFICIENT_EVIDENCE', value: null, components: null }
+        : (() => {
+            const ev = effect.value * valuePerUnit;
+            const width = (effect.high - effect.low) * valuePerUnit;
+            const components = { expectedValue: ev, costTerm: policy.lambdas!.cost * expectedCost.amount, riskTerm: policy.lambdas!.risk * riskScore * Math.abs(ev), uncertaintyTerm: policy.lambdas!.uncertainty * width };
+            return { status: 'SCORED' as const, value: ev - components.costTerm - components.riskTerm - components.uncertaintyTerm, components };
+          })();
     if (utility.status !== 'SCORED') approval = { ...approval, required: true };
 
     const decisionId = crypto.randomUUID();
@@ -242,7 +250,15 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
       evidenceIds: [...new Set([...obs.idea.evidenceIds, ...obs.fcEvidence])],
       predictedOutcomes: {
         metric: obs.series.key,
-        distribution: { family: 'empirical', quantiles: [{ q: 0.1, value: baseline.q10 }, { q: 0.5, value: baseline.q50 }, { q: 0.9, value: baseline.q90 }], sampleSize: Math.max(1, Number((obs.run.calibration as { folds?: number }).folds ?? 1)) },
+        distribution: {
+          family: 'empirical',
+          quantiles: [
+            { q: 0.1, value: baseline.q10 },
+            { q: 0.5, value: baseline.q50 },
+            { q: 0.9, value: baseline.q90 },
+          ],
+          sampleSize: Math.max(1, Number((obs.run.calibration as { folds?: number }).folds ?? 1)),
+        },
         pointSummary: baseline.mean,
         interval: { level: 0.8, low: baseline.q10, high: baseline.q90 },
         calibrationReference: `forecast_run:${obs.run.id}`,
@@ -250,12 +266,7 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
       estimatedIncrementalEffect: effect ? { value: effect.value, method: 'experiment', uncertainty: { level: 0.95, low: effect.low, high: effect.high }, sourceRef: effect.ref } : { value: null, method: 'unknown', uncertainty: null, sourceRef: null },
       expectedCost,
       downsideRisk: { description: [s.downside, ...crit.output.concerns].filter(Boolean).join(' | ').slice(0, 2000) || 'not stated', p10Outcome: baseline.q10, riskScore },
-      assumptions: [
-        ...s.assumptions,
-        ...crit.output.unsupportedAssumptions.map((a) => `[critic: unsupported] ${a}`),
-        'Interval sums per-period forecast quantiles (conservative; not the exact quantile of the sum).',
-        ...notes.map((n) => `[validation] ${n}`),
-      ].slice(0, 30),
+      assumptions: [...s.assumptions, ...crit.output.unsupportedAssumptions.map((a) => `[critic: unsupported] ${a}`), 'Interval sums per-period forecast quantiles (conservative; not the exact quantile of the sum).', ...notes.map((n) => `[validation] ${n}`)].slice(0, 30),
       counterfactualBaseline: { description: `No-action baseline: ${obs.run.championModel} forecast (${obs.run.status}). ${s.counterfactual}`.slice(0, 1000), value: baseline.mean },
       policyResult,
       approvalRequirement: approval,
@@ -290,7 +301,14 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
         ideaId: obs.idea.id,
         agentRunId: ctx.runId,
       });
-      await record(tx, tenantId, { type: 'agent', id: BRAIN_AGENT, roles: [], mfaVerified: false }, 'brain.decision.proposed', { type: 'growth_decision', id: decisionId }, { ideaId: obs.idea.id, action: decision.proposedAction?.actionType ?? null, policy: policyResult.outcome, utility: utility.status, critic: crit.output.verdict });
+      await record(
+        tx,
+        tenantId,
+        { type: 'agent', id: BRAIN_AGENT, roles: [], mfaVerified: false },
+        'brain.decision.proposed',
+        { type: 'growth_decision', id: decisionId },
+        { ideaId: obs.idea.id, action: decision.proposedAction?.actionType ?? null, policy: policyResult.outcome, utility: utility.status, critic: crit.output.verdict },
+      );
     });
     ctx.note('decide', { decisionId, action: proposedAction?.actionType ?? null, critic: crit.output.verdict, utility: utility.status });
     return { decisionId, decision };
@@ -309,25 +327,37 @@ export async function acceptDecision(deps: CoreDeps, tenantId: string, actor: Ac
   const pa = d.proposedAction as GrowthDecision['proposedAction'];
   if (!pa) throw invalid('decision has no proposed action');
   const mv = d.modelVersions as Record<string, string>;
-  const view = await proposeAction(deps, tenantId, { type: 'agent', id: BRAIN_AGENT, roles: [], mfaVerified: false, modelId: mv.strategist?.split('@')[0] ?? null, promptVersion: PROMPTS.brainStrategist.version }, {
-    actionType: pa.actionType,
-    connectionId: pa.connectionId,
-    target: pa.target,
-    params: pa.params,
-    decisionId,
-    evidenceIds: d.evidenceIds,
-    risk: riskFromParams(pa.actionType, pa.params, d.market),
-    idempotencyKey: `decision:${decisionId}`,
-  });
+  const view = await proposeAction(
+    deps,
+    tenantId,
+    { type: 'agent', id: BRAIN_AGENT, roles: [], mfaVerified: false, modelId: mv.strategist?.split('@')[0] ?? null, promptVersion: PROMPTS.brainStrategist.version },
+    {
+      actionType: pa.actionType,
+      connectionId: pa.connectionId,
+      target: pa.target,
+      params: pa.params,
+      decisionId,
+      evidenceIds: d.evidenceIds,
+      risk: riskFromParams(pa.actionType, pa.params, d.market),
+      idempotencyKey: `decision:${decisionId}`,
+    },
+  );
   await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) =>
-    tx.update(growthDecisions).set({ status: 'ACCEPTED', actionId: view.id, decidedBy: actorRef(actor), decidedAt: new Date() }).where(eq(growthDecisions.id, decisionId)),
+    tx
+      .update(growthDecisions)
+      .set({ status: 'ACCEPTED', actionId: view.id, decidedBy: actorRef(actor), decidedAt: new Date() })
+      .where(eq(growthDecisions.id, decisionId)),
   );
   return view;
 }
 
 export async function rejectDecision(tx: Tx, tenantId: string, actor: Actor, decisionId: string, reason: string) {
   requireRole(actor, ['owner', 'admin', 'growth_operator', 'approver'], 'rejecting growth decisions');
-  const [row] = await tx.update(growthDecisions).set({ status: 'REJECTED', decidedBy: actorRef(actor), decidedAt: new Date() }).where(and(eq(growthDecisions.id, decisionId), eq(growthDecisions.status, 'PROPOSED'))).returning();
+  const [row] = await tx
+    .update(growthDecisions)
+    .set({ status: 'REJECTED', decidedBy: actorRef(actor), decidedAt: new Date() })
+    .where(and(eq(growthDecisions.id, decisionId), eq(growthDecisions.status, 'PROPOSED')))
+    .returning();
   if (!row) throw conflict('decision is not open');
   await record(tx, tenantId, actor, 'brain.decision.abstained', { type: 'growth_decision', id: decisionId }, { rejected: true, reason });
   return row;

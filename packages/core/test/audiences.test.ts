@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { customerEvents, customerProfiles, withTenant } from '@futuregrow/db';
 import { identifierHash } from '@futuregrow/observability';
-import * as audiences from '../src/modules/m11-audiences/index.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import * as customers from '../src/modules/m02-customers/index.js';
+import * as audiences from '../src/modules/m11-audiences/index.js';
 
 let h: CoreHarness;
 const tx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => withTenant(h.t.handle.db, { tenantId: h.tenantId, actor: 'user:test' }, fn);
@@ -18,9 +18,7 @@ afterAll(async () => {
 
 describe('M11 segments', () => {
   it('blocks sensitive or proxy attributes', async () => {
-    const seg = await tx((t) =>
-      audiences.defineSegment(t, h.tenantId, h.users.operator, { name: 'by age', purpose: 'marketing_email', definition: { all: [{ trait: 'age_band', op: 'eq', value: '25-34' }] } }),
-    );
+    const seg = await tx((t) => audiences.defineSegment(t, h.tenantId, h.users.operator, { name: 'by age', purpose: 'marketing_email', definition: { all: [{ trait: 'age_band', op: 'eq', value: '25-34' }] } }));
     expect(seg.status).toBe('blocked');
     expect(seg.usesSensitiveAttributes).toBe(true);
     await expect(tx((t) => audiences.computeSnapshot(t, h.tenantId, seg.id, (e) => e))).rejects.toThrow(/blocked/);
@@ -29,7 +27,10 @@ describe('M11 segments', () => {
   it('materialises only consented, unsuppressed, adult, live profiles', async () => {
     const mk = async (email: string, opts: { consent?: boolean; child?: boolean; purchases?: number }) =>
       tx(async (t) => {
-        const [p] = await t.insert(customerProfiles).values({ tenantId: h.tenantId, email, country: 'US', isChild: opts.child ?? false }).returning();
+        const [p] = await t
+          .insert(customerProfiles)
+          .values({ tenantId: h.tenantId, email, country: 'US', isChild: opts.child ?? false })
+          .returning();
         for (let i = 0; i < (opts.purchases ?? 0); i++) {
           await t.insert(customerEvents).values({ tenantId: h.tenantId, messageId: `m-${randomUUID()}`, profileId: p!.id, eventName: 'purchase', occurredAt: new Date(), source: 'test' });
         }
@@ -49,7 +50,12 @@ describe('M11 segments', () => {
       audiences.defineSegment(t, h.tenantId, h.users.operator, {
         name: 'repeat buyers US',
         purpose: 'marketing_email',
-        definition: { all: [{ field: 'country', op: 'eq', value: 'US' }, { event: 'purchase', windowDays: 30, op: 'gte', count: 2 }] },
+        definition: {
+          all: [
+            { field: 'country', op: 'eq', value: 'US' },
+            { event: 'purchase', windowDays: 30, op: 'gte', count: 2 },
+          ],
+        },
       }),
     );
     const snap = await tx((t) => audiences.computeSnapshot(t, h.tenantId, seg.id, (e) => identifierHash(h.deps.config.identifierPepper, 'email', e)));
@@ -60,8 +66,6 @@ describe('M11 segments', () => {
   });
 
   it('rejects malformed definitions (no SQL is built from raw strings)', async () => {
-    await expect(
-      tx((t) => audiences.defineSegment(t, h.tenantId, h.users.operator, { name: 'x', purpose: 'analytics', definition: { all: [{ trait: "a'; drop table x;--", op: 'eq', value: 1 }] } })),
-    ).rejects.toThrow();
+    await expect(tx((t) => audiences.defineSegment(t, h.tenantId, h.users.operator, { name: 'x', purpose: 'analytics', definition: { all: [{ trait: "a'; drop table x;--", op: 'eq', value: 1 }] } }))).rejects.toThrow();
   });
 });

@@ -1,14 +1,14 @@
-import { desc, eq, inArray } from 'drizzle-orm';
 import { canonicalJson } from '@futuregrow/contracts';
-import { type DbOrTx, type Tx, artifactLicenses, assetRights, assets, evidenceRecords, renderJobs, syntheticPersonas, tenantSettings } from '@futuregrow/db';
+import { artifactLicenses, assetRights, assets, type DbOrTx, evidenceRecords, renderJobs, syntheticPersonas, type Tx, tenantSettings } from '@futuregrow/db';
 import { forbidden, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps } from '../../deps.js';
 import { audit, record, requireMfa, requireRole } from '../../util.js';
 import { lintCopy } from '../m03-knowledge/index.js';
-import { getTenantSettingsRow } from '../m24-governance/index.js';
 import { personaContentCheck } from '../m15-personas/index.js';
+import { getTenantSettingsRow } from '../m24-governance/index.js';
 
 /* ------------------------------------------------------------------ */
 /* Media sniffing (uploads)                                            */
@@ -86,17 +86,20 @@ export async function uploadAsset(tx: Tx, deps: CoreDeps, tenantId: string, acto
 /* Rights manifest + publish eligibility (M14 AC, FG-P1-004)           */
 /* ------------------------------------------------------------------ */
 
-export const RightsSchema = z.array(
-  z.object({
-    component: z.enum(['source_media', 'music', 'voice', 'likeness', 'font', 'model', 'plugin', 'template']),
-    rightsHolder: z.string().min(2).max(200),
-    licenseRef: z.string().min(2).max(500),
-    artifactLicenseId: z.string().uuid().nullable().default(null),
-    commercialUse: z.enum(['allowed', 'restricted', 'unknown']),
-    evidenceId: z.string().uuid(),
-    expiresAt: z.string().datetime({ offset: true }).nullable().default(null),
-  }),
-).min(1).max(20);
+export const RightsSchema = z
+  .array(
+    z.object({
+      component: z.enum(['source_media', 'music', 'voice', 'likeness', 'font', 'model', 'plugin', 'template']),
+      rightsHolder: z.string().min(2).max(200),
+      licenseRef: z.string().min(2).max(500),
+      artifactLicenseId: z.string().uuid().nullable().default(null),
+      commercialUse: z.enum(['allowed', 'restricted', 'unknown']),
+      evidenceId: z.string().uuid(),
+      expiresAt: z.string().datetime({ offset: true }).nullable().default(null),
+    }),
+  )
+  .min(1)
+  .max(20);
 
 export async function addRights(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, assetId: string, raw: unknown) {
   requireRole(actor, ['owner', 'admin', 'legal_approver', 'growth_operator'], 'recording asset rights');
@@ -201,7 +204,10 @@ export const RenderRequestSchema = z.object({
     headline: z.string().max(120).default(''),
     captions: z.array(z.string().max(200)).max(20).default([]),
     cta: z.string().max(60).default(''),
-    brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#111111'),
+    brandColor: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/)
+      .default('#111111'),
     disclosureText: z.string().max(120).default(''),
   }),
   claimIds: z.array(z.string().uuid()).default([]),
@@ -275,4 +281,3 @@ export async function assetDetail(tx: DbOrTx, id: string) {
 export async function listRenderJobs(tx: DbOrTx) {
   return tx.select().from(renderJobs).orderBy(desc(renderJobs.requestedAt)).limit(200);
 }
-

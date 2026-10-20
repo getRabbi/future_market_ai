@@ -16,7 +16,9 @@ export function decodeEntities(s: string): string {
 }
 
 function stripTags(s: string): string {
-  return decodeEntities(s.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  return decodeEntities(s.replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export interface ExtractedPage {
@@ -48,9 +50,7 @@ export function extractPage(html: string): ExtractedPage {
       jsonLd.push({ valid: false, value: null, error: err instanceof Error ? err.message : 'invalid JSON' });
     }
   }
-  const cleaned = html
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<(script|style|noscript|template|svg)[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+  const cleaned = html.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(script|style|noscript|template|svg)[^>]*>[\s\S]*?<\/\1>/gi, ' ');
   const title = cleaned.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   let metaDescription: string | null = null;
   let robotsMeta: string | null = null;

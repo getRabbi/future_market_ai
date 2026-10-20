@@ -1,6 +1,6 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { appGrowth, conversationsModule, creatorsModule, lifecycle } from '@futuregrow/core';
 import { FgError } from '@futuregrow/observability';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ApiContext } from '../http.js';
 import { resolveIngestionKey } from './public-routes.js';
 
@@ -70,9 +70,7 @@ export function registerPublicChannelRoutes(app: FastifyInstance, ctx: ApiContex
   });
 
   /* ---------- M21: chat widget (CORS is resolved per widget key in app.ts) ---------- */
-  app.post('/chat/v1/w/:key/conversations', { config: { public: true, rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) =>
-    reply.status(201).send(await conversationsModule.startConversation(deps, widgetKey(req), req.headers.origin)),
-  );
+  app.post('/chat/v1/w/:key/conversations', { config: { public: true, rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => reply.status(201).send(await conversationsModule.startConversation(deps, widgetKey(req), req.headers.origin)));
   app.post('/chat/v1/w/:key/conversations/:id/messages', { config: { public: true, rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {
     const text = (req.body as { text?: unknown } | null)?.text;
     if (typeof text !== 'string') throw new FgError('INVALID', 'text required', 422);
@@ -85,7 +83,5 @@ export function registerPublicChannelRoutes(app: FastifyInstance, ctx: ApiContex
       ...(ctx.embedder ? { embedder: ctx.embedder } : {}),
     });
   });
-  app.get('/chat/v1/w/:key/conversations/:id/messages', { config: { public: true, rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (req) =>
-    conversationsModule.visitorMessages(deps, { publicKey: widgetKey(req), origin: req.headers.origin, conversationId: convId(req), visitorToken: visitorToken(req) }),
-  );
+  app.get('/chat/v1/w/:key/conversations/:id/messages', { config: { public: true, rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (req) => conversationsModule.visitorMessages(deps, { publicKey: widgetKey(req), origin: req.headers.origin, conversationId: convId(req), visitorToken: visitorToken(req) }));
 }

@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { type EvidenceInput, EvidenceInputSchema, type EvidenceRecord, SOURCE_TYPES } from '@futuregrow/contracts';
-import { type DbOrTx, type Tx, evidenceRecords, sources } from '@futuregrow/db';
+import { type DbOrTx, evidenceRecords, sources, type Tx } from '@futuregrow/db';
 import { conflict, invalid, notFound, sha256Canonical } from '@futuregrow/observability';
+import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef } from '../../deps.js';
 import { audit, record, requireRole } from '../../util.js';
@@ -94,7 +94,7 @@ export async function admitEvidence(tx: Tx, tenantId: string, actor: Actor, raw:
     terms ??= src.termsVersion;
     sla ??= src.freshnessSlaHours;
     // Source permissions bound what evidence may claim; prohibitions accumulate.
-    if (src.permittedUses.length) permitted = permitted.length ? permitted.filter((u) => src.permittedUses.includes(u)) : [...src.permittedUses] as typeof permitted;
+    if (src.permittedUses.length) permitted = permitted.length ? permitted.filter((u) => src.permittedUses.includes(u)) : ([...src.permittedUses] as typeof permitted);
     prohibited = [...new Set([...prohibited, ...(src.prohibitedUses as typeof prohibited)])];
   }
 
@@ -160,11 +160,18 @@ export async function admitEvidence(tx: Tx, tenantId: string, actor: Actor, raw:
       expiresAt,
     })
     .returning();
-  await record(tx, tenantId, actor, status === 'admitted' ? 'evidence.record.admitted' : 'evidence.record.quarantined', { type: 'evidence', id: row!.id }, {
-    kind: input.kind,
-    reasons,
-    sha256: contentSha256,
-  });
+  await record(
+    tx,
+    tenantId,
+    actor,
+    status === 'admitted' ? 'evidence.record.admitted' : 'evidence.record.quarantined',
+    { type: 'evidence', id: row!.id },
+    {
+      kind: input.kind,
+      reasons,
+      sha256: contentSha256,
+    },
+  );
   return toRecord(row!);
 }
 

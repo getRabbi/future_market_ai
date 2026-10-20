@@ -1,9 +1,9 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
-import { type PublicFetchResult, extractPage, parseRobots, publicFetch, readLocalization, searchConsoleQuery } from '@futuregrow/connectors';
-import { type DbOrTx, type Tx, keywordMetrics, seoAudits, seoPages, storeListings, withTenant } from '@futuregrow/db';
+import { extractPage, type PublicFetchResult, parseRobots, publicFetch, readLocalization, searchConsoleQuery } from '@futuregrow/connectors';
+import { type DbOrTx, keywordMetrics, seoAudits, seoPages, storeListings, type Tx, withTenant } from '@futuregrow/db';
 import { invalid, notFound, sha256Hex } from '@futuregrow/observability';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, record, requireRole } from '../../util.js';
 import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
@@ -30,7 +30,10 @@ export async function requestSeoAudit(tx: Tx, deps: CoreDeps, tenantId: string, 
   requireRole(actor, ['owner', 'admin', 'growth_operator', 'analyst'], 'requesting a site audit');
   const input = AuditRequestSchema.parse(raw);
   const origin = new URL(input.siteUrl).origin;
-  const [row] = await tx.insert(seoAudits).values({ tenantId, siteUrl: origin, maxPages: input.maxPages, requestedBy: actorRef(actor) }).returning();
+  const [row] = await tx
+    .insert(seoAudits)
+    .values({ tenantId, siteUrl: origin, maxPages: input.maxPages, requestedBy: actorRef(actor) })
+    .returning();
   await audit(tx, tenantId, actor, 'seo.audit.requested', { type: 'seo_audit', id: row!.id }, { siteUrl: origin, maxPages: input.maxPages });
   await deps.jobs.add('seo_audit', { tenantId, auditId: row!.id }, { jobKey: `seo-audit:${row!.id}` });
   return row!;
@@ -101,7 +104,11 @@ export async function runSeoAudit(deps: CoreDeps & { fetchPublic?: PublicFetcher
   const fetcher: PublicFetcher = deps.fetchPublic ?? ((u, o) => publicFetch(u, o));
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const a = await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
-    const [row] = await tx.update(seoAudits).set({ status: 'running', startedAt: deps.clock.now() }).where(and(eq(seoAudits.id, auditId), eq(seoAudits.status, 'queued'))).returning();
+    const [row] = await tx
+      .update(seoAudits)
+      .set({ status: 'running', startedAt: deps.clock.now() })
+      .where(and(eq(seoAudits.id, auditId), eq(seoAudits.status, 'queued')))
+      .returning();
     return row ?? null;
   });
   if (!a) return { status: 'skipped' as const };
@@ -235,13 +242,22 @@ export async function runSeoAudit(deps: CoreDeps & { fetchPublic?: PublicFetcher
         freshnessSlaHours: 24 * 14,
         now: deps.clock.now(),
       });
-      const [done] = await tx.update(seoAudits).set({ status: 'completed', finishedAt: deps.clock.now(), summary: { ...summary, evidenceId: ev.evidenceId } }).where(eq(seoAudits.id, auditId)).returning();
+      const [done] = await tx
+        .update(seoAudits)
+        .set({ status: 'completed', finishedAt: deps.clock.now(), summary: { ...summary, evidenceId: ev.evidenceId } })
+        .where(eq(seoAudits.id, auditId))
+        .returning();
       await record(tx, tenantId, actor, 'seo.audit.completed', { type: 'seo_audit', id: auditId }, { pages: pages.length, evidenceId: ev.evidenceId });
       return { status: 'completed' as const, audit: done! };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) => tx.update(seoAudits).set({ status: 'failed', finishedAt: deps.clock.now(), summary: { error: message } }).where(eq(seoAudits.id, auditId)));
+    await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) =>
+      tx
+        .update(seoAudits)
+        .set({ status: 'failed', finishedAt: deps.clock.now(), summary: { error: message } })
+        .where(eq(seoAudits.id, auditId)),
+    );
     return { status: 'failed' as const, error: message };
   }
 }
@@ -256,7 +272,9 @@ function recommendations(counts: Record<string, number>, dupTitles: number, brok
   if (counts.STRUCTURED_DATA_INVALID) r.push(`Fix ${counts.STRUCTURED_DATA_INVALID} pages with JSON-LD that does not parse.`);
   if (counts.IMG_ALT_MISSING) r.push(`Add descriptive alt text on ${counts.IMG_ALT_MISSING} pages.`);
   if (counts.NOINDEX) r.push(`Review ${counts.NOINDEX} noindex pages — confirm they are meant to be excluded.`);
-  const blockedAi = Object.entries(ai).filter(([, ok]) => !ok).map(([k]) => k);
+  const blockedAi = Object.entries(ai)
+    .filter(([, ok]) => !ok)
+    .map(([k]) => k);
   if (blockedAi.length) r.push(`robots.txt blocks AI crawlers (${blockedAi.join(', ')}). This is a business choice; keep it if intentional.`);
   if (!llmsTxt) r.push('Optional: publish /llms.txt summarising key pages for AI answer engines (an emerging, non-standard convention).');
   return r;
@@ -297,7 +315,12 @@ export async function syncSearchConsole(deps: CoreDeps, tenantId: string, connec
       freshnessSlaHours: 72,
       now: deps.clock.now(),
     });
-    const n = await upsertKeywordRows(tx, tenantId, rows.map((r) => ({ query: r.query, pageUrl: r.page || null, impressions: r.impressions, clicks: r.clicks, position: r.position })), { periodStart: args.startDate, periodEnd: args.endDate, source: 'search_console', evidenceId: ev.evidenceId });
+    const n = await upsertKeywordRows(
+      tx,
+      tenantId,
+      rows.map((r) => ({ query: r.query, pageUrl: r.page || null, impressions: r.impressions, clicks: r.clicks, position: r.position })),
+      { periodStart: args.startDate, periodEnd: args.endDate, source: 'search_console', evidenceId: ev.evidenceId },
+    );
     return { rows: n, evidenceId: ev.evidenceId };
   });
 }
@@ -306,7 +329,10 @@ export const KeywordUploadSchema = z.object({
   periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   evidenceId: z.string().uuid(),
-  rows: z.array(z.object({ query: z.string().min(1).max(500), pageUrl: z.string().url().nullable().default(null), impressions: z.number().int().nonnegative(), clicks: z.number().int().nonnegative(), position: z.number().positive().nullable().default(null) })).min(1).max(50_000),
+  rows: z
+    .array(z.object({ query: z.string().min(1).max(500), pageUrl: z.string().url().nullable().default(null), impressions: z.number().int().nonnegative(), clicks: z.number().int().nonnegative(), position: z.number().positive().nullable().default(null) }))
+    .min(1)
+    .max(50_000),
 });
 
 export async function uploadKeywordMetrics(tx: Tx, tenantId: string, actor: Actor, raw: unknown) {
@@ -389,7 +415,10 @@ export function validateListingFields(store: 'app_store' | 'google_play', fields
     if (v.trim().length === 0) out.push({ field: k, code: 'EMPTY', severity: 'block', detail: 'empty' });
   }
   if (store === 'app_store' && fields.keywords) {
-    const kws = fields.keywords.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const kws = fields.keywords
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
     const dup = kws.filter((k, i) => kws.indexOf(k) !== i);
     if (dup.length) out.push({ field: 'keywords', code: 'DUPLICATE_KEYWORDS', severity: 'warn', detail: [...new Set(dup)].join(', ') });
     const nameWords = new Set(`${fields.name ?? ''} ${fields.subtitle ?? ''}`.toLowerCase().split(/\W+/).filter(Boolean));
@@ -476,10 +505,16 @@ export async function proposeAppStoreUpdate(deps: CoreDeps, tenantId: string, ac
 
 registerHooks('store.app_store.update_localization', {
   async onVerified(tx, action) {
-    await tx.update(storeListings).set({ status: 'live_verified' }).where(eq(storeListings.id, (action.params as { listingId: string }).listingId));
+    await tx
+      .update(storeListings)
+      .set({ status: 'live_verified' })
+      .where(eq(storeListings.id, (action.params as { listingId: string }).listingId));
   },
   async onTerminalFailure(tx, action) {
-    await tx.update(storeListings).set({ status: 'approved' }).where(and(eq(storeListings.id, (action.params as { listingId: string }).listingId), eq(storeListings.status, 'submitted')));
+    await tx
+      .update(storeListings)
+      .set({ status: 'approved' })
+      .where(and(eq(storeListings.id, (action.params as { listingId: string }).listingId), eq(storeListings.status, 'submitted')));
   },
 });
 

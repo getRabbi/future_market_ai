@@ -1,16 +1,6 @@
 import { hmacSha256Hex } from '@futuregrow/observability';
 import { type HttpResponse, ProviderHttpError, preWrite } from '../http.js';
-import {
-  type ActionExecutor,
-  type CampaignSnapshot,
-  type ConnectorContext,
-  type ExecuteResult,
-  type HealthResult,
-  type ReadConnector,
-  type SpendRow,
-  compareProof,
-  proof,
-} from '../types.js';
+import { type ActionExecutor, type CampaignSnapshot, type ConnectorContext, compareProof, type ExecuteResult, type HealthResult, proof, type ReadConnector, type SpendRow } from '../types.js';
 import { majorToMicros, metaMinorUnitOffset, microsToMinor, minorToMicros } from './money.js';
 
 type MetaCreds = Extract<ConnectorContext['credentials'], { provider: 'meta' }>;
@@ -28,12 +18,7 @@ function graphUrl(ctx: ConnectorContext, path: string, query: Record<string, str
   return u.toString();
 }
 
-async function graph<T>(
-  ctx: ConnectorContext,
-  method: 'GET' | 'POST' | 'DELETE',
-  path: string,
-  opts: { query?: Record<string, string>; form?: Record<string, string> } = {},
-): Promise<HttpResponse<T>> {
+async function graph<T>(ctx: ConnectorContext, method: 'GET' | 'POST' | 'DELETE', path: string, opts: { query?: Record<string, string>; form?: Record<string, string> } = {}): Promise<HttpResponse<T>> {
   try {
     return await ctx.http.request<T>({
       method,
@@ -97,12 +82,7 @@ export const facebookPublishPost: ActionExecutor<FbPostParams> = {
       fields: 'id,message,is_published,permalink_url,created_time',
     });
     if (!post) return proof('PENDING', 'read_after_write', { exists: true }, { exists: false }, ctx.now(), 'post not yet readable (eventual consistency)');
-    return compareProof(
-      'read_after_write',
-      { id: receipt.providerObjectId, message: p.message, is_published: true },
-      { id: post.id, message: post.message, is_published: post.is_published, permalink_url: post.permalink_url },
-      ctx.now(),
-    );
+    return compareProof('read_after_write', { id: receipt.providerObjectId, message: p.message, is_published: true }, { id: post.id, message: post.message, is_published: post.is_published, permalink_url: post.permalink_url }, ctx.now());
   },
   async rollback(ctx, _p, receipt) {
     const res = await graph<{ success: boolean }>(ctx, 'DELETE', receipt.providerObjectId!);
@@ -177,19 +157,10 @@ export const instagramPublishMedia: ActionExecutor<IgParams> = {
     return { receipt: receiptOf(ctx, pub, pub.data.id, { containerId }), beforeState: null, rawResponse: { container: container.data, publish: pub.data } };
   },
   async verify(ctx, p, receipt) {
-    const m = await graphOrNull<{ id: string; caption?: string; media_type?: string; media_product_type?: string; permalink?: string }>(
-      ctx,
-      receipt.providerObjectId!,
-      { fields: 'id,caption,media_type,media_product_type,permalink,timestamp' },
-    );
+    const m = await graphOrNull<{ id: string; caption?: string; media_type?: string; media_product_type?: string; permalink?: string }>(ctx, receipt.providerObjectId!, { fields: 'id,caption,media_type,media_product_type,permalink,timestamp' });
     if (!m) return proof('PENDING', 'status_poll', { exists: true }, { exists: false }, ctx.now());
     const kind = p.mediaType === 'REELS' ? 'REELS' : 'FEED';
-    return compareProof(
-      'status_poll',
-      { caption: p.caption, product: kind },
-      { caption: m.caption, product: m.media_product_type ?? (m.media_type === 'IMAGE' ? 'FEED' : m.media_type), permalink: m.permalink },
-      ctx.now(),
-    );
+    return compareProof('status_poll', { caption: p.caption, product: kind }, { caption: m.caption, product: m.media_product_type ?? (m.media_type === 'IMAGE' ? 'FEED' : m.media_type), permalink: m.permalink }, ctx.now());
   },
 };
 
@@ -332,20 +303,15 @@ export const metaRead: ReadConnector = {
   async fetchSpend(ctx, from, to): Promise<SpendRow[]> {
     const account = String(ctx.connection.metadata.adAccountId ?? ctx.connection.externalAccountId);
     const acct = await graph<{ currency: string }>(ctx, 'GET', `act_${account}`, { query: { fields: 'currency' } });
-    const res = await graph<{ data: { campaign_id: string; date_start: string; spend: string; impressions: string; clicks: string; actions?: { action_type: string; value: string }[]; action_values?: { action_type: string; value: string }[] }[] }>(
-      ctx,
-      'GET',
-      `act_${account}/insights`,
-      {
-        query: {
-          level: 'campaign',
-          time_increment: '1',
-          time_range: JSON.stringify({ since: from, until: to }),
-          fields: 'campaign_id,date_start,spend,impressions,clicks,actions,action_values',
-          limit: '500',
-        },
+    const res = await graph<{ data: { campaign_id: string; date_start: string; spend: string; impressions: string; clicks: string; actions?: { action_type: string; value: string }[]; action_values?: { action_type: string; value: string }[] }[] }>(ctx, 'GET', `act_${account}/insights`, {
+      query: {
+        level: 'campaign',
+        time_increment: '1',
+        time_range: JSON.stringify({ since: from, until: to }),
+        fields: 'campaign_id,date_start,spend,impressions,clicks,actions,action_values',
+        limit: '500',
       },
-    );
+    });
     return res.data.data.map((r) => ({
       campaignRef: r.campaign_id,
       date: r.date_start,

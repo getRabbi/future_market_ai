@@ -1,0 +1,106 @@
+# Continuous integration: typecheck, lint, real-PostgreSQL tests (embedded PG 17), Python engine
+# tests, production builds, SBOM + licence policy, and container image builds (no push).
+# Third-party actions are pinned by commit SHA.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 24.22.0
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Node dependencies (lockfile-exact)
+        run: npm ci --no-audit --no-fund
+      - name: Python venv for the analytics job
+        run: |
+          python -m venv jobs/analytics/.venv
+          jobs/analytics/.venv/bin/pip install --only-binary=:all: -r jobs/analytics/requirements-dev.txt
+      - run: npm run typecheck
+      - run: npm run lint
+      - name: TypeScript tests (real PostgreSQL)
+        env:
+          FG_SKIP_RENDER: '1'
+        run: npm test
+      - name: Python engine tests
+        run: npm run test:py
+      - name: Production bundles
+        run: |
+          node scripts/build.mjs all
+          npm run build -w @futuregrow/web
+      - name: SBOM and licence policy
+        run: node scripts/sbom.mjs
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: sbom
+          path: dist/sbom/
+          retention-days: 30
+
+  render:
+    # Real Remotion render (Chrome Headless Shell + FFmpeg) on Linux.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Chrome Headless Shell libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libnss3 libdbus-1-3 libatk1.0-0 libgbm1 libasound2t64 libxrandr2 libxkbcommon0 libxfixes3 libxcomposite1 libxdamage1 libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 fonts-liberation
+      - run: npm ci --no-audit --no-fund
+      - run: npx vitest run jobs/media/test/render.test.ts
+
+  images:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            file: infra/docker/node-service.Dockerfile
+            args: SERVICE=api
+          - name: worker
+            file: infra/docker/node-service.Dockerfile
+            args: SERVICE=worker
+          - name: media-job
+            file: infra/docker/media-job.Dockerfile
+            args: ''
+          - name: analytics-job
+            file: infra/docker/analytics-job.Dockerfile
+            args: ''
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          build-args: ${{ matrix.args }}
+          platforms: linux/amd64
+          push: false
+          tags: futuregrow/${{ matrix.name }}:ci

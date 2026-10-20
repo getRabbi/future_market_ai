@@ -1,7 +1,7 @@
-import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { brain, competitorsModule, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
 import { competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
 import { loadEnv, triggerNorthflankJob } from '@futuregrow/runtime';
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { forEachTenant, registerTasks } from './tasks.js';
 
 /** Module tasks registered with the worker. Each is idempotent and tenant-scoped. */
@@ -12,12 +12,7 @@ registerTasks((deps) => ({
         tx
           .select({ id: competitorSources.id })
           .from(competitorSources)
-          .where(
-            and(
-              eq(competitorSources.status, 'approved'),
-              or(isNull(competitorSources.lastFetchedAt), lte(competitorSources.lastFetchedAt, sql`now() - make_interval(hours => ${competitorSources.crawlIntervalHours})`)),
-            ),
-          )
+          .where(and(eq(competitorSources.status, 'approved'), or(isNull(competitorSources.lastFetchedAt), lte(competitorSources.lastFetchedAt, sql`now() - make_interval(hours => ${competitorSources.crawlIntervalHours})`))))
           .limit(25),
       );
       for (const s of due) {
@@ -43,12 +38,14 @@ registerTasks((deps) => ({
       const market = policy.approvedJurisdictions[0];
       if (!policy.configured || !market) return; // market and autonomy policy are tenant-specified [U]
       const candidates = await withTenant(deps.db, { tenantId, actor: 'system:brain' }, async (tx) => {
-        const recent = await tx
-          .select({ ideaId: growthDecisions.ideaId })
-          .from(growthDecisions)
-          .where(gte(growthDecisions.createdAt, sql`now() - interval '7 days'`));
+        const recent = await tx.select({ ideaId: growthDecisions.ideaId }).from(growthDecisions).where(gte(growthDecisions.createdAt, sql`now() - interval '7 days'`));
         const skip = new Set(recent.map((r) => r.ideaId));
-        const rows = await tx.select().from(growthIdeas).where(inArray(growthIdeas.status, ['queued_for_test', 'validated'])).orderBy(desc(growthIdeas.evidenceStrength)).limit(10);
+        const rows = await tx
+          .select()
+          .from(growthIdeas)
+          .where(inArray(growthIdeas.status, ['queued_for_test', 'validated']))
+          .orderBy(desc(growthIdeas.evidenceStrength))
+          .limit(10);
         return rows.filter((r) => !skip.has(r.id)).slice(0, 3);
       });
       for (const idea of candidates) {

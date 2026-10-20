@@ -1,6 +1,6 @@
-import type { ExecutionProof, ExecutionReceipt } from '@futuregrow/contracts';
 import type { ExecuteResult } from '@futuregrow/connectors';
-import type { Tx, actionRequests } from '@futuregrow/db';
+import type { ExecutionProof, ExecutionReceipt } from '@futuregrow/contracts';
+import type { actionRequests, Tx } from '@futuregrow/db';
 import type { CoreDeps } from '../../deps.js';
 
 export type ActionRow = typeof actionRequests.$inferSelect;

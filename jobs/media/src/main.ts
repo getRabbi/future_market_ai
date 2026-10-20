@@ -1,5 +1,5 @@
 import { createRuntime, loadEnv } from '@futuregrow/runtime';
-import { RemotionRenderer, processNextRender } from './runner.js';
+import { processNextRender, RemotionRenderer } from './runner.js';
 
 /** Northflank media job: drain queued renders within a time budget, then exit (D-016). */
 const env = loadEnv();

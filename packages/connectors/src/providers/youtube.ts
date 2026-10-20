@@ -1,5 +1,5 @@
 import { ProviderHttpError, preWrite } from '../http.js';
-import { type ActionExecutor, type ConnectorContext, type HealthResult, type ReadConnector, compareProof, proof } from '../types.js';
+import { type ActionExecutor, type ConnectorContext, compareProof, type HealthResult, proof, type ReadConnector } from '../types.js';
 import { googleAccessToken } from './google.js';
 
 type YtCreds = Extract<ConnectorContext['credentials'], { provider: 'youtube' }>;
@@ -86,12 +86,7 @@ export const youtubeUploadVideo: ActionExecutor<YtParams> = {
       return proof('MISMATCH', 'read_after_write', { uploadStatus: 'processed' }, { uploadStatus: upload, reason: v.status?.rejectionReason ?? v.status?.failureReason ?? null }, ctx.now());
     }
     if (upload !== 'processed') return proof('PENDING', 'read_after_write', { uploadStatus: 'processed' }, { uploadStatus: upload ?? null }, ctx.now(), 'processing');
-    return compareProof(
-      'read_after_write',
-      { title: p.title, privacyStatus: p.privacyStatus, containsSyntheticMedia: p.containsSyntheticMedia },
-      { title: v.snippet?.title, privacyStatus: v.status?.privacyStatus, containsSyntheticMedia: v.status?.containsSyntheticMedia ?? false },
-      ctx.now(),
-    );
+    return compareProof('read_after_write', { title: p.title, privacyStatus: p.privacyStatus, containsSyntheticMedia: p.containsSyntheticMedia }, { title: v.snippet?.title, privacyStatus: v.status?.privacyStatus, containsSyntheticMedia: v.status?.containsSyntheticMedia ?? false }, ctx.now());
   },
   async rollback(ctx, _p, receipt) {
     const token = await googleAccessToken(ctx.http, ctx.endpoints.googleOAuth, creds(ctx));

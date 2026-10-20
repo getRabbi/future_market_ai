@@ -67,16 +67,7 @@ export interface ApprovedModel {
 /** Abstention is a first-class outcome: the agent declines rather than guessing (product plan). */
 export class AbstainError extends Error {
   constructor(
-    readonly reason:
-      | 'MODEL_UNAVAILABLE'
-      | 'NO_APPROVED_MODEL'
-      | 'MODEL_REFUSAL'
-      | 'OUTPUT_INVALID'
-      | 'OUTPUT_TRUNCATED'
-      | 'SECRET_IN_OUTPUT'
-      | 'CIRCUIT_OPEN'
-      | 'UNAPPROVED_SERVING_MODEL'
-      | 'INSUFFICIENT_EVIDENCE',
+    readonly reason: 'MODEL_UNAVAILABLE' | 'NO_APPROVED_MODEL' | 'MODEL_REFUSAL' | 'OUTPUT_INVALID' | 'OUTPUT_TRUNCATED' | 'SECRET_IN_OUTPUT' | 'CIRCUIT_OPEN' | 'UNAPPROVED_SERVING_MODEL' | 'INSUFFICIENT_EVIDENCE',
     message: string,
   ) {
     super(message);

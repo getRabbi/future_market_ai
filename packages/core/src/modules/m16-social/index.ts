@@ -1,10 +1,10 @@
-import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
-import { PROMPTS, injectionSignals, redactPii, untrustedBlock } from '@futuregrow/agent-kernel';
-import { type DbOrTx, type Tx, assets, connections, socialInteractions, socialPosts, syntheticPersonas, withTenant } from '@futuregrow/db';
+import { injectionSignals, PROMPTS, redactPii, untrustedBlock } from '@futuregrow/agent-kernel';
+import { assets, connections, type DbOrTx, socialInteractions, socialPosts, syntheticPersonas, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, identifierHash, invalid, notFound, sha256Hex } from '@futuregrow/observability';
+import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
 import { runAgent } from '../../agents.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, normalizeText, record, requireRole } from '../../util.js';
 import { lintCopy, screenRetrieved, searchKnowledge } from '../m03-knowledge/index.js';
 import { personaContentCheck } from '../m15-personas/index.js';
@@ -63,7 +63,13 @@ export async function schedulePost(tx: Tx, deps: CoreDeps, tenantId: string, act
   if (p.disclosure.paidPartnership && !p.disclosure.disclosureText) throw invalid('paid partnership posts need disclosure text (e.g. "#ad")');
   if (disclosure.disclosureText && !caption.toLowerCase().includes(disclosure.disclosureText.toLowerCase())) caption = `${caption}\n\n${disclosure.disclosureText}`;
   const lint = await lintCopy(tx, caption, { claimIds: p.claimIds, channel: p.platform, now: deps.clock.now() });
-  if (!lint.passed) throw invalid(`caption failed lint: ${lint.violations.filter((v) => v.severity === 'block').map((v) => v.code).join(', ')}`);
+  if (!lint.passed)
+    throw invalid(
+      `caption failed lint: ${lint.violations
+        .filter((v) => v.severity === 'block')
+        .map((v) => v.code)
+        .join(', ')}`,
+    );
   if (p.assetIds.length) {
     const rows = await tx.select().from(assets).where(inArray(assets.id, p.assetIds));
     const bad = rows.filter((a) => !a.publishEligible);
@@ -71,7 +77,12 @@ export async function schedulePost(tx: Tx, deps: CoreDeps, tenantId: string, act
   }
   const at = new Date(p.scheduledAt);
   // Spam key: case, punctuation and spacing do not make a caption new.
-  const spamKey = (c: string) => sha256Hex(normalizeText(c).replace(/[^\p{L}\p{N}]+/gu, ' ').trim());
+  const spamKey = (c: string) =>
+    sha256Hex(
+      normalizeText(c)
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .trim(),
+    );
   const hash = spamKey(caption);
   const recent = await tx
     .select({ id: socialPosts.id, caption: socialPosts.caption, scheduledAt: socialPosts.scheduledAt })
@@ -115,12 +126,36 @@ function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connecti
     case 'tiktok':
       return {
         actionType: 'social.tiktok.publish_video',
-        params: { title: post.caption.slice(0, 2200), videoUrl: `asset://${first}`, privacyLevel: d.options.tiktokPrivacy ?? 'SELF_ONLY', disableComment: false, disableDuet: false, disableStitch: false, brandContentToggle: d.paidPartnership, brandOrganicToggle: !d.paidPartnership, postId: post.id, assetIds: post.assetIds, claimIds: post.claimIds, disclosure },
+        params: {
+          title: post.caption.slice(0, 2200),
+          videoUrl: `asset://${first}`,
+          privacyLevel: d.options.tiktokPrivacy ?? 'SELF_ONLY',
+          disableComment: false,
+          disableDuet: false,
+          disableStitch: false,
+          brandContentToggle: d.paidPartnership,
+          brandOrganicToggle: !d.paidPartnership,
+          postId: post.id,
+          assetIds: post.assetIds,
+          claimIds: post.claimIds,
+          disclosure,
+        },
       };
     case 'youtube':
       return {
         actionType: 'social.youtube.upload_video',
-        params: { title: (d.options.youtubeTitle ?? post.caption).slice(0, 100), description: post.caption.slice(0, 5000), privacyStatus: d.options.youtubePrivacy ?? 'private', categoryId: '22', containsSyntheticMedia: d.isAiGenerated, madeForKids: false, postId: post.id, assetIds: [first!], claimIds: post.claimIds, disclosure },
+        params: {
+          title: (d.options.youtubeTitle ?? post.caption).slice(0, 100),
+          description: post.caption.slice(0, 5000),
+          privacyStatus: d.options.youtubePrivacy ?? 'private',
+          categoryId: '22',
+          containsSyntheticMedia: d.isAiGenerated,
+          madeForKids: false,
+          postId: post.id,
+          assetIds: [first!],
+          claimIds: post.claimIds,
+          disclosure,
+        },
       };
   }
 }
@@ -128,7 +163,11 @@ function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connecti
 /** Scheduler: due posts become ActionRequests attributed to the human who scheduled them. */
 export async function dispatchDuePosts(deps: CoreDeps, tenantId: string) {
   const due = await withTenant(deps.db, { tenantId, actor: 'system:social-scheduler' }, (tx) =>
-    tx.select().from(socialPosts).where(and(eq(socialPosts.status, 'scheduled'), lte(socialPosts.scheduledAt, deps.clock.now()))).limit(50),
+    tx
+      .select()
+      .from(socialPosts)
+      .where(and(eq(socialPosts.status, 'scheduled'), lte(socialPosts.scheduledAt, deps.clock.now())))
+      .limit(50),
   );
   const out: { postId: string; actionId: string; status: string }[] = [];
   for (const post of due) {
@@ -139,13 +178,18 @@ export async function dispatchDuePosts(deps: CoreDeps, tenantId: string) {
     });
     const a = postAction(post, conn, kinds);
     const userId = post.createdBy.replace(/^user:/, '');
-    const view = await proposeAction(deps, tenantId, { type: 'user', id: userId, roles: [], mfaVerified: false }, {
-      actionType: a.actionType,
-      connectionId: post.connectionId,
-      params: a.params,
-      risk: { geographies: (post.disclosure as { geographies?: string[] }).geographies ?? [], syntheticPersonaId: post.personaId, materialConnection: (post.disclosure as { paidPartnership?: boolean }).paidPartnership === true },
-      idempotencyKey: `social-post:${post.id}`,
-    });
+    const view = await proposeAction(
+      deps,
+      tenantId,
+      { type: 'user', id: userId, roles: [], mfaVerified: false },
+      {
+        actionType: a.actionType,
+        connectionId: post.connectionId,
+        params: a.params,
+        risk: { geographies: (post.disclosure as { geographies?: string[] }).geographies ?? [], syntheticPersonaId: post.personaId, materialConnection: (post.disclosure as { paidPartnership?: boolean }).paidPartnership === true },
+        idempotencyKey: `social-post:${post.id}`,
+      },
+    );
     const denied = view.status === 'DENIED' || view.status === 'REJECTED';
     await withTenant(deps.db, { tenantId, actor: 'system:social-scheduler' }, (tx) =>
       tx
@@ -186,7 +230,10 @@ for (const t of ['social.facebook.publish_post', 'social.instagram.publish_media
     },
     async onTerminalFailure(tx, action, status, reason) {
       const postId = (action.params as { postId: string }).postId;
-      await tx.update(socialPosts).set({ status: status === 'CANCELLED' ? 'cancelled' : 'failed', statusReason: `${status}: ${reason}`.slice(0, 2000) }).where(eq(socialPosts.id, postId));
+      await tx
+        .update(socialPosts)
+        .set({ status: status === 'CANCELLED' ? 'cancelled' : 'failed', statusReason: `${status}: ${reason}`.slice(0, 2000) })
+        .where(eq(socialPosts.id, postId));
     },
   });
 }
@@ -277,7 +324,10 @@ export async function draftReply(deps: CoreDeps, tenantId: string, actor: Actor,
     const lint = await withTenant(deps.db, { tenantId, actor: 'agent:community-assistant' }, (tx) => lintCopy(tx, r.output.reply, { claimIds: [], now: deps.clock.now() }));
     const usable = r.output.recommendPublicReply && !r.output.escalate && r.output.citedChunkIds.every((id) => valid.has(id)) && lint.passed && r.output.reply.trim().length > 0;
     await withTenant(deps.db, { tenantId, actor: 'agent:community-assistant' }, (tx) =>
-      tx.update(socialInteractions).set({ replyDraft: usable ? r.output.reply : null, replyStatus: usable ? 'drafted' : 'skipped' }).where(eq(socialInteractions.id, it.id)),
+      tx
+        .update(socialInteractions)
+        .set({ replyDraft: usable ? r.output.reply : null, replyStatus: usable ? 'drafted' : 'skipped' })
+        .where(eq(socialInteractions.id, it.id)),
     );
     ctx.note('validate', { usable, lintPassed: lint.passed });
     return { draft: usable ? r.output.reply : null, escalate: !usable };
@@ -306,7 +356,10 @@ export async function proposeReply(deps: CoreDeps, tenantId: string, actor: Acto
 
 registerHooks('social.facebook.reply_comment', {
   async onVerified(tx, action) {
-    await tx.update(socialInteractions).set({ replyStatus: 'sent_verified' }).where(eq(socialInteractions.id, (action.params as { interactionId: string }).interactionId));
+    await tx
+      .update(socialInteractions)
+      .set({ replyStatus: 'sent_verified' })
+      .where(eq(socialInteractions.id, (action.params as { interactionId: string }).interactionId));
   },
 });
 

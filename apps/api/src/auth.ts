@@ -1,10 +1,10 @@
+import { betterAuthSchema, type Db } from '@futuregrow/db';
+import { type Env, origins } from '@futuregrow/runtime';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { haveIBeenPwned, organization, twoFactor } from 'better-auth/plugins';
 import { createAccessControl } from 'better-auth/plugins/access';
 import { defaultStatements } from 'better-auth/plugins/organization/access';
-import { type Db, betterAuthSchema } from '@futuregrow/db';
-import { type Env, origins } from '@futuregrow/runtime';
 
 /**
  * Better Auth: email/password + TOTP two-factor + organizations (= tenants, D-008).

@@ -1,14 +1,6 @@
 import { z } from 'zod';
 import { findSecrets } from './safety.js';
-import {
-  AbstainError,
-  type ApprovedModel,
-  type ModelProvider,
-  type ProviderOutcome,
-  type ProviderUsage,
-  ProviderUnavailableError,
-  type StructuredRequest,
-} from './types.js';
+import { AbstainError, type ApprovedModel, type ModelProvider, type ProviderOutcome, ProviderUnavailableError, type ProviderUsage, type StructuredRequest } from './types.js';
 
 /** Default routing (D-024): the current Opus for every reasoning purpose. */
 export const PREFERRED_MODELS: Record<string, string[]> = {
@@ -123,11 +115,7 @@ export class ModelGateway {
           return { output: check.data, provider: primary.provider, modelId: primary.modelId, servedBy: outcome.servedBy, usage: totals, attempts: attempt, costUsd: cost(primary, totals) };
         }
         lastIssues = check.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
-        messages = [
-          ...messages,
-          { role: 'assistant', content: serialized },
-          { role: 'user', content: `That JSON failed validation: ${lastIssues}. Return a corrected JSON object that satisfies every constraint.` },
-        ];
+        messages = [...messages, { role: 'assistant', content: serialized }, { role: 'user', content: `That JSON failed validation: ${lastIssues}. Return a corrected JSON object that satisfies every constraint.` }];
       }
     }
     throw new AbstainError('OUTPUT_INVALID', `model output failed validation: ${lastIssues}`);

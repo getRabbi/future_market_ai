@@ -87,11 +87,13 @@ export function ResourcePanel({ resource }: { resource: Resource }) {
           actions={
             resource.rowActions?.length
               ? (row) =>
-                  resource.rowActions!.filter((a) => visible(a, row)).map((a) => (
-                    <button key={a.label} type="button" className={a.danger ? 'danger' : undefined} onClick={() => (a.prompt ? setPrompting({ action: a, row }) : void run(a, row))}>
-                      {a.label}
-                    </button>
-                  ))
+                  resource
+                    .rowActions!.filter((a) => visible(a, row))
+                    .map((a) => (
+                      <button key={a.label} type="button" className={a.danger ? 'danger' : undefined} onClick={() => (a.prompt ? setPrompting({ action: a, row }) : void run(a, row))}>
+                        {a.label}
+                      </button>
+                    ))
               : undefined
           }
         />

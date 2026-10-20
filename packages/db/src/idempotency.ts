@@ -2,11 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Tx } from './client.js';
 import { idempotencyKeys } from './schema/index.js';
 
-export type IdempotencyBegin =
-  | { state: 'new' }
-  | { state: 'replay'; status: number; body: unknown }
-  | { state: 'conflict' }
-  | { state: 'in_progress' };
+export type IdempotencyBegin = { state: 'new' } | { state: 'replay'; status: number; body: unknown } | { state: 'conflict' } | { state: 'in_progress' };
 
 const KEY_RE = /^[A-Za-z0-9._:-]{8,200}$/;
 
@@ -19,10 +15,7 @@ export function isValidIdempotencyKey(key: string): boolean {
  * of the same transaction as the side effect, a crash rolls both back and the client may retry;
  * a concurrent duplicate blocks on the primary key until the first commits and then replays.
  */
-export async function beginIdempotent(
-  tx: Tx,
-  args: { tenantId: string; scope: string; key: string; requestHash: string; ttlHours?: number },
-): Promise<IdempotencyBegin> {
+export async function beginIdempotent(tx: Tx, args: { tenantId: string; scope: string; key: string; requestHash: string; ttlHours?: number }): Promise<IdempotencyBegin> {
   const expiresAt = new Date(Date.now() + (args.ttlHours ?? 72) * 3_600_000);
   const inserted = await tx
     .insert(idempotencyKeys)
@@ -50,10 +43,7 @@ export async function beginIdempotent(
   return { state: 'in_progress' };
 }
 
-export async function completeIdempotent(
-  tx: Tx,
-  args: { tenantId: string; scope: string; key: string; status: number; body: unknown },
-): Promise<void> {
+export async function completeIdempotent(tx: Tx, args: { tenantId: string; scope: string; key: string; status: number; body: unknown }): Promise<void> {
   await tx
     .update(idempotencyKeys)
     .set({ status: 'completed', responseStatus: args.status, responseBody: args.body })

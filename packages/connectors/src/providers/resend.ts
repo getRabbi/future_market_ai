@@ -1,5 +1,5 @@
 import { ProviderHttpError } from '../http.js';
-import { type ActionExecutor, type ConnectorContext, type HealthResult, type ReadConnector, proof } from '../types.js';
+import { type ActionExecutor, type ConnectorContext, type HealthResult, proof, type ReadConnector } from '../types.js';
 
 type ResendCreds = Extract<ConnectorContext['credentials'], { provider: 'resend' }>;
 

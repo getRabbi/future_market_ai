@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { type Me, api, getTenant, setTenant } from '../lib/api.js';
+import { api, getTenant, type Me, setTenant } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
-import { SECTIONS, SECTION_GROUPS, sectionBySlug } from '../lib/catalog.js';
+import { SECTION_GROUPS, SECTIONS, sectionBySlug } from '../lib/catalog.js';
 import { Approvals } from './Approvals.js';
 import { Governance } from './Governance.js';
 import { ResourcePanel } from './ResourcePanel.js';

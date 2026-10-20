@@ -1,7 +1,7 @@
-import { desc, eq, sql, type SQL } from 'drizzle-orm';
 import { canonicalJson } from '@futuregrow/contracts';
-import { type DbOrTx, type Tx, segmentMembers, segmentSnapshots, segments } from '@futuregrow/db';
+import { type DbOrTx, segmentMembers, segmentSnapshots, segments, type Tx } from '@futuregrow/db';
 import { invalid, notFound, sha256Hex } from '@futuregrow/observability';
+import { desc, eq, type SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef } from '../../deps.js';
 import { audit, requireRole } from '../../util.js';
@@ -52,7 +52,10 @@ function compile(c: Cond): SQL {
     if (c.op === 'in') {
       const vals = Array.isArray(c.value) ? c.value : [c.value];
       if (vals.length === 0) return sql`false`;
-      return sql`${col} in (${sql.join(vals.map((v) => sql`${v}`), sql`, `)})`;
+      return sql`${col} in (${sql.join(
+        vals.map((v) => sql`${v}`),
+        sql`, `,
+      )})`;
     }
     return sql`${col} ${cmp(c.op)} ${String(c.value)}`;
   }
@@ -110,16 +113,19 @@ export async function computeSnapshot(tx: Tx, tenantId: string, segmentId: strin
   const consent = PURPOSE_CONSENT[seg.purpose];
   let consented = new Set(base.rows.map((r) => r.id));
   if (consent) {
-    const c = await tx.execute<{ profile_id: string }>(
-      sql`select profile_id from consent_state where purpose = ${consent} and status = 'granted' and (expires_at is null or expires_at > now())`,
-    );
+    const c = await tx.execute<{ profile_id: string }>(sql`select profile_id from consent_state where purpose = ${consent} and status = 'granted' and (expires_at is null or expires_at > now())`);
     const ok = new Set(c.rows.map((r) => r.profile_id));
     consented = new Set([...consented].filter((id) => ok.has(id)));
   }
   const channels = PURPOSE_SUPPRESSION[seg.purpose] ?? [];
   let suppressedIds = new Set<string>();
   if (channels.length) {
-    const sup = await tx.execute<{ identifier_hash: string }>(sql`select identifier_hash from suppressions where channel in (${sql.join(channels.map((c) => sql`${c}`), sql`, `)})`);
+    const sup = await tx.execute<{ identifier_hash: string }>(
+      sql`select identifier_hash from suppressions where channel in (${sql.join(
+        channels.map((c) => sql`${c}`),
+        sql`, `,
+      )})`,
+    );
     const hashes = new Set(sup.rows.map((r) => r.identifier_hash));
     suppressedIds = new Set(base.rows.filter((r) => r.email && hashes.has(pepperHash(r.email))).map((r) => r.id));
   }

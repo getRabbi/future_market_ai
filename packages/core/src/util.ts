@@ -1,17 +1,10 @@
 import type { EventType } from '@futuregrow/contracts';
-import { type Tx, appendAudit } from '@futuregrow/db';
+import { appendAudit, type Tx } from '@futuregrow/db';
 import { emitEvent } from '@futuregrow/events';
 import { forbidden } from '@futuregrow/observability';
 import type { Actor } from './deps.js';
 
-export async function audit(
-  tx: Tx,
-  tenantId: string,
-  actor: Actor,
-  action: string,
-  subject: { type: string; id: string },
-  payload: Record<string, unknown> = {},
-): Promise<void> {
+export async function audit(tx: Tx, tenantId: string, actor: Actor, action: string, subject: { type: string; id: string }, payload: Record<string, unknown> = {}): Promise<void> {
   await appendAudit(tx, {
     tenantId,
     actorType: actor.type,
@@ -23,15 +16,7 @@ export async function audit(
   });
 }
 
-export async function emit(
-  tx: Tx,
-  tenantId: string,
-  actor: Actor,
-  eventType: EventType,
-  aggregate: { type: string; id: string },
-  payload: Record<string, unknown>,
-  causationId?: string | null,
-) {
+export async function emit(tx: Tx, tenantId: string, actor: Actor, eventType: EventType, aggregate: { type: string; id: string }, payload: Record<string, unknown>, causationId?: string | null) {
   return emitEvent(tx, {
     tenantId,
     eventType,
@@ -44,14 +29,7 @@ export async function emit(
 }
 
 /** Audit + outbox event in one call (both inside the caller's transaction). */
-export async function record(
-  tx: Tx,
-  tenantId: string,
-  actor: Actor,
-  eventType: EventType,
-  subject: { type: string; id: string },
-  payload: Record<string, unknown> = {},
-): Promise<void> {
+export async function record(tx: Tx, tenantId: string, actor: Actor, eventType: EventType, subject: { type: string; id: string }, payload: Record<string, unknown> = {}): Promise<void> {
   await audit(tx, tenantId, actor, eventType, subject, payload);
   await emit(tx, tenantId, actor, eventType, subject, payload);
 }

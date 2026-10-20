@@ -1,6 +1,6 @@
+import { getActionType, type PlatformCapability, type TenantPolicy } from '@futuregrow/contracts';
 import { describe, expect, it } from 'vitest';
-import { type PlatformCapability, type TenantPolicy, getActionType } from '@futuregrow/contracts';
-import { type PolicyInput, approvalsSatisfy, defaultTenantPolicy, evaluatePolicy } from '../src/index.js';
+import { approvalsSatisfy, defaultTenantPolicy, evaluatePolicy, type PolicyInput } from '../src/index.js';
 
 const NOW = new Date('2026-10-19T12:00:00Z');
 const EV = '11111111-1111-4111-8111-111111111111';
@@ -141,24 +141,26 @@ describe('policy engine', () => {
     expect(codes(evaluatePolicy(budgetInput({}, { engagedKillSwitches: [{ scope: 'connector', targetRef: 'x', reason: 'r' }] })))).toContain('KILL_SWITCH_ENGAGED');
     expect(codes(evaluatePolicy(budgetInput({}, { capability: null })))).toContain('CAPABILITY_UNKNOWN');
     expect(codes(evaluatePolicy(budgetInput({}, { configuredApiVersion: 'v27' })))).toContain('API_VERSION_UNREGISTERED');
-    expect(
-      codes(evaluatePolicy(budgetInput({}, { connection: { provider: 'google_ads', status: 'active', grantedScopes: [], appAudited: null, accessLevel: null } }))),
-    ).toContain('MISSING_SCOPES');
-    expect(
-      codes(evaluatePolicy(budgetInput({}, { connection: { provider: 'google_ads', status: 'reauth_required', grantedScopes: [], appAudited: null, accessLevel: null } }))),
-    ).toContain('CONNECTION_NOT_ACTIVE');
+    expect(codes(evaluatePolicy(budgetInput({}, { connection: { provider: 'google_ads', status: 'active', grantedScopes: [], appAudited: null, accessLevel: null } })))).toContain('MISSING_SCOPES');
+    expect(codes(evaluatePolicy(budgetInput({}, { connection: { provider: 'google_ads', status: 'reauth_required', grantedScopes: [], appAudited: null, accessLevel: null } })))).toContain('CONNECTION_NOT_ACTIVE');
   });
 
   it('agents need admitted, current, execution-permitted evidence; humans fall back to approval', () => {
     expect(codes(evaluatePolicy(budgetInput({ evidenceIds: [] }, { evidence: [] })))).toContain('NO_EVIDENCE');
-    const quarantined = budgetInput({}, {
-      evidence: [{ id: EV, status: 'quarantined', freshnessStatus: 'current', permittedUses: ['autonomous_execution'], prohibitedUses: [], ageHours: 1 }],
-    });
+    const quarantined = budgetInput(
+      {},
+      {
+        evidence: [{ id: EV, status: 'quarantined', freshnessStatus: 'current', permittedUses: ['autonomous_execution'], prohibitedUses: [], ageHours: 1 }],
+      },
+    );
     expect(evaluatePolicy(quarantined).outcome).toBe('DENY');
     expect(evaluatePolicy({ ...quarantined, proposedBy: { type: 'user', id: 'u1', modelId: null, promptVersion: null } }).outcome).toBe('REQUIRE_APPROVAL');
-    const notPermitted = budgetInput({}, {
-      evidence: [{ id: EV, status: 'admitted', freshnessStatus: 'current', permittedUses: ['analytics'], prohibitedUses: [], ageHours: 1 }],
-    });
+    const notPermitted = budgetInput(
+      {},
+      {
+        evidence: [{ id: EV, status: 'admitted', freshnessStatus: 'current', permittedUses: ['analytics'], prohibitedUses: [], ageHours: 1 }],
+      },
+    );
     expect(evaluatePolicy(notPermitted).outcome).toBe('DENY');
     const human = budgetInput({ evidenceIds: [], proposedBy: { type: 'user', id: 'u1', modelId: null, promptVersion: null } }, { evidence: [] });
     expect(codes(evaluatePolicy(human))).toContain('HUMAN_ATTESTED_NO_EVIDENCE');
@@ -204,15 +206,9 @@ describe('policy engine', () => {
   it('synthetic personas must be approved and disclosed; material connections disclosed', () => {
     const undisclosed = publishInput({ persona: { id: PERSONA, status: 'approved' } }, { syntheticPersonaId: PERSONA });
     expect(codes(evaluatePolicy(undisclosed))).toContain('SYNTHETIC_DISCLOSURE_MISSING');
-    const draft = publishInput(
-      { persona: { id: PERSONA, status: 'draft' }, disclosure: { isAiGenerated: true, paidPartnership: false, syntheticPersonaId: PERSONA, disclosureText: 'AI-generated virtual brand character' } },
-      { syntheticPersonaId: PERSONA },
-    );
+    const draft = publishInput({ persona: { id: PERSONA, status: 'draft' }, disclosure: { isAiGenerated: true, paidPartnership: false, syntheticPersonaId: PERSONA, disclosureText: 'AI-generated virtual brand character' } }, { syntheticPersonaId: PERSONA });
     expect(codes(evaluatePolicy(draft))).toContain('PERSONA_NOT_APPROVED');
-    const ok = publishInput(
-      { persona: { id: PERSONA, status: 'approved' }, disclosure: { isAiGenerated: true, paidPartnership: false, syntheticPersonaId: PERSONA, disclosureText: 'AI-generated virtual brand character' } },
-      { syntheticPersonaId: PERSONA },
-    );
+    const ok = publishInput({ persona: { id: PERSONA, status: 'approved' }, disclosure: { isAiGenerated: true, paidPartnership: false, syntheticPersonaId: PERSONA, disclosureText: 'AI-generated virtual brand character' } }, { syntheticPersonaId: PERSONA });
     expect(evaluatePolicy(ok).outcome).toBe('PRE_AUTHORIZED');
     expect(codes(evaluatePolicy(publishInput({}, { materialConnection: true })))).toContain('MATERIAL_CONNECTION_UNDISCLOSED');
   });
@@ -283,10 +279,14 @@ describe('approvalsSatisfy (separation of duties)', () => {
     const opts = { proposerId: 'p', requiresDistinctApprover: true };
     expect(approvalsSatisfy(groups, [{ approverUserId: 'u1', roles: ['finance_approver', 'legal_approver'] }], opts).satisfied).toBe(false);
     expect(
-      approvalsSatisfy(groups, [
-        { approverUserId: 'u1', roles: ['finance_approver', 'legal_approver'] },
-        { approverUserId: 'u2', roles: ['finance_approver'] },
-      ], opts).satisfied,
+      approvalsSatisfy(
+        groups,
+        [
+          { approverUserId: 'u1', roles: ['finance_approver', 'legal_approver'] },
+          { approverUserId: 'u2', roles: ['finance_approver'] },
+        ],
+        opts,
+      ).satisfied,
     ).toBe(true);
     expect(approvalsSatisfy(groups.slice(0, 1), [{ approverUserId: 'p', roles: ['finance_approver'] }], opts)).toEqual({ satisfied: false, missing: ['finance'] });
   });

@@ -57,7 +57,7 @@ export default async function setup(project: TestProject) {
       // Windows may hold file handles briefly after postmaster exit; best-effort cleanup.
       for (let i = 0; i < 10; i++) {
         try {
-          fs.rmSync(path.resolve(".data", `pg-test-${process.pid}`), { recursive: true, force: true });
+          fs.rmSync(path.resolve('.data', `pg-test-${process.pid}`), { recursive: true, force: true });
           break;
         } catch {
           await new Promise((r) => setTimeout(r, 300));

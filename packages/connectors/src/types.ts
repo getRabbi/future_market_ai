@@ -151,14 +151,7 @@ export interface ReadConnector {
   fetchSpend?(ctx: ConnectorContext, from: string, to: string): Promise<SpendRow[]>;
 }
 
-export function proof(
-  verdict: ExecutionProof['verdict'],
-  method: ExecutionProof['method'],
-  expected: Record<string, unknown>,
-  observed: Record<string, unknown> | null,
-  now: Date,
-  notes: string | null = null,
-): ExecutionProof {
+export function proof(verdict: ExecutionProof['verdict'], method: ExecutionProof['method'], expected: Record<string, unknown>, observed: Record<string, unknown> | null, now: Date, notes: string | null = null): ExecutionProof {
   const diff: ExecutionProof['diff'] = [];
   if (observed) {
     for (const [k, v] of Object.entries(expected)) {
@@ -170,13 +163,7 @@ export function proof(
 }
 
 /** Compare expected vs observed and pick VERIFIED or MISMATCH. */
-export function compareProof(
-  method: ExecutionProof['method'],
-  expected: Record<string, unknown>,
-  observed: Record<string, unknown>,
-  now: Date,
-  notes: string | null = null,
-): ExecutionProof {
+export function compareProof(method: ExecutionProof['method'], expected: Record<string, unknown>, observed: Record<string, unknown>, now: Date, notes: string | null = null): ExecutionProof {
   const p = proof('VERIFIED', method, expected, observed, now, notes);
   return p.diff.length === 0 ? p : { ...p, verdict: 'MISMATCH' };
 }

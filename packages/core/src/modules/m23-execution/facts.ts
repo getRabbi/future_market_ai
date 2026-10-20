@@ -1,25 +1,9 @@
-import { and, eq, gte, inArray, ne, sql } from 'drizzle-orm';
-import type { ActionRisk, ActionTypeDefinition, PlatformCapability, TenantPolicy } from '@futuregrow/contracts';
 import { configuredApiVersion } from '@futuregrow/connectors';
-import {
-  type Tx,
-  actionRequests,
-  assets,
-  budgetReservations,
-  claims,
-  connections,
-  consentState,
-  customerProfiles,
-  evidenceRecords,
-  experiments,
-  messages,
-  platformCapabilities,
-  suppressions,
-  syntheticPersonas,
-  tenantSettings,
-} from '@futuregrow/db';
+import type { ActionRisk, ActionTypeDefinition, PlatformCapability, TenantPolicy } from '@futuregrow/contracts';
+import { actionRequests, assets, budgetReservations, claims, connections, consentState, customerProfiles, evidenceRecords, experiments, messages, platformCapabilities, suppressions, syntheticPersonas, type Tx, tenantSettings } from '@futuregrow/db';
 import { identifierHash } from '@futuregrow/observability';
 import type { DisclosureFact, MessagingFact, PolicyFacts } from '@futuregrow/policies';
+import { and, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import type { CoreDeps } from '../../deps.js';
 import { approvedJurisdictions, engagedKillSwitchesFor, isSystemHalted, senderIdentityComplete } from '../m24-governance/index.js';
 
@@ -30,7 +14,7 @@ export function objectRefs(params: Record<string, unknown>, target: Record<strin
   const out = new Set<string>();
   const walk = (v: unknown, key: string) => {
     if (typeof v === 'string' && (/(Id|Ref|Code)$/.test(key) || UUID_RE.test(v))) out.add(v);
-    else if (Array.isArray(v)) v.forEach((x) => walk(x, key));
+    else if (Array.isArray(v)) for (const x of v) walk(x, key);
     else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, k);
   };
   walk(params, '');
@@ -123,15 +107,7 @@ async function messagingFacts(tx: Tx, deps: CoreDeps, input: FactInput, policy: 
     const [{ n } = { n: 0 }] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(messages)
-      .where(
-        and(
-          eq(messages.profileId, profileId),
-          eq(messages.category, 'commercial'),
-          inArray(messages.status, ['submitted', 'sent_unverified', 'delivered']),
-          gte(messages.createdAt, since),
-          ...(messageId ? [ne(messages.id, messageId)] : []),
-        ),
-      );
+      .where(and(eq(messages.profileId, profileId), eq(messages.category, 'commercial'), inArray(messages.status, ['submitted', 'sent_unverified', 'delivered']), gte(messages.createdAt, since), ...(messageId ? [ne(messages.id, messageId)] : [])));
     withinFrequencyCap = n < policy.messaging.maxCommercialMessagesPerProfilePerWeek;
     const tz = profile.timezone ?? policy.messaging.quietHours.timezone;
     quietHoursOk = !inQuietWindow(localHour(now, tz), policy.messaging.quietHours.startHour, policy.messaging.quietHours.endHour);
@@ -162,9 +138,7 @@ export async function gatherPolicyFacts(tx: Tx, deps: CoreDeps, input: FactInput
     if (c) connection = { provider: c.provider, status: c.status as never, grantedScopes: c.grantedScopes, appAudited: c.appAudited, accessLevel: c.accessLevel };
   }
 
-  const evRows = input.evidenceIds.length
-    ? await tx.select().from(evidenceRecords).where(inArray(evidenceRecords.id, input.evidenceIds))
-    : [];
+  const evRows = input.evidenceIds.length ? await tx.select().from(evidenceRecords).where(inArray(evidenceRecords.id, input.evidenceIds)) : [];
   const evidence = evRows.map((e) => ({
     id: e.id,
     status: e.status as 'admitted',
@@ -189,14 +163,7 @@ export async function gatherPolicyFacts(tx: Tx, deps: CoreDeps, input: FactInput
     .select({ total: sql<number>`coalesce(sum(${budgetReservations.amountMicros}), 0)::float8` })
     .from(budgetReservations)
     .innerJoin(actionRequests, eq(actionRequests.id, budgetReservations.actionId))
-    .where(
-      and(
-        inArray(budgetReservations.status, ['held', 'committed']),
-        gte(budgetReservations.createdAt, since),
-        sql`${actionRequests.policyDecision}->>'outcome' = 'PRE_AUTHORIZED'`,
-        ...(input.actionId ? [ne(budgetReservations.actionId, input.actionId)] : []),
-      ),
-    );
+    .where(and(inArray(budgetReservations.status, ['held', 'committed']), gte(budgetReservations.createdAt, since), sql`${actionRequests.policyDecision}->>'outcome' = 'PRE_AUTHORIZED'`, ...(input.actionId ? [ne(budgetReservations.actionId, input.actionId)] : [])));
 
   return {
     systemHalted: await isSystemHalted(tx),
@@ -231,10 +198,7 @@ async function experimentFact(tx: Tx, id: string | undefined) {
 }
 
 /** Freshness is re-derived at read time from the SLA rather than trusted from insertion time. */
-export function effectiveFreshness(
-  e: { freshnessStatus: string; freshnessSlaHours: number | null; observedAt: Date | null; retrievedAt: Date; expiresAt: Date | null },
-  now: Date,
-): 'current' | 'stale' | 'unknown' {
+export function effectiveFreshness(e: { freshnessStatus: string; freshnessSlaHours: number | null; observedAt: Date | null; retrievedAt: Date; expiresAt: Date | null }, now: Date): 'current' | 'stale' | 'unknown' {
   if (e.expiresAt && e.expiresAt <= now) return 'stale';
   if (e.freshnessSlaHours === null) return e.freshnessStatus === 'stale' ? 'stale' : (e.freshnessStatus as 'current' | 'unknown');
   const age = (now.getTime() - (e.observedAt ?? e.retrievedAt).getTime()) / 3_600_000;

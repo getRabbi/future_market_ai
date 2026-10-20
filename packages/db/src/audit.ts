@@ -1,6 +1,6 @@
-import { asc, and, eq, gt, sql } from 'drizzle-orm';
 import { canonicalJson } from '@futuregrow/contracts';
 import { sha256Hex } from '@futuregrow/observability';
+import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import type { DbOrTx, Tx } from './client.js';
 import { auditChainHeads, auditLog } from './schema/index.js';
 
@@ -41,15 +41,8 @@ export function computeAuditHash(record: CanonicalAuditRecord): string {
  * on the chain head, so concurrent writers cannot fork the chain.
  */
 export async function appendAudit(tx: Tx, entry: AuditEntry): Promise<{ seq: number; recordHash: string }> {
-  await tx
-    .insert(auditChainHeads)
-    .values({ tenantId: entry.tenantId, lastSeq: 0, lastHash: AUDIT_GENESIS_HASH })
-    .onConflictDoNothing();
-  const [head] = await tx
-    .select()
-    .from(auditChainHeads)
-    .where(eq(auditChainHeads.tenantId, entry.tenantId))
-    .for('update');
+  await tx.insert(auditChainHeads).values({ tenantId: entry.tenantId, lastSeq: 0, lastHash: AUDIT_GENESIS_HASH }).onConflictDoNothing();
+  const [head] = await tx.select().from(auditChainHeads).where(eq(auditChainHeads.tenantId, entry.tenantId)).for('update');
   if (!head) throw new Error('audit chain head missing');
 
   const record: CanonicalAuditRecord = {
@@ -67,10 +60,7 @@ export async function appendAudit(tx: Tx, entry: AuditEntry): Promise<{ seq: num
   };
   const recordHash = computeAuditHash(record);
   await tx.insert(auditLog).values({ ...record, recordHash });
-  await tx
-    .update(auditChainHeads)
-    .set({ lastSeq: record.seq, lastHash: recordHash })
-    .where(eq(auditChainHeads.tenantId, entry.tenantId));
+  await tx.update(auditChainHeads).set({ lastSeq: record.seq, lastHash: recordHash }).where(eq(auditChainHeads.tenantId, entry.tenantId));
   return { seq: record.seq, recordHash };
 }
 

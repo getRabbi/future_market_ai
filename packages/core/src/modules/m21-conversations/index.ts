@@ -1,15 +1,15 @@
 import { randomBytes } from 'node:crypto';
-import { and, asc, desc, eq } from 'drizzle-orm';
-import { PROMPTS, injectionSignals, redactPii, untrustedBlock } from '@futuregrow/agent-kernel';
+import { injectionSignals, PROMPTS, redactPii, untrustedBlock } from '@futuregrow/agent-kernel';
 import { chatwootCreateHandoff } from '@futuregrow/connectors';
-import { type DbOrTx, type Tx, chatWidgets, connections, conversationMessages, conversations, leads, supportTickets, withSystem, withTenant } from '@futuregrow/db';
+import { chatWidgets, connections, conversationMessages, conversations, type DbOrTx, leads, supportTickets, type Tx, withSystem, withTenant } from '@futuregrow/db';
 import { FgError, forbidden, invalid, notFound, safeEqual, sha256Hex } from '@futuregrow/observability';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { type Actor, type CoreDeps, actorRef, systemActor } from '../../deps.js';
 import { runAgent } from '../../agents.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, record, requireRole } from '../../util.js';
 import { readContext } from '../connections.js';
-import { type Embedder, type RetrievedChunk, lintCopy, screenRetrieved, searchKnowledge } from '../m03-knowledge/index.js';
+import { type Embedder, lintCopy, type RetrievedChunk, screenRetrieved, searchKnowledge } from '../m03-knowledge/index.js';
 import { raiseAlert } from '../m24-governance/index.js';
 
 /* ------------------------------------------------------------------ */
@@ -17,7 +17,10 @@ import { raiseAlert } from '../m24-governance/index.js';
 /* ------------------------------------------------------------------ */
 
 export const WidgetInputSchema = z.object({
-  allowedOrigins: z.array(z.string().regex(/^https?:\/\/[a-z0-9.-]+(:\d+)?$/i, 'origin like https://shop.example')).min(1).max(20),
+  allowedOrigins: z
+    .array(z.string().regex(/^https?:\/\/[a-z0-9.-]+(:\d+)?$/i, 'origin like https://shop.example'))
+    .min(1)
+    .max(20),
   disclosureText: z.string().min(10).max(300).default("You're chatting with an AI assistant. A human can take over at any time."),
 });
 
@@ -57,7 +60,10 @@ export async function startConversation(deps: CoreDeps, publicKey: string, origi
   const visitorToken = randomBytes(24).toString('base64url');
   const actor = systemActor('chat');
   return withTenant(deps.db, { tenantId: w.tenantId, actor: actorRef(actor) }, async (tx) => {
-    const [c] = await tx.insert(conversations).values({ tenantId: w.tenantId, widgetId: w.id, channel: 'web_chat', visitorTokenHash: sha256Hex(visitorToken) }).returning();
+    const [c] = await tx
+      .insert(conversations)
+      .values({ tenantId: w.tenantId, widgetId: w.id, channel: 'web_chat', visitorTokenHash: sha256Hex(visitorToken) })
+      .returning();
     await tx.insert(conversationMessages).values({ tenantId: w.tenantId, conversationId: c!.id, role: 'system', text: w.disclosureText, redactedText: w.disclosureText });
     return { conversationId: c!.id, visitorToken, disclosure: w.disclosureText };
   });
@@ -211,26 +217,51 @@ export function leadScore(l: z.infer<typeof AnswerSchema>['lead']): number {
 async function upsertLead(tx: Tx, tenantId: string, conversationId: string, l: z.infer<typeof AnswerSchema>['lead']) {
   const qualification = { useCase: l.useCase || null, companySize: l.companySize || null, askedAboutPricing: l.askedAboutPricing, method: 'conversation-signals-v1' };
   const [existing] = await tx.select().from(leads).where(eq(leads.conversationId, conversationId));
-  if (existing) await tx.update(leads).set({ qualification, score: leadScore(l) }).where(eq(leads.id, existing.id));
+  if (existing)
+    await tx
+      .update(leads)
+      .set({ qualification, score: leadScore(l) })
+      .where(eq(leads.id, existing.id));
   else await tx.insert(leads).values({ tenantId, conversationId, qualification, score: leadScore(l) });
 }
 
 async function requestHandoff(tx: Tx, tenantId: string, conversationId: string, reason: string) {
-  const [c] = await tx.update(conversations).set({ status: 'handoff' }).where(and(eq(conversations.id, conversationId), eq(conversations.status, 'open'))).returning();
+  const [c] = await tx
+    .update(conversations)
+    .set({ status: 'handoff' })
+    .where(and(eq(conversations.id, conversationId), eq(conversations.status, 'open')))
+    .returning();
   if (!c) return;
-  const [t] = await tx.insert(supportTickets).values({ tenantId, conversationId, subject: `Chat handoff: ${reason.slice(0, 150)}` }).returning();
+  const [t] = await tx
+    .insert(supportTickets)
+    .values({ tenantId, conversationId, subject: `Chat handoff: ${reason.slice(0, 150)}` })
+    .returning();
   await tx.update(leads).set({ status: 'handed_off' }).where(eq(leads.conversationId, conversationId));
   await record(tx, tenantId, systemActor('chat'), 'conversation.handoff.requested', { type: 'conversation', id: conversationId }, { ticketId: t!.id, reason: reason.slice(0, 500) });
 }
 
 /** Optional: mirror the handoff into the tenant's Chatwoot inbox (redacted transcript). */
 async function forwardToChatwoot(deps: CoreDeps, tenantId: string, conversationId: string) {
-  const conn = await withTenant(deps.db, { tenantId, actor: 'system:chat' }, async (tx) => (await tx.select().from(connections).where(and(eq(connections.provider, 'chatwoot'), eq(connections.status, 'active'))).limit(1))[0]);
+  const conn = await withTenant(
+    deps.db,
+    { tenantId, actor: 'system:chat' },
+    async (tx) =>
+      (
+        await tx
+          .select()
+          .from(connections)
+          .where(and(eq(connections.provider, 'chatwoot'), eq(connections.status, 'active')))
+          .limit(1)
+      )[0],
+  );
   if (!conn) return null;
   const inboxId = Number(conn.metadata.inboxId);
   if (!Number.isInteger(inboxId)) throw new Error('chatwoot connection metadata.inboxId missing');
   const msgs = await withTenant(deps.db, { tenantId, actor: 'system:chat' }, (tx) => tx.select().from(conversationMessages).where(eq(conversationMessages.conversationId, conversationId)).orderBy(asc(conversationMessages.createdAt)));
-  const transcript = msgs.map((m) => `${m.role}: ${m.redactedText}`).join('\n').slice(0, 20_000);
+  const transcript = msgs
+    .map((m) => `${m.role}: ${m.redactedText}`)
+    .join('\n')
+    .slice(0, 20_000);
   const { ctx } = await readContext(deps, tenantId, conn.id, 'chatwoot');
   const res = await chatwootCreateHandoff(ctx, { inboxId, contactName: `Web visitor ${conversationId.slice(0, 8)}`, transcript });
   await withTenant(deps.db, { tenantId, actor: 'system:chat' }, (tx) => audit(tx, tenantId, systemActor('chat'), 'conversation.handoff.forwarded', { type: 'conversation', id: conversationId }, { chatwootConversationId: res.conversationId }));
@@ -249,7 +280,10 @@ export async function humanReply(tx: Tx, tenantId: string, actor: Actor, convers
   const [c] = await tx.select().from(conversations).where(eq(conversations.id, conversationId));
   if (!c) throw notFound('conversation');
   if (c.status === 'closed') throw invalid('conversation is closed');
-  const [m] = await tx.insert(conversationMessages).values({ tenantId, conversationId, role: 'human_agent', text, redactedText: redactPii(text) }).returning();
+  const [m] = await tx
+    .insert(conversationMessages)
+    .values({ tenantId, conversationId, role: 'human_agent', text, redactedText: redactPii(text) })
+    .returning();
   await tx.update(conversations).set({ assignedUserId: actor.id, lastMessageAt: new Date() }).where(eq(conversations.id, conversationId));
   await audit(tx, tenantId, actor, 'conversation.message.human_reply', { type: 'conversation', id: conversationId }, { messageId: m!.id });
   return m!;
@@ -259,7 +293,10 @@ export async function closeConversation(tx: Tx, tenantId: string, actor: Actor, 
   requireRole(actor, STAFF, 'closing conversations');
   const [c] = await tx.update(conversations).set({ status: 'closed' }).where(eq(conversations.id, conversationId)).returning();
   if (!c) throw notFound('conversation');
-  await tx.update(supportTickets).set({ status: 'solved' }).where(and(eq(supportTickets.conversationId, conversationId), eq(supportTickets.status, 'open')));
+  await tx
+    .update(supportTickets)
+    .set({ status: 'solved' })
+    .where(and(eq(supportTickets.conversationId, conversationId), eq(supportTickets.status, 'open')));
   await audit(tx, tenantId, actor, 'conversation.closed', { type: 'conversation', id: conversationId }, {});
   return c;
 }

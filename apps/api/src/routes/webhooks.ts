@@ -1,8 +1,8 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { verifyMetaSignature, verifyShopifyHmac, verifySvixSignature, verifyTikTokSignature } from '@futuregrow/connectors';
 import { webhooks } from '@futuregrow/core';
 import { safeEqual } from '@futuregrow/observability';
 import type { Env } from '@futuregrow/runtime';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ApiContext } from '../http.js';
 
 function headerMap(req: FastifyRequest): Record<string, string> {

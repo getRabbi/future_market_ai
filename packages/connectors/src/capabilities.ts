@@ -6,8 +6,7 @@ export const CONNECTOR_VERSION = '1.0.0';
 /** Date the capability facts below were last checked against provider documentation/reporting. */
 const CHECKED = '2026-10-19T00:00:00.000Z';
 
-const LIVE_UNVERIFIED =
-  'Request/response shapes implemented from provider documentation; contract-tested against a local fixture only. Live validation pending (BLOCKERS).';
+const LIVE_UNVERIFIED = 'Request/response shapes implemented from provider documentation; contract-tested against a local fixture only. Live validation pending (BLOCKERS).';
 
 type Seed = Omit<PlatformCapability, 'termsCheckedAt' | 'connectorVersion'>;
 

@@ -1,35 +1,9 @@
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import {
-  type KillSwitchScope,
-  type ModelArtifact,
-  ModelArtifactSchema,
-  type TenantPolicy,
-  TenantPolicySchema,
-} from '@futuregrow/contracts';
 import { CAPABILITY_SEEDS } from '@futuregrow/connectors';
-import {
-  type Db,
-  type DbOrTx,
-  type Tx,
-  actionRequests,
-  alerts,
-  artifactLicenses,
-  authUser,
-  budgetReservations,
-  costLedger,
-  incidents,
-  jurisdictionRules,
-  killSwitches,
-  modelRegistry,
-  platformCapabilities,
-  setTransitionReason,
-  systemControls,
-  tenantSettings,
-  verifyAuditChain,
-  withSystem,
-} from '@futuregrow/db';
+import { type KillSwitchScope, type ModelArtifact, ModelArtifactSchema, type TenantPolicy, TenantPolicySchema } from '@futuregrow/contracts';
+import { actionRequests, alerts, artifactLicenses, authUser, budgetReservations, costLedger, type Db, type DbOrTx, incidents, jurisdictionRules, killSwitches, modelRegistry, platformCapabilities, setTransitionReason, systemControls, type Tx, tenantSettings, verifyAuditChain, withSystem } from '@futuregrow/db';
+import { conflict, FgError, forbidden, invalid, notFound } from '@futuregrow/observability';
 import { defaultTenantPolicy } from '@futuregrow/policies';
-import { FgError, conflict, forbidden, invalid, notFound } from '@futuregrow/observability';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { type Actor, actorRef } from '../../deps.js';
 import { ADMIN_ROLES, audit, record, requireMfa, requireRole } from '../../util.js';
 
@@ -83,7 +57,10 @@ export async function setSenderIdentity(tx: Tx, tenantId: string, actor: Actor, 
   if (!existing) {
     await tx.insert(tenantSettings).values({ tenantId, policy: defaultTenantPolicy(), senderIdentity: identity as unknown as Record<string, unknown>, updatedBy: actorRef(actor) });
   } else {
-    await tx.update(tenantSettings).set({ senderIdentity: identity as unknown as Record<string, unknown>, updatedAt: new Date() }).where(eq(tenantSettings.tenantId, tenantId));
+    await tx
+      .update(tenantSettings)
+      .set({ senderIdentity: identity as unknown as Record<string, unknown>, updatedAt: new Date() })
+      .where(eq(tenantSettings.tenantId, tenantId));
   }
   await audit(tx, tenantId, actor, 'governance.sender_identity.updated', { type: 'tenant_settings', id: tenantId }, { fromEmail: identity.fromEmail });
 }
@@ -123,7 +100,15 @@ export async function setSystemHalt(db: Db, actor: { userId: string }, engaged: 
         await tx
           .update(budgetReservations)
           .set({ status: 'released', settledAt: new Date() })
-          .where(and(inArray(budgetReservations.actionId, cancelled.map((c) => c.id)), eq(budgetReservations.status, 'held')));
+          .where(
+            and(
+              inArray(
+                budgetReservations.actionId,
+                cancelled.map((c) => c.id),
+              ),
+              eq(budgetReservations.status, 'held'),
+            ),
+          );
       }
     }
   });
@@ -158,12 +143,7 @@ export async function engagedKillSwitchesFor(tx: DbOrTx, input: KillSwitchMatchI
     .map((k) => ({ scope: k.scope, targetRef: k.targetRef, reason: k.reason }));
 }
 
-export async function engageKillSwitch(
-  tx: Tx,
-  tenantId: string,
-  actor: Actor,
-  input: { scope: Exclude<KillSwitchScope, 'system'>; targetRef: string | null; reason: string },
-) {
+export async function engageKillSwitch(tx: Tx, tenantId: string, actor: Actor, input: { scope: Exclude<KillSwitchScope, 'system'>; targetRef: string | null; reason: string }) {
   // Stopping must be easy: any operator role may engage; releasing requires an admin.
   requireRole(actor, ['owner', 'admin', 'growth_operator', 'approver', 'finance_approver', 'legal_approver', 'privacy_officer'], 'engaging a kill switch');
   if (input.scope !== 'tenant' && input.scope !== 'agent' && input.scope !== 'model' && !input.targetRef) {
@@ -285,11 +265,7 @@ export async function seedModelRegistry(db: Db): Promise<void> {
   });
 }
 
-export async function approveModel(
-  db: Db,
-  actor: { userId: string },
-  input: { provider: string; modelId: string; trainingOnCustomerData: 'no' | 'yes' | 'unknown'; dataRetentionTerms: string; inputUsdPerMtok: number | null; outputUsdPerMtok: number | null },
-): Promise<void> {
+export async function approveModel(db: Db, actor: { userId: string }, input: { provider: string; modelId: string; trainingOnCustomerData: 'no' | 'yes' | 'unknown'; dataRetentionTerms: string; inputUsdPerMtok: number | null; outputUsdPerMtok: number | null }): Promise<void> {
   await withSystem(db, `user:${actor.userId}`, async (tx) => {
     const [u] = await tx.select().from(authUser).where(eq(authUser.id, actor.userId));
     if (!u?.isPlatformAdmin) throw forbidden('model approval requires a platform administrator');
@@ -367,11 +343,7 @@ export async function approvedJurisdictions(tx: DbOrTx, tenantPolicy: TenantPoli
   return [...new Set(rows.map((r) => r.j))];
 }
 
-export async function upsertJurisdictionRules(
-  db: Db,
-  actor: { userId: string },
-  input: { jurisdiction: string; domain: string; rules: Record<string, unknown>; sourceRefs: string[]; approve: boolean },
-) {
+export async function upsertJurisdictionRules(db: Db, actor: { userId: string }, input: { jurisdiction: string; domain: string; rules: Record<string, unknown>; sourceRefs: string[]; approve: boolean }) {
   return withSystem(db, `user:${actor.userId}`, async (tx) => {
     const [u] = await tx.select().from(authUser).where(eq(authUser.id, actor.userId));
     if (!u?.isPlatformAdmin) throw forbidden('jurisdiction rule packs are managed by a platform administrator with legal sign-off');
@@ -403,13 +375,11 @@ export async function upsertJurisdictionRules(
 /* Incidents, alerts, cost                                             */
 /* ------------------------------------------------------------------ */
 
-export async function openIncident(
-  tx: Tx,
-  tenantId: string,
-  actor: Actor,
-  input: { severity: 'sev1' | 'sev2' | 'sev3' | 'sev4'; title: string; description: string; refs: Record<string, unknown> },
-) {
-  const [row] = await tx.insert(incidents).values({ tenantId, ...input, openedBy: actorRef(actor) }).returning();
+export async function openIncident(tx: Tx, tenantId: string, actor: Actor, input: { severity: 'sev1' | 'sev2' | 'sev3' | 'sev4'; title: string; description: string; refs: Record<string, unknown> }) {
+  const [row] = await tx
+    .insert(incidents)
+    .values({ tenantId, ...input, openedBy: actorRef(actor) })
+    .returning();
   await record(tx, tenantId, actor, 'governance.incident.opened', { type: 'incident', id: row!.id }, { severity: input.severity, title: input.title, refs: input.refs });
   return row!;
 }
@@ -426,11 +396,7 @@ export async function resolveIncident(tx: Tx, tenantId: string, actor: Actor, id
   return row;
 }
 
-export async function raiseAlert(
-  tx: Tx,
-  tenantId: string,
-  input: { kind: string; severity: 'info' | 'warning' | 'critical'; message: string; refs?: Record<string, unknown>; dedupKey?: string },
-) {
+export async function raiseAlert(tx: Tx, tenantId: string, input: { kind: string; severity: 'info' | 'warning' | 'critical'; message: string; refs?: Record<string, unknown>; dedupKey?: string }) {
   const inserted = await tx
     .insert(alerts)
     .values({ tenantId, kind: input.kind, severity: input.severity, message: input.message, refs: input.refs ?? {}, dedupKey: input.dedupKey ?? null })
@@ -449,11 +415,7 @@ export async function acknowledgeAlert(tx: Tx, actor: Actor, id: string) {
   return row;
 }
 
-export async function recordCost(
-  tx: Tx,
-  tenantId: string,
-  input: { category: 'llm' | 'embedding' | 'media_render' | 'api' | 'analytics' | 'storage'; provider: string; unit: string; quantity: number; unitCostUsd: number | null; refType?: string; refId?: string; metadata?: Record<string, unknown> },
-) {
+export async function recordCost(tx: Tx, tenantId: string, input: { category: 'llm' | 'embedding' | 'media_render' | 'api' | 'analytics' | 'storage'; provider: string; unit: string; quantity: number; unitCostUsd: number | null; refType?: string; refId?: string; metadata?: Record<string, unknown> }) {
   await tx.insert(costLedger).values({
     tenantId,
     category: input.category,
@@ -483,4 +445,4 @@ export async function verifyTenantAudit(tx: DbOrTx, tenantId: string) {
   return verifyAuditChain(tx, tenantId);
 }
 
-export { FgError, conflict };
+export { conflict, FgError };

@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
-import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { conversationsModule, creatorsModule, customers, evidence, lifecycle } from '@futuregrow/core';
 import { appInstalls, consentState, customerProfiles, messages, suppressions, withTenant } from '@futuregrow/db';
 import { sha256Hex } from '@futuregrow/observability';
 import { loadEnv } from '@futuregrow/runtime';
+import { eq } from 'drizzle-orm';
+import type { FastifyInstance } from 'fastify';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { buildApp } from '../src/app.js';
 

@@ -1,23 +1,25 @@
-export * from './deps.js';
-export * from './secrets.js';
-export * from './util.js';
-export * from './event-handlers.js';
-export * as governance from './modules/m24-governance/index.js';
-export * as execution from './modules/m23-execution/index.js';
-export * as evidence from './modules/m01-evidence/index.js';
-export * as connectionsModule from './modules/connections.js';
 export * from './bootstrap.js';
-export * as webhooks from './modules/webhooks.js';
+export * from './deps.js';
+export * from './event-handlers.js';
+export * as connectionsModule from './modules/connections.js';
+export * as evidence from './modules/m01-evidence/index.js';
 export * as customers from './modules/m02-customers/index.js';
 export * as knowledge from './modules/m03-knowledge/index.js';
+export * as execution from './modules/m23-execution/index.js';
+export * as governance from './modules/m24-governance/index.js';
+export * as webhooks from './modules/webhooks.js';
+export * from './secrets.js';
+export * from './util.js';
+
 import './modules/m02-customers/executors.js';
-export * as analytics from './modules/m08-analytics/index.js';
-export * as experimentsModule from './modules/m10-experiments/index.js';
-export * as audiences from './modules/m11-audiences/index.js';
+
 export * from './agents.js';
 export * as competitorsModule from './modules/m05-competitors/index.js';
 export * as ideas from './modules/m06-ideas/index.js';
 export * as brain from './modules/m07-brain/index.js';
+export * as analytics from './modules/m08-analytics/index.js';
+export * as experimentsModule from './modules/m10-experiments/index.js';
+export * as audiences from './modules/m11-audiences/index.js';
 export * as offersModule from './modules/m12-offers/index.js';
 export * as creative from './modules/m13-creative/index.js';
 export * as assetsModule from './modules/m14-assets/index.js';

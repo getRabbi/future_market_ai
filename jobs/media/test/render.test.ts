@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
-import { makePng } from '../../../test/helpers/png.js';
 import { assetRights, assets, renderJobs, withTenant } from '@futuregrow/db';
 import { sha256Hex } from '@futuregrow/observability';
+import { eq } from 'drizzle-orm';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { admitEvidence } from '../../../packages/core/src/modules/m01-evidence/index.js';
 import * as assetsM from '../../../packages/core/src/modules/m14-assets/index.js';
-import { RemotionRenderer, processNextRender } from '../src/runner.js';
+import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { makePng } from '../../../test/helpers/png.js';
+import { processNextRender, RemotionRenderer } from '../src/runner.js';
 
 let h: CoreHarness;
 const tx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => withTenant(h.t.handle.db, { tenantId: h.tenantId, actor: 'user:test' }, fn);
@@ -23,7 +23,19 @@ describe.skipIf(process.env.FG_SKIP_RENDER === '1')('media job: real Remotion re
         t,
         h.tenantId,
         h.users.owner,
-        { sourceType: 'internal', sourceOwner: 'acme', sourceUriOrObjectId: `contract://${randomUUID()}`, retrievedAt: h.clock.now().toISOString(), licenseOrUsageRights: 'own photography', schemaVersion: '1', piiClassification: 'none', confidence: 1, permittedUses: ['creative_generation', 'publishing'], kind: 'contract', content: { photographer: 'in-house' } },
+        {
+          sourceType: 'internal',
+          sourceOwner: 'acme',
+          sourceUriOrObjectId: `contract://${randomUUID()}`,
+          retrievedAt: h.clock.now().toISOString(),
+          licenseOrUsageRights: 'own photography',
+          schemaVersion: '1',
+          piiClassification: 'none',
+          confidence: 1,
+          permittedUses: ['creative_generation', 'publishing'],
+          kind: 'contract',
+          content: { photographer: 'in-house' },
+        },
         { now: h.clock.now() },
       ),
     );

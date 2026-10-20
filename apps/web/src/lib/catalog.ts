@@ -168,7 +168,12 @@ export const SECTIONS: Section[] = [
       },
       {
         title: 'Competitor sources',
-        create: { label: 'Propose source', path: '/v1/competitors/sources', example: { competitorId: '00000000-0000-4000-8000-000000000000', url: 'https://rival.example/pricing', kind: 'pricing', lawfulBasisNote: 'Public pricing page; robots.txt permits crawling.', crawlIntervalHours: 24 }, note: 'Legal must approve sources (MFA) before crawling.' },
+        create: {
+          label: 'Propose source',
+          path: '/v1/competitors/sources',
+          example: { competitorId: '00000000-0000-4000-8000-000000000000', url: 'https://rival.example/pricing', kind: 'pricing', lawfulBasisNote: 'Public pricing page; robots.txt permits crawling.', crawlIntervalHours: 24 },
+          note: 'Legal must approve sources (MFA) before crawling.',
+        },
       },
       { title: 'Observations', list: '/v1/competitors/observations', columns: ['kind', 'summary', 'isInference', 'observedAt'] },
       { title: 'Feature gaps', list: '/v1/competitors/gaps' },
@@ -271,7 +276,20 @@ export const SECTIONS: Section[] = [
         title: 'Segments',
         list: '/v1/audiences/segments',
         columns: ['name', 'purpose', 'status', 'createdAt'],
-        create: { label: 'Define segment', path: '/v1/audiences/segments', example: { name: 'Trialists without integration', purpose: 'personalization', definition: { all: [{ event: 'signup', windowDays: 14, op: 'gte', count: 1 }, { event: 'integration_connected', windowDays: 14, op: 'eq', count: 0 }] } } },
+        create: {
+          label: 'Define segment',
+          path: '/v1/audiences/segments',
+          example: {
+            name: 'Trialists without integration',
+            purpose: 'personalization',
+            definition: {
+              all: [
+                { event: 'signup', windowDays: 14, op: 'gte', count: 1 },
+                { event: 'integration_connected', windowDays: 14, op: 'eq', count: 0 },
+              ],
+            },
+          },
+        },
         rowActions: [
           { label: 'Snapshot', path: '/v1/audiences/segments/:id/snapshot' },
           { label: 'Snapshots', path: '/v1/audiences/segments/:id/snapshots' },
@@ -285,7 +303,12 @@ export const SECTIONS: Section[] = [
     modules: ['M12'],
     summary: 'Margin-guardrailed offers and conversion hypotheses.',
     resources: [
-      { title: 'Price guardrails', list: '/v1/offers/guardrails', columns: ['productRef', 'currency', 'listPriceMicros', 'minPriceMicros', 'maxDiscountFraction'], create: { label: 'Set guardrail', method: 'PUT', path: '/v1/offers/guardrails', example: { productRef: 'team-plan', currency: 'USD', listPriceMicros: 49_000_000, unitCostMicros: 9_000_000, minPriceMicros: 35_000_000, maxDiscountFraction: 0.25, minMarginFraction: 0.6 } } },
+      {
+        title: 'Price guardrails',
+        list: '/v1/offers/guardrails',
+        columns: ['productRef', 'currency', 'listPriceMicros', 'minPriceMicros', 'maxDiscountFraction'],
+        create: { label: 'Set guardrail', method: 'PUT', path: '/v1/offers/guardrails', example: { productRef: 'team-plan', currency: 'USD', listPriceMicros: 49_000_000, unitCostMicros: 9_000_000, minPriceMicros: 35_000_000, maxDiscountFraction: 0.25, minMarginFraction: 0.6 } },
+      },
       {
         title: 'Offers',
         list: '/v1/offers',
@@ -293,7 +316,15 @@ export const SECTIONS: Section[] = [
         create: { label: 'Draft offer', path: '/v1/offers', example: { name: 'Autumn annual', kind: 'percent_discount', productRefs: ['team-plan'], params: { percentage: 0.15, code: 'AUTUMN15' }, copy: '', startsAt: iso(), endsAt: null } },
         rowActions: [{ label: 'Approve', path: '/v1/offers/:id/approve', when: { field: 'status', values: ['draft'] } }],
       },
-      { title: 'CRO hypotheses', list: '/v1/offers/cro', create: { label: 'Add hypothesis', path: '/v1/offers/cro', example: { pageUrl: 'https://www.example.com/pricing', hypothesis: 'Showing annual savings increases plan upgrades', changes: [{ element: 'billing toggle', change: 'Show annual savings next to the toggle' }], evidenceIds: ['00000000-0000-4000-8000-000000000000'] } } },
+      {
+        title: 'CRO hypotheses',
+        list: '/v1/offers/cro',
+        create: {
+          label: 'Add hypothesis',
+          path: '/v1/offers/cro',
+          example: { pageUrl: 'https://www.example.com/pricing', hypothesis: 'Showing annual savings increases plan upgrades', changes: [{ element: 'billing toggle', change: 'Show annual savings next to the toggle' }], evidenceIds: ['00000000-0000-4000-8000-000000000000'] },
+        },
+      },
     ],
   },
   {
@@ -311,11 +342,32 @@ export const SECTIONS: Section[] = [
       },
     ],
   },
-  { slug: 'assets', title: 'Asset studio', modules: ['M14'], summary: 'Uploads, rights manifests and Remotion renders. Only publish-eligible assets can be posted.', resources: [
-    { title: 'Assets', list: '/v1/assets', columns: ['title', 'kind', 'origin', 'mime', 'publishEligible', 'createdAt'], detail: '/v1/assets/:id', rowActions: [{ label: 'Download URL', path: '/v1/assets/:id/download-url' }] },
-    { title: 'Renders', list: '/v1/assets/renders', columns: ['composition', 'status', 'statusReason', 'createdAt'], create: { label: 'Request render', path: '/v1/assets/renders', example: { composition: 'product_showcase', inputAssetIds: ['00000000-0000-4000-8000-000000000000'], props: { headline: 'Import contacts in one step', captions: ['Connect your CRM'], cta: 'Start free' } } } },
-    { title: 'Remotion licence attestation', create: { label: 'Record licence', method: 'PUT', path: '/v1/assets/remotion-license', example: { eligibility: 'free_license', basis: 'organization_up_to_3_people', teamSize: 2, attestation: 'We are a company of 2 people.' }, note: 'B-014: companies above the free-licence threshold need a Remotion company licence.' } },
-  ], custom: 'assets' },
+  {
+    slug: 'assets',
+    title: 'Asset studio',
+    modules: ['M14'],
+    summary: 'Uploads, rights manifests and Remotion renders. Only publish-eligible assets can be posted.',
+    resources: [
+      { title: 'Assets', list: '/v1/assets', columns: ['title', 'kind', 'origin', 'mime', 'publishEligible', 'createdAt'], detail: '/v1/assets/:id', rowActions: [{ label: 'Download URL', path: '/v1/assets/:id/download-url' }] },
+      {
+        title: 'Renders',
+        list: '/v1/assets/renders',
+        columns: ['composition', 'status', 'statusReason', 'createdAt'],
+        create: { label: 'Request render', path: '/v1/assets/renders', example: { composition: 'product_showcase', inputAssetIds: ['00000000-0000-4000-8000-000000000000'], props: { headline: 'Import contacts in one step', captions: ['Connect your CRM'], cta: 'Start free' } } },
+      },
+      {
+        title: 'Remotion licence attestation',
+        create: {
+          label: 'Record licence',
+          method: 'PUT',
+          path: '/v1/assets/remotion-license',
+          example: { eligibility: 'free_license', basis: 'organization_up_to_3_people', teamSize: 2, attestation: 'We are a company of 2 people.' },
+          note: 'B-014: companies above the free-licence threshold need a Remotion company licence.',
+        },
+      },
+    ],
+    custom: 'assets',
+  },
   {
     slug: 'personas',
     title: 'Synthetic personas',
@@ -326,7 +378,18 @@ export const SECTIONS: Section[] = [
         title: 'Personas',
         list: '/v1/personas',
         columns: ['name', 'status', 'disclosureCopy', 'createdAt'],
-        create: { label: 'Create persona', path: '/v1/personas', example: { name: 'Nova', personaBible: { backstory: 'Nova is an illustrated guide who shares practical Acme tips.', voiceTone: 'warm, concise', values: ['clarity'], topicsAllowed: ['product tips'], topicsForbidden: ['health', 'finance'] }, visualIdentity: { referenceAssetIds: [], styleNotes: 'flat illustration' }, voiceIdentity: { voiceArtifactLicenseId: null, notes: '' }, disclosureCopy: 'Nova is an AI character created by Acme.', likeness: { origin: 'original_synthetic', attestation: 'Original character; not based on any real person.' } } },
+        create: {
+          label: 'Create persona',
+          path: '/v1/personas',
+          example: {
+            name: 'Nova',
+            personaBible: { backstory: 'Nova is an illustrated guide who shares practical Acme tips.', voiceTone: 'warm, concise', values: ['clarity'], topicsAllowed: ['product tips'], topicsForbidden: ['health', 'finance'] },
+            visualIdentity: { referenceAssetIds: [], styleNotes: 'flat illustration' },
+            voiceIdentity: { voiceArtifactLicenseId: null, notes: '' },
+            disclosureCopy: 'Nova is an AI character created by Acme.',
+            likeness: { origin: 'original_synthetic', attestation: 'Original character; not based on any real person.' },
+          },
+        },
         rowActions: [
           { label: 'Approve', path: '/v1/personas/:id/approve', when: { field: 'status', values: ['draft'] } },
           { label: 'Suspend', path: '/v1/personas/:id/suspend', prompt: { field: 'reason', label: 'Reason' }, when: { field: 'status', values: ['approved'] }, danger: true },
@@ -421,14 +484,33 @@ export const SECTIONS: Section[] = [
         title: 'Templates',
         list: '/v1/lifecycle/templates',
         columns: ['name', 'version', 'category', 'status', 'subject'],
-        create: { label: 'New template', path: '/v1/lifecycle/templates', example: { name: 'welcome', category: 'commercial', subject: 'Welcome, {{first_name}}', bodyText: 'Thanks for joining {{company_name}}.', bodyHtml: null, claimIds: [] }, note: 'Footer with postal address and unsubscribe link is added automatically.' },
+        create: {
+          label: 'New template',
+          path: '/v1/lifecycle/templates',
+          example: { name: 'welcome', category: 'commercial', subject: 'Welcome, {{first_name}}', bodyText: 'Thanks for joining {{company_name}}.', bodyHtml: null, claimIds: [] },
+          note: 'Footer with postal address and unsubscribe link is added automatically.',
+        },
         rowActions: [{ label: 'Approve', path: '/v1/lifecycle/templates/:id/approve', when: { field: 'status', values: ['draft'] } }],
       },
       {
         title: 'Journeys',
         list: '/v1/lifecycle/journeys',
         columns: ['name', 'triggerEvent', 'status', 'evidenceFreshnessHours', 'activatedAt'],
-        create: { label: 'New journey', path: '/v1/lifecycle/journeys', example: { name: 'Onboarding', triggerEvent: 'signup', connectionId: '00000000-0000-4000-8000-000000000000', evidenceFreshnessHours: 168, steps: [{ type: 'send_email', templateId: '00000000-0000-4000-8000-000000000000' }, { type: 'wait', hours: 48 }, { type: 'exit_if_event', eventName: 'integration_connected' }] } },
+        create: {
+          label: 'New journey',
+          path: '/v1/lifecycle/journeys',
+          example: {
+            name: 'Onboarding',
+            triggerEvent: 'signup',
+            connectionId: '00000000-0000-4000-8000-000000000000',
+            evidenceFreshnessHours: 168,
+            steps: [
+              { type: 'send_email', templateId: '00000000-0000-4000-8000-000000000000' },
+              { type: 'wait', hours: 48 },
+              { type: 'exit_if_event', eventName: 'integration_connected' },
+            ],
+          },
+        },
         rowActions: [
           { label: 'Activate', path: '/v1/lifecycle/journeys/:id/activate', when: { field: 'status', values: ['draft', 'paused'] } },
           { label: 'Pause', path: '/v1/lifecycle/journeys/:id/pause', prompt: { field: 'reason', label: 'Reason' }, when: { field: 'status', values: ['active'] }, danger: true },
@@ -482,7 +564,14 @@ export const SECTIONS: Section[] = [
         create: { label: 'Add creator', path: '/v1/creators', example: { name: 'Riley', handles: { instagram: '@riley' }, contactEmail: null, contactConsentEvidenceId: null } },
         rowActions: [{ label: 'Propose payout', path: '/v1/creators/:id/payout' }],
       },
-      { title: 'Contract', create: { label: 'Record contract', path: '/v1/creators/contracts', example: { creatorId: '00000000-0000-4000-8000-000000000000', materialRelationship: 'affiliate_commission', commissionFraction: 0.1, currency: 'USD', requiredDisclosures: ['#ad'], startsAt: iso(), signedEvidenceId: '00000000-0000-4000-8000-000000000000' } } },
+      {
+        title: 'Contract',
+        create: {
+          label: 'Record contract',
+          path: '/v1/creators/contracts',
+          example: { creatorId: '00000000-0000-4000-8000-000000000000', materialRelationship: 'affiliate_commission', commissionFraction: 0.1, currency: 'USD', requiredDisclosures: ['#ad'], startsAt: iso(), signedEvidenceId: '00000000-0000-4000-8000-000000000000' },
+        },
+      },
       { title: 'Referral link', create: { label: 'Create link', path: '/v1/creators/links', example: { creatorId: '00000000-0000-4000-8000-000000000000', contractId: '00000000-0000-4000-8000-000000000000', destinationUrl: 'https://shop.example.com/' } } },
       { title: 'Content submission', create: { label: 'Submit', path: '/v1/creators/submissions', example: { creatorId: '00000000-0000-4000-8000-000000000000', contractId: '00000000-0000-4000-8000-000000000000', contentUrl: null, contentText: '#ad How I import my contacts in one step' } } },
       {

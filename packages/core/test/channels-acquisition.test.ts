@@ -1,12 +1,12 @@
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ModelProvider, ProviderOutcome, StructuredRequest } from '@futuregrow/agent-kernel';
 import { PROMPTS } from '@futuregrow/agent-kernel';
 import { clearGoogleTokenCache, publicFetch } from '@futuregrow/connectors';
 import { actionRequests, adBudgetHistory, adCampaigns, adDailyMetrics, alerts, appInstalls, customerEvents, seoPages, socialInteractions, socialPosts, spendLedger, storeListings, withTenant } from '@futuregrow/db';
-import { FixtureServer } from '../../../test/helpers/fixture-server.js';
+import { eq } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import { clearModelCache, createModelGateway } from '../src/agents.js';
 import { createConnection } from '../src/modules/connections.js';
 import { ingestEvents } from '../src/modules/m02-customers/index.js';
@@ -91,9 +91,7 @@ describe('M16 organic social', () => {
     await expect(tx((t) => social.schedulePost(t, h.deps, h.tenantId, h.users.operator, { connectionId: metaConn, platform: 'instagram', caption: 'Hello', scheduledAt: at }))).rejects.toThrow(/need media/);
     await expect(tx((t) => social.schedulePost(t, h.deps, h.tenantId, h.users.analyst, { connectionId: metaConn, platform: 'facebook', caption: 'Hello', scheduledAt: at }))).rejects.toThrow(/requires one of roles/);
     await expect(tx((t) => social.schedulePost(t, h.deps, h.tenantId, h.users.operator, { connectionId: metaConn, platform: 'facebook', caption: 'The best tool ever', scheduledAt: at }))).rejects.toThrow(/lint/);
-    await expect(
-      tx((t) => social.schedulePost(t, h.deps, h.tenantId, h.users.operator, { connectionId: metaConn, platform: 'facebook', caption: 'Partner post', scheduledAt: at, disclosure: { isAiGenerated: false, paidPartnership: true, disclosureText: null } })),
-    ).rejects.toThrow(/disclosure/);
+    await expect(tx((t) => social.schedulePost(t, h.deps, h.tenantId, h.users.operator, { connectionId: metaConn, platform: 'facebook', caption: 'Partner post', scheduledAt: at, disclosure: { isAiGenerated: false, paidPartnership: true, disclosureText: null } }))).rejects.toThrow(/disclosure/);
 
     const first = await tx((t) => social.schedulePost(t, h.deps, h.tenantId, h.users.operator, { connectionId: metaConn, platform: 'facebook', caption: 'Our spring update is live.', scheduledAt: at, geographies: ['US'] }));
     expect(first.status).toBe('scheduled');
@@ -216,7 +214,14 @@ describe('M17 paid media', () => {
 
   it('reconciles reported spend against the authorized envelope', () => {
     const b = new Map([['c1', [{ effectiveFrom: new Date('2026-10-01T00:00:00Z'), dailyBudgetMicros: 10_000_000, currency: 'USD' }]]]);
-    const ok = paid.reconcile([{ campaignRef: 'c1', date: '2026-10-02', currency: 'USD', amountMicros: 9_000_000 }, { campaignRef: 'c1', date: '2026-10-03', currency: 'USD', amountMicros: 10_500_000 }], b, 0.02);
+    const ok = paid.reconcile(
+      [
+        { campaignRef: 'c1', date: '2026-10-02', currency: 'USD', amountMicros: 9_000_000 },
+        { campaignRef: 'c1', date: '2026-10-03', currency: 'USD', amountMicros: 10_500_000 },
+      ],
+      b,
+      0.02,
+    );
     expect(ok.status).toBe('ok');
     const spike = paid.reconcile([{ campaignRef: 'c1', date: '2026-10-02', currency: 'USD', amountMicros: 21_000_000 }], b, 0.02);
     expect(spike.findings.map((f) => f.code)).toEqual(expect.arrayContaining(['DAILY_OVERDELIVERY', 'PERIOD_OVERSPEND']));
@@ -249,8 +254,7 @@ describe('M17 paid media', () => {
 
 describe('M18 SEO, ASO and AI discovery', () => {
   it('audits a site under robots.txt and reports technical issues without ranking promises', async () => {
-    const html = (title: string | null, body: string, extra = '') =>
-      `<!doctype html><html lang="en"><head>${title ? `<title>${title}</title>` : ''}<meta name="description" content="Acme helps teams sync data.">${extra}</head><body>${body}</body></html>`;
+    const html = (title: string | null, body: string, extra = '') => `<!doctype html><html lang="en"><head>${title ? `<title>${title}</title>` : ''}<meta name="description" content="Acme helps teams sync data.">${extra}</head><body>${body}</body></html>`;
     server.on('GET', '/robots.txt', { headers: { 'content-type': 'text/plain' }, text: `User-agent: *\nDisallow: /private\n\nUser-agent: GPTBot\nDisallow: /\n\nSitemap: ${server.baseUrl}/sitemap.xml` });
     server.on('GET', '/sitemap.xml', { headers: { 'content-type': 'application/xml' }, text: `<urlset><url><loc>${server.baseUrl}/pricing</loc></url></urlset>` });
     server.on('GET', '/llms.txt', { status: 404, text: 'nope' });
