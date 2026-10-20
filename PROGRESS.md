@@ -43,3 +43,27 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] M01 evidence admission/quarantine/release/lineage/freshness sweep.
 
 **Test status:** 89/89 passing (contracts, db, policies, connectors, core).
+
+### M2 Platform — ☑
+- [x] Fastify API: Better Auth (email/password, TOTP 2FA, organizations), tenant/role resolution, Idempotency-Key contract, OpenAPI 3.1, health/ready, rate limits, CORS; signed webhook inbox (Meta, Shopify, Resend/Svix, TikTok).
+- [x] Graphile worker: outbox dispatch, execute/verify with reschedule, webhooks, watchdog, sweeps, module crons.
+- [x] Real-process smoke test: API + worker booted against a persistent dev PostgreSQL.
+
+### M4 Data modules — ☑
+- [x] M02 ingestion keys, deterministic identity resolution, PII scrubbing, consent ordering, suppression semantics, DSAR access (via M23)/delete (propagation + exemptions)/opt-out.
+- [x] M03 versioned facts + conflicts, claim registry, brand rules, copy lint, hybrid retrieval.
+
+### M5 Mathematical engines — ☑
+- [x] Python job: forecasting (conformal, backtests, gates), Bayesian MMM (NUTS, dense metric, R-hat/ESS, experiment priors), experiments/bandits, trends/topics, propensity. 24 pytest tests; cross-language integration test.
+- [x] Experiments lifecycle (start via M23), segments with consent/suppression at materialisation.
+
+### M6 Intelligence — ☑
+- [x] Agent kernel (registry-gated gateway, Anthropic SDK adapter, OpenAI-compatible adapter, prompts, safety utils).
+- [x] M05 lawful collection + REA gate, M06 Idea Lab, M07 Growth Brain (decisions -> M23 only).
+
+### M7 Strategy & creation — ☑
+- [x] M12 offers/CRO, M13 briefs, M14 assets + Remotion media job (real render test), M15 personas.
+
+**Test status:** 154/154 TS tests + 24/24 Python tests passing.
+
+### M8 Channels — ◐
