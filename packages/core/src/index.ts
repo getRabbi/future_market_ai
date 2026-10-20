@@ -18,3 +18,7 @@ export * from './agents.js';
 export * as competitorsModule from './modules/m05-competitors/index.js';
 export * as ideas from './modules/m06-ideas/index.js';
 export * as brain from './modules/m07-brain/index.js';
+export * as offersModule from './modules/m12-offers/index.js';
+export * as creative from './modules/m13-creative/index.js';
+export * as assetsModule from './modules/m14-assets/index.js';
+export * as personas from './modules/m15-personas/index.js';

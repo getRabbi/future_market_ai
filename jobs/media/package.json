@@ -2,5 +2,12 @@
   "name": "@futuregrow/media-job",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@remotion/bundler": "^4.0.537",
+    "@remotion/renderer": "^4.0.537",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "remotion": "^4.0.537"
+  }
 }
