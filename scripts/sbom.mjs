@@ -36,6 +36,39 @@ function npmComponents() {
   return JSON.parse(raw);
 }
 
+/**
+ * Our own workspace packages. `npm sbom` names them `@futuregrow/api` on some platforms and by folder
+ * (`api`) on others (Linux CI), so match name or folder together with the version: a bare name alone
+ * would also hide unrelated registry packages such as `events`.
+ */
+function workspaceKeys() {
+  const keys = new Set();
+  const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  keys.add(`${rootPkg.name}@${rootPkg.version}`);
+  for (const pattern of rootPkg.workspaces ?? []) {
+    const dirs = pattern.endsWith('/*')
+      ? fs
+          .readdirSync(path.join(root, pattern.slice(0, -2)), { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => path.join(pattern.slice(0, -2), d.name))
+      : [pattern];
+    for (const dir of dirs) {
+      const file = path.join(root, dir, 'package.json');
+      if (!fs.existsSync(file)) continue;
+      const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+      keys.add(`${pkg.name}@${pkg.version}`);
+      keys.add(`${path.basename(dir)}@${pkg.version}`);
+    }
+  }
+  return keys;
+}
+
+function isWorkspace(c, keys) {
+  if (c.name.startsWith('@futuregrow/')) return true;
+  const isPrivate = (c.properties ?? []).some((p) => p.name === 'cdx:npm:package:private' && p.value === 'true');
+  return keys.has(`${c.name}@${c.version}`) && (isPrivate || !(c.hashes ?? []).length);
+}
+
 function licenseOf(c) {
   const l = (c.licenses ?? []).map((x) => x.license?.id ?? x.license?.name ?? x.expression).filter(Boolean);
   return l.length ? l.join(' OR ') : null;
@@ -87,7 +120,8 @@ function imageComponents() {
 }
 
 const bom = npmComponents();
-const npm = bom.components.filter((c) => !c.name.startsWith('@futuregrow/') && c.name !== 'futuregrow-ai');
+const wsKeys = workspaceKeys();
+const npm = bom.components.filter((c) => !isWorkspace(c, wsKeys));
 const py = pythonComponents();
 const images = imageComponents();
 bom.components = [...npm, ...py, ...images];
