@@ -131,6 +131,31 @@ def train(rows: list[dict], features: list[str], target: str, l2: float = 1.0, g
     }
 
 
+PSI_DRIFT_THRESHOLD = 0.25  # conventional "significant population shift" level
+
+
+def psi(reference: np.ndarray, current: np.ndarray, bins: int = 10, eps: float = 1e-4) -> float:
+    """Population stability index of `current` against `reference` on reference-quantile bins."""
+    if reference.size == 0 or current.size == 0:
+        return float("inf")
+    edges = np.unique(np.quantile(reference, np.linspace(0, 1, bins + 1)))
+    if edges.size < 2:  # constant reference: any change in value is a full shift
+        same = np.isclose(current, edges[0]).mean()
+        return 0.0 if same == 1.0 else float(np.log((1 - same + eps) / eps))
+    inner = edges[1:-1]
+    ref_p = np.bincount(np.searchsorted(inner, reference, side="right"), minlength=edges.size - 1) / reference.size
+    cur_p = np.bincount(np.searchsorted(inner, current, side="right"), minlength=edges.size - 1) / current.size
+    ref_p, cur_p = np.clip(ref_p, eps, None), np.clip(cur_p, eps, None)
+    return float(np.sum((cur_p - ref_p) * np.log(cur_p / ref_p)))
+
+
+def feature_drift(train_rows: list[dict], serve_rows: list[dict], features: list[str], threshold: float = PSI_DRIFT_THRESHOLD) -> dict:
+    """Training-vs-serving feature drift. Scores from a drifted model are not served."""
+    values = {f: psi(np.array([float(r.get(f) or 0.0) for r in train_rows]), np.array([float(r.get(f) or 0.0) for r in serve_rows])) for f in features}
+    drifted = sorted(f for f, v in values.items() if v > threshold)
+    return {"method": "psi", "threshold": threshold, "psi": values, "drifted": drifted, "ok": not drifted}
+
+
 def score(model: dict, rows: list[dict], features: list[str]) -> list[dict]:
     coef = model["coefficients"]
     w = np.array([coef["intercept"]] + [coef[f] for f in features])

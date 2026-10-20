@@ -107,24 +107,24 @@ describe.skipIf(!py)('analytics job (Python) against real PostgreSQL', () => {
       }
     });
 
-    // Customers + events for propensity, conversations for topics.
+    // Customers + events for propensity (stationary behaviour and steady acquisition, so training
+    // and serving feature distributions match — the drift gate must pass), conversations for topics.
     await tx(async (t) => {
-      const created = new Date(Date.now() - 200 * 86_400_000);
+      const day = 86_400_000;
       for (let i = 0; i < 300; i++) {
-        const [p] = await t.insert(customerProfiles).values({ tenantId: h.tenantId, createdAt: created }).returning();
+        const createdDaysAgo = 2 + ((i * 37) % 400);
+        const [p] = await t
+          .insert(customerProfiles)
+          .values({ tenantId: h.tenantId, createdAt: new Date(Date.now() - createdDaysAgo * day) })
+          .returning();
         const active = i % 3 === 0;
-        const evs = Array.from({ length: active ? 12 : 2 }, (_, k) => ({
-          tenantId: h.tenantId,
-          messageId: `pe-${i}-${k}`,
-          profileId: p!.id,
-          eventName: 'page_viewed',
-          occurredAt: new Date(Date.now() - (35 + k * 3) * 86_400_000),
-          source: 'test',
-        }));
-        await t.insert(customerEvents).values(evs);
-        if ((active && i % 2 === 0) || i % 17 === 0) {
-          await t.insert(customerEvents).values({ tenantId: h.tenantId, messageId: `buy-${i}`, profileId: p!.id, eventName: 'purchase', occurredAt: new Date(Date.now() - 5 * 86_400_000), source: 'test' });
-        }
+        const views = Array.from({ length: active ? 40 : 8 }, (_, k) => ((i * 7 + k * 131) % 120) + 0.5).filter((d) => d < createdDaysAgo);
+        const buys = Array.from({ length: active ? 6 : i % 5 === 0 ? 1 : 0 }, (_, k) => ((i * 11 + k * 53) % 120) + 0.25).filter((d) => d < createdDaysAgo);
+        const evs = [
+          ...views.map((d, k) => ({ tenantId: h.tenantId, messageId: `pe-${i}-${k}`, profileId: p!.id, eventName: 'page_viewed', occurredAt: new Date(Date.now() - d * day), source: 'test' })),
+          ...buys.map((d, k) => ({ tenantId: h.tenantId, messageId: `buy-${i}-${k}`, profileId: p!.id, eventName: 'purchase', occurredAt: new Date(Date.now() - d * day), source: 'test' })),
+        ];
+        if (evs.length) await t.insert(customerEvents).values(evs);
       }
       const [conv] = await t.insert(conversations).values({ tenantId: h.tenantId, channel: 'web_chat' }).returning();
       const msgs = [...Array.from({ length: 15 }, (_, i) => `I want a refund for order ${i}, refund my money please`), ...Array.from({ length: 15 }, (_, i) => `cannot login, password reset email never arrives ${i}`)];
@@ -171,6 +171,7 @@ describe.skipIf(!py)('analytics job (Python) against real PostgreSQL', () => {
 
     const [model] = await tx((t) => t.select().from(propensityModels));
     expect(model!.featurePolicy).toMatchObject({ allowed: true });
+    expect((model!.metrics as { drift?: unknown }).drift).toMatchObject({ method: 'psi', ok: true, drifted: [] });
     const scores = await tx((t) => t.select().from(propensityScores).where(eq(propensityScores.modelId, model!.id)));
     expect(scores.length).toBeGreaterThan(100);
     expect(scores.every((s) => s.intervalLow <= s.score && s.score <= s.intervalHigh)).toBe(true);

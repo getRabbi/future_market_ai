@@ -288,3 +288,18 @@ def test_mmm_converges_on_simulated_data():
     assert d["sampler"] == "nuts"
     assert d["maxRhat"] < 1.02
     assert d["minEss"] > 300
+
+
+def test_psi_flags_shifted_features_and_accepts_stable_ones():
+    from futuregrow_analytics.propensity import feature_drift, psi
+
+    rng = np.random.default_rng(7)
+    ref = rng.normal(0, 1, 5000)
+    assert psi(ref, rng.normal(0, 1, 5000)) < 0.05
+    assert psi(ref, rng.normal(1.5, 1, 5000)) > 0.25
+    assert psi(np.zeros(100), np.zeros(80)) == 0.0
+    assert psi(np.zeros(100), np.ones(80)) > 0.25
+    train = [{"a": float(x), "b": float(x)} for x in rng.normal(0, 1, 2000)]
+    serve = [{"a": float(x), "b": float(x) + 2} for x in rng.normal(0, 1, 2000)]
+    d = feature_drift(train, serve, ["a", "b"])
+    assert d["drifted"] == ["b"] and not d["ok"]

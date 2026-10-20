@@ -161,3 +161,9 @@ Each decision lists: context → decision → consequences. `[U]` marks values t
 - **Context:** Disabling Better Auth sign-up entirely made invitations unusable (an invitee could not create the account needed to accept). No platform email provider is configured for the beta (B-008).
 - **Decision:** Sign-up stays enabled at the Better Auth level but a `user.create.before` database hook refuses account creation unless `FG_ALLOW_SIGNUP` is set or a pending, unexpired invitation exists for the address (case-insensitive). Owners/admins create invitations in Account & security; the control plane shows the `/invite?id=…` link to share out of band. Accepting requires the invitation id and the matching email; Better Auth's per-IP sign-up throttling stays on.
 - **Consequence:** A person who knows a pending invitee's address could pre-register that address but cannot join the organization without the invitation id; the inviter cancels and re-invites. Email verification of invitees is added when an email provider is approved.
+
+## D-032 — Propensity scores are withheld on training/serving feature drift
+
+- **Context:** M11 acceptance requires training/serving feature parity and drift checks. Training features are computed at the label cutoff (now − horizon) and serving features now; the shift between those windows is where silent degradation appears.
+- **Decision:** Both use the same feature SQL (parity by construction). Every training run computes a per-feature population stability index (PSI, reference-quantile deciles) between training and serving distributions and stores it in the model metrics. If any feature exceeds 0.25 the model cannot become champion, no scores are written, and an `analytics.propensity_drift` alert is raised.
+- **Consequence:** Segments that reference a propensity model only see scores from runs without drift; operators retrain or adjust features rather than consume shifted scores.

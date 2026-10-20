@@ -282,6 +282,17 @@ def handle_propensity(store: Store, req: dict) -> tuple[str | None, dict]:
     for r in rows:
         r["label"] = r["profile_id"] in positives
     model = propensity.train(rows, FEATURES, "label", gates=p.get("gates"))
+    drift = None
+    current: list[dict] = []
+    if model["status"] in ("champion", "candidate") and "coefficients" in model:
+        # Training features are taken at the cutoff, serving features now: check the shift.
+        with store.tenant(req["tenant_id"]) as cur:
+            cur.execute(FEATURE_SQL, {"cut": now})
+            current = cur.fetchall()
+        drift = propensity.feature_drift(rows, current, FEATURES)
+        model["metrics"]["drift"] = drift
+        if not drift["ok"]:
+            model["status"] = "candidate"  # never champion on drifted features; no scores are served
     with store.tenant(req["tenant_id"]) as cur:
         cur.execute(
             """insert into propensity_models (tenant_id, request_id, target, features, coefficients, standardization, metrics, feature_policy, status, dataset_sha256, code_version)
@@ -294,16 +305,20 @@ def handle_propensity(store: Store, req: dict) -> tuple[str | None, dict]:
         )
         mid = cur.fetchone()["id"]
         scored = 0
-        if model["status"] in ("champion", "candidate") and "coefficients" in model:
-            cur.execute(FEATURE_SQL, {"cut": now})
-            current = cur.fetchall()
+        if drift is not None and drift["ok"]:
             for s in propensity.score(model, current, FEATURES):
                 cur.execute(
                     "insert into propensity_scores (tenant_id, model_id, profile_id, score, interval_low, interval_high, reason_codes) values (%s,%s,%s,%s,%s,%s,%s)",
                     (req["tenant_id"], mid, s["profile_id"], s["score"], s["interval_low"], s["interval_high"], jsonb(s["reason_codes"])),
                 )
                 scored += 1
-    return str(mid), {"status": model["status"], "auc": (model.get("metrics") or {}).get("auc"), "scored": scored}
+    if drift is not None and not drift["ok"]:
+        with store.tenant(req["tenant_id"]) as cur:
+            cur.execute(
+                "insert into alerts (tenant_id, kind, severity, message, refs, dedup_key) values (%s,'analytics.propensity_drift','warning',%s,%s,%s) on conflict do nothing",
+                (req["tenant_id"], f"Propensity model {mid}: feature drift ({', '.join(drift['drifted'])}); scores withheld", jsonb({"modelId": str(mid), "psi": drift["psi"]}), f"propensity-drift:{mid}"),
+            )
+    return str(mid), {"status": model["status"], "auc": (model.get("metrics") or {}).get("auc"), "scored": scored, "drifted": (drift or {}).get("drifted", [])}
 
 
 def handle_anomalies(store: Store, req: dict) -> tuple[str | None, dict]:
