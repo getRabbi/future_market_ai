@@ -7,4 +7,4 @@ compatibility_date = "2026-09-15"
 [vars]
 # Northflank API origin for the same-origin proxy (https only). Leave the proxy unused by setting
 # PUBLIC_API_BASE at build time when app.<domain> and api.<domain> share a registrable domain.
-API_ORIGIN = "https://api.example.com"
+API_ORIGIN = "https://http--api--mjmcf2c5fbyt.code.run"

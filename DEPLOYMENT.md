@@ -35,7 +35,14 @@ Create an R2 API token with *Object Read & Write* limited to these two buckets. 
 1. Templates → **Import** `infra/northflank/template.json`. Fill the arguments: repository URL/branch, region, public URLs (`API_BASE_URL`, `APP_BASE_URL`, `APP_ORIGINS` = the Pages origin), the secrets from step 1, R2 values (`R2_BUCKET=futuregrow-objects`, `R2_BACKUP_BUCKET=futuregrow-backups`), and provider secrets you have (leave others empty). The template was written against Northflank's template format but has not been validated against a live account — review each resource in the editor before running.
 2. Run the template. It creates the project, the PostgreSQL addon, two secret groups (runtime; backups restricted to the analytics job), the services and the jobs, building all images from `infra/docker/*.Dockerfile`.
 3. The `api` service applies migrations on start (`node migrate.mjs`), then serves on port 8080 with readiness `/readyz` and liveness `/healthz`. Keep `instances: 1` while migrations run on start.
-4. **Tenant isolation check (B-004):** open a shell on the api service and run `node probe.mjs`. `canSetTenantRole` must be `true`; in production the runtime refuses to start without it. If the addon user cannot `CREATE ROLE`, ask Northflank support to create `fg_tenant` (NOLOGIN) and grant it to the addon user, then redeploy. `pgvectorAvailable: false` is fine (exact-cosine fallback, D-007).
+4. **Database privileges and tenant isolation (B-004):** the addon's app user (`USERNAME`, used by `POSTGRES_URI`) cannot create schemas or roles, so the first migration fails with `permission denied for database`. The addon's admin user (`POSTGRES_URI_ADMIN`) owns the database and has `CREATEROLE` but is not a superuser. Run once as admin, before the api's first start:
+   ```sql
+   GRANT CREATE ON DATABASE "<DATABASE>" TO "<USERNAME>";
+   GRANT USAGE, CREATE ON SCHEMA public TO "<USERNAME>";
+   CREATE ROLE fg_tenant NOLOGIN NOBYPASSRLS;
+   GRANT fg_tenant TO "<USERNAME>";
+   ```
+   The addon has no external access, so run it inside the project, e.g. one `analytics-job` run with a per-run command and env override (the image has `psycopg`). The app keeps running as the non-admin user. `canSetTenantRole` must then be `true` (`node probe.mjs` on the api); in production the runtime refuses to start without it. `pgvectorAvailable: false` is fine (exact-cosine fallback, D-007).
 5. If the addon's TLS certificate is signed by a private CA, set `DATABASE_SSL_CA` (PEM) for the Node services and `PGSSLROOTCERT` (file path) for the analytics job. Verification is never disabled.
 6. Optional: set `NORTHFLANK_API_TOKEN`, `NORTHFLANK_PROJECT_ID`, `NORTHFLANK_ANALYTICS_JOB_ID`, `NORTHFLANK_MEDIA_JOB_ID` on the worker so queued work triggers the jobs immediately instead of waiting for the next cron run.
 
