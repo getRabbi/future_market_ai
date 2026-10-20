@@ -4,7 +4,37 @@ Date: 2026-10-20 · Commit: see `git log -1` · Environment: Windows 11, Node 24
 
 ## 1. Results
 
-RESULTS_TABLE
+Final verification on commit `9e7b651` (all commands run in sequence, logs kept by the operator):
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck (strict TS, all packages, apps, jobs, tests) | `npm run typecheck` | **pass** |
+| Lint (Biome; errors fail) | `npm run lint` | **pass** — 0 errors, 66 warnings |
+| Generated docs current | `npm run docs -- --check` | **pass** |
+| TypeScript tests (real PostgreSQL 17, fixture servers, real renders) | `npx vitest run` | **220 / 220 passed**, 25 files, 0 skipped, 196 s |
+| Python engine + backup tests | `npm run test:py` | **30 / 30 passed**, 378 s |
+| Production bundles | `node scripts/build.mjs all` | **pass** — api (main, migrate, probe, reencrypt-credentials), worker, media |
+| Web control plane | `npm run build -w @futuregrow/web` | **pass** — 28 pages, `_headers` with 2 script + 1 style hashes |
+| SBOM + licence policy | `npm run sbom` | **pass** — 439 npm + 4 Python + 2 image components; 0 violations; 6 weak-copyleft components listed for legal review; 21 Remotion components under the B-014 exception |
+
+Tests per file (TypeScript):
+
+| File | Tests | File | Tests |
+|---|---|---|---|
+| packages/contracts | 13 | packages/core/test/execution | 12 |
+| packages/db | 12 | packages/core/test/data-modules | 13 |
+| packages/policies | 16 | packages/core/test/intelligence | 13 |
+| packages/connectors (core + providers) | 36 | packages/core/test/analytics-job (spawns Python) | 3 |
+| packages/agent-kernel | 12 | packages/core/test/audiences | 3 |
+| packages/experiments | 3 | packages/core/test/creation | 7 |
+| apps/api (api, invitations, public channels) | 14 | packages/core/test/channels-acquisition | 15 |
+| apps/web (catalog contract, proxy) | 6 | packages/core/test/channels-retention | 15 |
+| jobs/media (real Remotion render) | 2 | packages/core/test/backup-job (spawns Python) | 6 |
+| test/redteam | 16 | packages/core/test/retention, secrets-rotation | 3 |
+
+Python: `tests/test_engines.py` 25 (forecasting, MMM/NUTS diagnostics, experiments/bandits, trends, topics, propensity incl. PSI drift), `tests/test_backup.py` 5 (SigV4 vectors, member encryption, store, scheduling).
+
+Additional manual verification: the bundled api booted against PostgreSQL (`/healthz`, `/readyz`, OpenAPI 3.1 with 176 paths, 401 on `/v1/me`), the bundled worker registered all 19 tasks, bundled `migrate.mjs`/`probe.mjs` ran (RLS role available, pgvector absent), and two real renders passed using the prebuilt Remotion bundle shipped in the media image.
 
 ## 2. How the system is tested
 

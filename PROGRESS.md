@@ -78,4 +78,24 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 
 **Test status:** 188/188 TS tests + 24/24 Python tests passing.
 
-### M9 Web control plane — ◐
+### M9 Web control plane — ☑
+- [x] Astro 7 + React islands, static build for Cloudflare Pages; hashed-CSP `_headers` generated after build.
+- [x] Bespoke screens: overview, hash-bound approvals (policy reasons, approval groups, proofs, state history, cancel), governance (kill switches, versioned autonomy policy, sender identity, alerts, incidents, model/artifact/capability registries, cost), audit-chain verification, account security (TOTP enrolment, organizations, members and invitations), asset upload with rights declarations, invitation acceptance page.
+- [x] Catalog-driven sections for all 24 modules (lists, JSON create forms validated server-side, row actions, detail drawers); a contract test proves every UI call maps to a registered API route and method.
+- [x] Pages Functions proxy for `/v1` and `/api/auth` (D-013) with client-IP hygiene and cookie re-scoping.
+- ⛔ Browser click-through automation not available here (B-017).
+
+### M10 Hardening & deploy — ☑ (deployment execution ⛔ B-001/B-002/B-016/B-018)
+- [x] FG-P1-005 red-team suite (16 scenarios, models scripted to comply with attacks); retrieved-excerpt injection screening; broader secret detection.
+- [x] Encrypted logical backups to R2 with verification and restore drills, run by the analytics cron job (D-030); credential key re-encryption CLI.
+- [x] Retention policies enforced daily (FG-P0-006); PSI drift gate for propensity scores (D-032); invite-only onboarding that works without email (D-031).
+- [x] Production bundles (`scripts/build.mjs`) booted against PostgreSQL; Dockerfiles for api/worker, media job (prebuilt Remotion bundle, browser baked in) and analytics job, base images pinned by digest.
+- [x] CI workflow (typecheck, lint, generated-docs drift, real-PG tests, pytest, render, builds, SBOM, image builds; actions pinned by SHA); CycloneDX SBOM with licence policy.
+- [x] Northflank template, Pages `wrangler.toml`, R2 CORS; `.env.example`; docs: ARCHITECTURE, RUNBOOK, DEPLOYMENT, generated MODULES / EVENT_TAXONOMY / CONNECTOR_CAPABILITIES / POLICY_MATRIX; TEST_REPORT.
+- Partial (P2): provider failover and API-deprecation monitoring are not automated; cost is recorded per tenant (cost ledger, summary) but no tenant model-spend cap is enforced yet.
+
+**Test status (final, commit 9e7b651):** 220/220 TS tests (25 files, real PostgreSQL, real renders) + 30/30 Python tests; typecheck, lint, docs drift, bundles, web build and SBOM policy all pass. See TEST_REPORT.md.
+
+## Completion summary
+
+All 24 modules are implemented and tested against real PostgreSQL with provider APIs exercised through fixture servers. Every P0 gate (FG-P0-001…008) and P1 item (FG-P1-001…006) is implemented and verified. What remains is external: live credentials and app reviews, account setup on Northflank/Cloudflare, legal rule packs, vendor reviews and the payout provider — each listed with its unblock step in BLOCKERS.md (B-001…B-018). Deployment steps: DEPLOYMENT.md; operations: docs/RUNBOOK.md.
