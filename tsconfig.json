@@ -13,6 +13,10 @@
     "apps/worker/test/**/*.ts",
     "jobs/media/src/**/*.ts",
     "jobs/media/src/**/*.tsx",
+    "apps/web/src/**/*.ts",
+    "apps/web/src/**/*.tsx",
+    "apps/web/functions/**/*.ts",
+    "apps/web/test/**/*.ts",
     "test/**/*.ts",
     "scripts/**/*.ts"
   ]

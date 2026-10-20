@@ -1,0 +1,8 @@
+---
+import { Login } from '../components/Login.tsx';
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Sign in — FUTUREGROW" noindex>
+  <Login client:only="react" />
+</Base>

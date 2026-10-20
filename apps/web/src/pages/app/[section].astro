@@ -1,0 +1,16 @@
+---
+import { ControlPlane } from '../../components/ControlPlane.tsx';
+import Base from '../../layouts/Base.astro';
+import { SECTIONS } from '../../lib/catalog.ts';
+
+export function getStaticPaths() {
+  return SECTIONS.filter((s) => s.slug !== 'overview').map((s) => ({ params: { section: s.slug }, props: { title: s.title } }));
+}
+
+const { section } = Astro.params;
+const { title } = Astro.props as { title: string };
+---
+
+<Base title={`${title} — FUTUREGROW`} noindex>
+  <ControlPlane client:only="react" section={section} />
+</Base>
