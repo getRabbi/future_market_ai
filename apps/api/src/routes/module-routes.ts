@@ -55,6 +55,9 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
   r.post('/v1/customers/dsar/:id/execute-deletion', { schema: { tags: ['customers'], params: Id } }, async (req) => customers.executeDsarDeletion(deps, tenantOf(req), actorOf(req), req.params.id));
   r.post('/v1/customers/dsar/:id/execute-opt-out', { schema: { tags: ['customers'], params: Id } }, async (req) => customers.executeDsarOptOut(deps, tenantOf(req), actorOf(req), req.params.id));
 
+  r.get('/v1/customers/retention', { schema: { tags: ['customers'] } }, async (req) => tenantTx(ctx, req, (tx) => customers.listRetentionPolicies(tx)));
+  r.put('/v1/customers/retention', { schema: { tags: ['customers'], body: Body } }, async (req) => tenantTx(ctx, req, (tx) => customers.setRetentionPolicy(tx, tenantOf(req), actorOf(req), req.body)));
+
   /* ---------------- M03 Knowledge ---------------- */
   r.get('/v1/knowledge/facts', { schema: { tags: ['knowledge'], querystring: z.object({ kinds: z.string().optional() }) } }, async (req) => tenantTx(ctx, req, (tx) => knowledge.activeFacts(tx, req.query.kinds?.split(','))));
   r.post('/v1/knowledge/facts', { schema: { tags: ['knowledge'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => knowledge.upsertEntity(tx, deps, tenantOf(req), actorOf(req), req.body))));

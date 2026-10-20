@@ -1,4 +1,4 @@
-import { brain, competitorsModule, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
+import { brain, competitorsModule, customers, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
 import { competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
 import { loadEnv, triggerNorthflankJob } from '@futuregrow/runtime';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
@@ -19,6 +19,14 @@ registerTasks((deps) => ({
         const r = await competitorsModule.crawlSource(deps, tenantId, s.id);
         if (r.status === 'captured' && r.snapshotId && deps.models) await competitorsModule.extractObservationsWithModel(deps, tenantId, r.snapshotId);
       }
+    });
+  },
+
+  /** M02 retention: tenant-configured durations only; nothing is deleted without a policy. */
+  retention_sweep: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      const r = await customers.applyRetention(deps, tenantId);
+      if (Object.keys(r).length) deps.logger.info({ tenantId, retention: r }, 'retention applied');
     });
   },
 
@@ -68,4 +76,4 @@ registerEventHandlers((bus, deps) => {
   });
 });
 
-export const MODULE_CRONTAB = ['13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '27 6 * * * brain_cycle'];
+export const MODULE_CRONTAB = ['13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];

@@ -574,3 +574,4 @@ export async function profileFeatures(tx: Tx, since: Date) {
     group by p.id`);
   return res.rows;
 }
+export * from './retention.js';

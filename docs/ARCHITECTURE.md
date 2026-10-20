@@ -126,6 +126,7 @@ Identity resolution uses keyed hashes (pepper) and explainable merge rules. Cons
 | `23 3 * * *` | webhook retention |
 | `13 * * * *` | competitor crawl (approved sources) |
 | `41 2 * * *` | claims expiry sweep |
+| `53 3 * * *` | data retention (tenant policies only) |
 | `27 6 * * *` | Growth Brain cycle (proposals only) |
 | `* * * * *` | social scheduler; journey enrolment and steps |
 | `37 */6 * * *` | ads campaign + spend sync |

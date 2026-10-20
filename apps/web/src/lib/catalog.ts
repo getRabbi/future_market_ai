@@ -116,6 +116,12 @@ export const SECTIONS: Section[] = [
         ],
       },
       {
+        title: 'Retention policies',
+        list: '/v1/customers/retention',
+        columns: ['dataClass', 'retainDays', 'legalHold', 'updatedBy', 'updatedAt'],
+        create: { label: 'Set retention', method: 'PUT', path: '/v1/customers/retention', example: { dataClass: 'customer_events', retainDays: 730, legalHold: false }, note: 'Durations are your decision; nothing is deleted until a policy exists. Applied daily at 03:53 UTC.' },
+      },
+      {
         title: 'Ingestion keys',
         list: '/v1/customers/ingestion-keys',
         columns: ['kind', 'keyPrefix', 'allowedOrigins', 'status', 'createdAt'],
