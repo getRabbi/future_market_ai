@@ -27,7 +27,8 @@
     "dev:worker": "tsx watch apps/worker/src/main.ts",
     "dev:web": "npm run dev -w @futuregrow/web",
     "build": "node scripts/build.mjs",
-    "sbom": "node scripts/sbom.mjs"
+    "sbom": "node scripts/sbom.mjs",
+    "docs": "tsx scripts/gen-docs.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

@@ -36,7 +36,7 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
     connectionString: env.DATABASE_URL,
     max: env.DATABASE_POOL_MAX,
     applicationName: `futuregrow-${service}`,
-    ssl: env.DATABASE_SSL ? { rejectUnauthorized: true } : undefined,
+    ssl: env.DATABASE_SSL ? { rejectUnauthorized: true, ...(env.DATABASE_SSL_CA ? { ca: env.DATABASE_SSL_CA } : {}) } : undefined,
     onPoolError: (err) => logger.error({ err }, 'database pool error'),
   });
   const caps = await probeDatabase(handle.db);

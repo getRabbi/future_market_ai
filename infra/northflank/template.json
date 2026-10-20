@@ -1,0 +1,185 @@
+{
+  "apiVersion": "v1.2",
+  "name": "futuregrow-ai",
+  "description": "FUTUREGROW AI controlled beta on the Northflank Developer Sandbox: 2 services (api, worker), 2 cron jobs (analytics incl. backups, media), 1 PostgreSQL addon. Not validated against a live Northflank account (BLOCKERS B-001); review before first run.",
+  "options": { "autorun": false, "concurrencyPolicy": "queue" },
+  "arguments": {
+    "GIT_REPO_URL": "https://github.com/your-org/futuregrow-ai",
+    "GIT_BRANCH": "main",
+    "REGION": "europe-west",
+    "API_BASE_URL": "https://api.example.com",
+    "APP_BASE_URL": "https://app.example.com",
+    "APP_ORIGINS": "https://app.example.com",
+    "BETTER_AUTH_SECRET": "",
+    "FG_SECRETS_KEY": "",
+    "FG_IDENTIFIER_PEPPER": "",
+    "FG_BACKUP_KEY": "",
+    "R2_ENDPOINT": "",
+    "R2_BUCKET": "",
+    "R2_BACKUP_BUCKET": "",
+    "R2_ACCESS_KEY_ID": "",
+    "R2_SECRET_ACCESS_KEY": "",
+    "ANTHROPIC_API_KEY": "",
+    "META_APP_SECRET": "",
+    "META_WEBHOOK_VERIFY_TOKEN": "",
+    "SHOPIFY_WEBHOOK_SECRET": "",
+    "RESEND_WEBHOOK_SECRET": "",
+    "TIKTOK_CLIENT_SECRET": ""
+  },
+  "spec": {
+    "kind": "Workflow",
+    "spec": {
+      "type": "sequential",
+      "steps": [
+        {
+          "kind": "Project",
+          "ref": "project",
+          "spec": { "name": "futuregrow", "region": "${args.REGION}", "description": "FUTUREGROW AI controlled beta" }
+        },
+        {
+          "kind": "Workflow",
+          "spec": {
+            "type": "sequential",
+            "context": { "projectId": "${refs.project.id}" },
+            "steps": [
+              {
+                "kind": "Addon",
+                "ref": "postgres",
+                "spec": {
+                  "name": "postgres",
+                  "type": "postgresql",
+                  "version": "17",
+                  "billing": { "deploymentPlan": "nf-compute-20", "storageClass": "ssd", "storage": 4096, "replicas": 1 },
+                  "tlsEnabled": true,
+                  "externalAccessEnabled": false
+                }
+              },
+              {
+                "kind": "SecretGroup",
+                "ref": "runtime",
+                "spec": {
+                  "name": "futuregrow-runtime",
+                  "secretType": "environment",
+                  "priority": 10,
+                  "secrets": {
+                    "variables": {
+                      "NODE_ENV": "production",
+                      "LOG_LEVEL": "info",
+                      "DATABASE_SSL": "true",
+                      "DATABASE_POOL_MAX": "5",
+                      "API_BASE_URL": "${args.API_BASE_URL}",
+                      "APP_BASE_URL": "${args.APP_BASE_URL}",
+                      "APP_ORIGINS": "${args.APP_ORIGINS}",
+                      "BETTER_AUTH_SECRET": "${args.BETTER_AUTH_SECRET}",
+                      "FG_SECRETS_KEY": "${args.FG_SECRETS_KEY}",
+                      "FG_SECRETS_KEY_VERSION": "1",
+                      "FG_IDENTIFIER_PEPPER": "${args.FG_IDENTIFIER_PEPPER}",
+                      "FG_ALLOW_SIGNUP": "false",
+                      "R2_ENDPOINT": "${args.R2_ENDPOINT}",
+                      "R2_BUCKET": "${args.R2_BUCKET}",
+                      "R2_ACCESS_KEY_ID": "${args.R2_ACCESS_KEY_ID}",
+                      "R2_SECRET_ACCESS_KEY": "${args.R2_SECRET_ACCESS_KEY}",
+                      "ANTHROPIC_API_KEY": "${args.ANTHROPIC_API_KEY}",
+                      "META_APP_SECRET": "${args.META_APP_SECRET}",
+                      "META_WEBHOOK_VERIFY_TOKEN": "${args.META_WEBHOOK_VERIFY_TOKEN}",
+                      "SHOPIFY_WEBHOOK_SECRET": "${args.SHOPIFY_WEBHOOK_SECRET}",
+                      "RESEND_WEBHOOK_SECRET": "${args.RESEND_WEBHOOK_SECRET}",
+                      "TIKTOK_CLIENT_SECRET": "${args.TIKTOK_CLIENT_SECRET}"
+                    }
+                  },
+                  "addonDependencies": [{ "addonId": "${refs.postgres.id}", "keys": [{ "keyName": "POSTGRES_URI", "aliases": ["DATABASE_URL"] }] }]
+                }
+              },
+              {
+                "kind": "SecretGroup",
+                "ref": "backups",
+                "spec": {
+                  "name": "futuregrow-backups",
+                  "secretType": "environment",
+                  "priority": 20,
+                  "restrictions": { "restricted": true, "nfObjects": [{ "id": "analytics-job", "type": "job" }] },
+                  "secrets": {
+                    "variables": {
+                      "FG_BACKUP_KEY": "${args.FG_BACKUP_KEY}",
+                      "R2_BACKUP_BUCKET": "${args.R2_BACKUP_BUCKET}",
+                      "FG_BACKUP_INTERVAL_HOURS": "24"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "CombinedService",
+                "ref": "api",
+                "spec": {
+                  "name": "api",
+                  "description": "Fastify API (Better Auth, /v1, public channel endpoints, webhooks). Applies migrations on start (single instance).",
+                  "billing": { "deploymentPlan": "nf-compute-20" },
+                  "vcsData": { "projectUrl": "${args.GIT_REPO_URL}", "projectType": "github", "projectBranch": "${args.GIT_BRANCH}" },
+                  "buildSettings": { "dockerfile": { "buildEngine": "kaniko", "dockerFilePath": "/infra/docker/node-service.Dockerfile", "dockerWorkDir": "/" } },
+                  "buildArguments": { "SERVICE": "api" },
+                  "deployment": {
+                    "instances": 1,
+                    "docker": { "configType": "customCommand", "customCommand": "sh -c 'node migrate.mjs && exec node --enable-source-maps main.mjs'" }
+                  },
+                  "ports": [{ "name": "http", "internalPort": 8080, "public": true, "protocol": "HTTP" }],
+                  "healthChecks": [
+                    { "protocol": "HTTP", "type": "readinessProbe", "path": "/readyz", "port": 8080, "initialDelaySeconds": 15, "periodSeconds": 10, "timeoutSeconds": 3, "failureThreshold": 3, "successThreshold": 1 },
+                    { "protocol": "HTTP", "type": "livenessProbe", "path": "/healthz", "port": 8080, "initialDelaySeconds": 30, "periodSeconds": 20, "timeoutSeconds": 3, "failureThreshold": 3, "successThreshold": 1 }
+                  ]
+                }
+              },
+              {
+                "kind": "CombinedService",
+                "ref": "worker",
+                "spec": {
+                  "name": "worker",
+                  "description": "Graphile Worker: outbox dispatch, execute/verify, webhooks, schedules (social, journeys, ads, SEO, store reports).",
+                  "billing": { "deploymentPlan": "nf-compute-20" },
+                  "vcsData": { "projectUrl": "${args.GIT_REPO_URL}", "projectType": "github", "projectBranch": "${args.GIT_BRANCH}" },
+                  "buildSettings": { "dockerfile": { "buildEngine": "kaniko", "dockerFilePath": "/infra/docker/node-service.Dockerfile", "dockerWorkDir": "/" } },
+                  "buildArguments": { "SERVICE": "worker" },
+                  "deployment": { "instances": 1, "docker": { "configType": "default" } },
+                  "runtimeEnvironment": { "WORKER_CONCURRENCY": "2" }
+                }
+              },
+              {
+                "kind": "CronJob",
+                "ref": "analytics",
+                "spec": {
+                  "name": "analytics-job",
+                  "description": "Forecasts, MMM, experiments, trends, topics, propensity; daily encrypted backup + verification (D-030).",
+                  "schedule": "*/15 * * * *",
+                  "concurrencyPolicy": "forbid",
+                  "backoffLimit": 0,
+                  "activeDeadlineSeconds": 1500,
+                  "billing": { "deploymentPlan": "nf-compute-20" },
+                  "vcsData": { "projectUrl": "${args.GIT_REPO_URL}", "projectType": "github", "projectBranch": "${args.GIT_BRANCH}" },
+                  "buildSettings": { "dockerfile": { "buildEngine": "kaniko", "dockerFilePath": "/infra/docker/analytics-job.Dockerfile", "dockerWorkDir": "/" } },
+                  "deployment": { "docker": { "configType": "default" } },
+                  "runtimeEnvironment": { "ANALYTICS_MAX_SECONDS": "1200" }
+                }
+              },
+              {
+                "kind": "CronJob",
+                "ref": "media",
+                "spec": {
+                  "name": "media-job",
+                  "description": "Remotion renders (licence-gated, B-014) with technical QA and rights manifests.",
+                  "schedule": "*/10 * * * *",
+                  "concurrencyPolicy": "forbid",
+                  "backoffLimit": 0,
+                  "activeDeadlineSeconds": 1500,
+                  "billing": { "deploymentPlan": "nf-compute-20" },
+                  "vcsData": { "projectUrl": "${args.GIT_REPO_URL}", "projectType": "github", "projectBranch": "${args.GIT_BRANCH}" },
+                  "buildSettings": { "dockerfile": { "buildEngine": "kaniko", "dockerFilePath": "/infra/docker/media-job.Dockerfile", "dockerWorkDir": "/" } },
+                  "deployment": { "docker": { "configType": "default" } },
+                  "runtimeEnvironment": { "MEDIA_MAX_SECONDS": "1200", "RENDER_CONCURRENCY": "1" }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

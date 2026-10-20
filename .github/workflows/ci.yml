@@ -40,6 +40,8 @@ jobs:
           jobs/analytics/.venv/bin/pip install --only-binary=:all: -r jobs/analytics/requirements-dev.txt
       - run: npm run typecheck
       - run: npm run lint
+      - name: Generated reference docs are current
+        run: npm run docs -- --check
       - name: TypeScript tests (real PostgreSQL)
         env:
           FG_SKIP_RENDER: '1'

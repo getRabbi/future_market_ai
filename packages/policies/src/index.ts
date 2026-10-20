@@ -109,7 +109,7 @@ interface Finding {
 /* configured its matrix. They never grant autonomy (D-012).          */
 /* ------------------------------------------------------------------ */
 
-const DEFAULT_APPROVERS: Record<RiskCategory, TenantRole[]> = {
+export const DEFAULT_APPROVERS: Record<RiskCategory, TenantRole[]> = {
   SPEND: ['finance_approver', 'owner'],
   PRICING: ['finance_approver', 'owner'],
   PAYOUT: ['finance_approver', 'owner'],

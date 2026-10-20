@@ -11,6 +11,8 @@ export const EnvSchema = z
     DATABASE_URL: z.string().min(1),
     DATABASE_POOL_MAX: z.coerce.number().int().positive().default(5),
     DATABASE_SSL: bool.default(false),
+    /** PEM CA bundle for managed PostgreSQL with a private CA. Certificate verification is never disabled. */
+    DATABASE_SSL_CA: z.string().optional(),
     /** Public URL of this API (Better Auth baseURL, unsubscribe and referral links). */
     API_BASE_URL: z.string().url().default('http://localhost:8080'),
     /** Public URL of the web control plane. */

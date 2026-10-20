@@ -1,10 +1,12 @@
-import { betterAuthSchema, type Db } from '@futuregrow/db';
+import { betterAuthSchema, type Db, invitation } from '@futuregrow/db';
 import { type Env, origins } from '@futuregrow/runtime';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { APIError } from 'better-auth/api';
 import { haveIBeenPwned, organization, twoFactor } from 'better-auth/plugins';
 import { createAccessControl } from 'better-auth/plugins/access';
 import { defaultStatements } from 'better-auth/plugins/organization/access';
+import { and, eq, gt, sql } from 'drizzle-orm';
 
 /**
  * Better Auth: email/password + TOTP two-factor + organizations (= tenants, D-008).
@@ -48,10 +50,25 @@ export function createAuth(db: Db, env: Env) {
     database: drizzleAdapter(db, { provider: 'pg', schema: betterAuthSchema }),
     emailAndPassword: {
       enabled: true,
-      // Controlled beta: invite-only unless explicitly opened.
-      disableSignUp: !env.FG_ALLOW_SIGNUP,
+      // Controlled beta: accounts are created only for invited addresses (see databaseHooks)
+      // unless sign-up is explicitly opened with FG_ALLOW_SIGNUP.
       minPasswordLength: 12,
       maxPasswordLength: 256,
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          before: async (user) => {
+            if (env.FG_ALLOW_SIGNUP) return;
+            const pending = await db
+              .select({ id: invitation.id })
+              .from(invitation)
+              .where(and(sql`lower(${invitation.email}) = lower(${user.email})`, eq(invitation.status, 'pending'), gt(invitation.expiresAt, new Date())))
+              .limit(1);
+            if (pending.length === 0) throw new APIError('FORBIDDEN', { message: 'Sign-up is by invitation only' });
+          },
+        },
+      },
     },
     session: {
       expiresIn: 60 * 60 * 24 * 7,

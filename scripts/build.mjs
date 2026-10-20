@@ -21,7 +21,7 @@ const require = createRequire(path.join(root, 'package.json'));
 
 const COMMON_EXTERNAL = ['graphile-worker', 'pg-native'];
 const SERVICES = {
-  api: { entries: { main: 'apps/api/src/main.ts', migrate: 'packages/db/src/cli/migrate.ts', probe: 'packages/db/src/cli/probe.ts' }, external: COMMON_EXTERNAL, migrations: true },
+  api: { entries: { main: 'apps/api/src/main.ts', migrate: 'packages/db/src/cli/migrate.ts', probe: 'packages/db/src/cli/probe.ts', 'reencrypt-credentials': 'packages/runtime/src/cli/reencrypt-credentials.ts' }, external: COMMON_EXTERNAL, migrations: true },
   worker: { entries: { main: 'apps/worker/src/main.ts' }, external: COMMON_EXTERNAL, migrations: false },
   media: { entries: { main: 'jobs/media/src/main.ts' }, external: [...COMMON_EXTERNAL, 'remotion', '@remotion/renderer', '@remotion/bundler', 'react', 'react-dom'], migrations: false },
 };

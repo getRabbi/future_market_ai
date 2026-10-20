@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": ["https://app.example.com"],
+        "methods": ["GET", "HEAD"],
+        "headers": ["range"]
+      },
+      "exposeHeaders": ["ETag", "Content-Length", "Content-Range"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}

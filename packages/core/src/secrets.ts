@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type { ProviderCredentials } from '@futuregrow/connectors';
-import { connectionSecrets, type Tx } from '@futuregrow/db';
+import { connectionSecrets, type Db, type Tx, withSystem } from '@futuregrow/db';
 import { FgError } from '@futuregrow/observability';
-import { eq } from 'drizzle-orm';
+import { eq, ne, sql } from 'drizzle-orm';
 import type { CoreConfig, SecretKey } from './deps.js';
 
 /**
@@ -75,4 +75,28 @@ export async function loadCredentials(tx: Tx, config: CoreConfig, tenantId: stri
   const [row] = await tx.select().from(connectionSecrets).where(eq(connectionSecrets.connectionId, connectionId));
   if (!row) return null;
   return { creds: decryptCredentials(config, tenantId, connectionId, row), expiresAt: row.expiresAt };
+}
+
+/**
+ * Key rotation: re-encrypt every connection secret still on an older key version with the current
+ * key (both keys loaded via FG_SECRETS_KEY / FG_SECRETS_KEY_PREVIOUS). Runs on the owner path
+ * across tenants; each row keeps its tenant/connection AAD. Idempotent.
+ */
+export async function reencryptCredentials(db: Db, config: CoreConfig): Promise<{ reencrypted: number; remainingOnOldKeys: number }> {
+  return withSystem(db, 'system:key-rotation', async (tx) => {
+    const rows = await tx.select().from(connectionSecrets).where(ne(connectionSecrets.keyVersion, config.currentSecretVersion)).for('update');
+    let reencrypted = 0;
+    for (const row of rows) {
+      if (!config.secretKeys.some((k) => k.version === row.keyVersion)) continue;
+      const creds = decryptCredentials(config, row.tenantId, row.connectionId, row);
+      const enc = encryptCredentials(config, row.tenantId, row.connectionId, creds);
+      await tx
+        .update(connectionSecrets)
+        .set({ ...enc, rotatedAt: new Date() })
+        .where(eq(connectionSecrets.connectionId, row.connectionId));
+      reencrypted++;
+    }
+    const [left] = await tx.select({ n: sql<number>`count(*)::int` }).from(connectionSecrets).where(ne(connectionSecrets.keyVersion, config.currentSecretVersion));
+    return { reencrypted, remainingOnOldKeys: left?.n ?? 0 };
+  });
 }
