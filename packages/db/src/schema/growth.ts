@@ -289,6 +289,25 @@ export const adDailyMetrics = pgTable('ad_daily_metrics', {
   fetchedAt: ts('fetched_at').notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.campaignId, t.date] })]);
 
+/**
+ * Daily budget in effect over time. Rows come from campaign sync (observed at the provider) or
+ * from a VERIFIED budget action. Spend reconciliation uses this as the authorized envelope.
+ */
+export const adBudgetHistory = pgTable('ad_budget_history', {
+  id: pk(),
+  tenantId: tenantId(),
+  campaignId: uuid('campaign_id').notNull().references(() => adCampaigns.id),
+  effectiveFrom: ts('effective_from').notNull(),
+  dailyBudgetMicros: micros('daily_budget_micros').notNull(),
+  currency: text('currency').notNull(),
+  source: text('source').notNull(),
+  actionId: uuid('action_id'),
+  createdAt: createdAt(),
+}, (t) => [
+  index('ad_budget_history_campaign_idx').on(t.campaignId, t.effectiveFrom),
+  oneOf('ad_budget_history_source_chk', t.source, ['sync', 'verified_action', 'external_change']),
+]);
+
 /* ------------------------------------------------------------------ */
 /* M18 SEO / ASO                                                      */
 /* ------------------------------------------------------------------ */
@@ -432,13 +451,21 @@ export const journeys = pgTable('journeys', {
   tenantId: tenantId(),
   name: text('name').notNull(),
   triggerEvent: text('trigger_event').notNull(),
+  /** Email connection used for every send in the journey. */
+  connectionId: uuid('connection_id').notNull(),
   steps: json<unknown[]>('steps').notNull(),
+  /** Freshness SLA of the per-enrollment trigger evidence (D-023); declared and approved with the journey. */
+  evidenceFreshnessHours: integer('evidence_freshness_hours').notNull().default(168),
   status: text('status').notNull().default('draft'),
   version: integer('version').notNull().default(1),
   approvedBy: text('approved_by'),
+  activatedAt: ts('activated_at'),
   createdBy: text('created_by').notNull(),
   createdAt: createdAt(),
-}, (t) => [oneOf('journeys_status_chk', t.status, ['draft', 'active', 'paused', 'archived'])]);
+}, (t) => [
+  oneOf('journeys_status_chk', t.status, ['draft', 'active', 'paused', 'archived']),
+  rawCheck('journeys_freshness_chk', sql`${t.evidenceFreshnessHours} between 1 and 720`),
+]);
 
 export const journeyEnrollments = pgTable('journey_enrollments', {
   id: pk(),
@@ -449,11 +476,13 @@ export const journeyEnrollments = pgTable('journey_enrollments', {
   state: text('state').notNull().default('active'),
   nextRunAt: ts('next_run_at').notNull(),
   triggerEventId: uuid('trigger_event_id'),
+  evidenceId: uuid('evidence_id'),
   exitReason: text('exit_reason'),
   enrolledAt: ts('enrolled_at').notNull().defaultNow(),
   updatedAt: updatedAt(),
 }, (t) => [
   uniqueIndex('journey_enrollments_active_uq').on(t.journeyId, t.profileId).where(sql`${t.state} = 'active'`),
+  uniqueIndex('journey_enrollments_trigger_uq').on(t.journeyId, t.triggerEventId),
   index('journey_enrollments_due_idx').on(t.state, t.nextRunAt),
   oneOf('journey_enrollments_state_chk', t.state, ['active', 'completed', 'exited']),
 ]);

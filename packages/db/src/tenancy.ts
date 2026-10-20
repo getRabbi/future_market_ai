@@ -78,3 +78,13 @@ export async function savepoint<T>(tx: Tx, fn: (sp: Tx) => Promise<T>): Promise<
     throw normalizeDbError(err);
   }
 }
+
+/**
+ * `Promise.all` for queries on one transaction client: a pg client runs one query at a time, so
+ * queries are awaited in order (Drizzle builders are lazy until awaited).
+ */
+export async function sequential<T extends readonly unknown[] | []>(queries: T): Promise<{ -readonly [P in keyof T]: Awaited<T[P]> }> {
+  const out: unknown[] = [];
+  for (const q of queries) out.push(await q);
+  return out as { -readonly [P in keyof T]: Awaited<T[P]> };
+}

@@ -392,14 +392,18 @@ export interface RetrievedChunk {
  * rankings are fused with reciprocal-rank fusion. Only documents backed by admitted evidence and
  * visible to the caller's roles are returned.
  */
-export async function searchKnowledge(tx: DbOrTx, args: { query: string; limit?: number; roles: string[]; audience: 'internal' | 'public'; embedder?: Embedder }): Promise<RetrievedChunk[]> {
+export async function searchKnowledge(
+  tx: DbOrTx,
+  args: { query: string; limit?: number; roles: string[]; audience: 'internal' | 'public'; embedder?: Embedder; /** 'any' ORs the terms (conversational questions); default 'all'. */ match?: 'all' | 'any' },
+): Promise<RetrievedChunk[]> {
   const limit = Math.min(args.limit ?? 8, 50);
+  const tsq = args.match === 'any' ? sql`to_tsquery('simple', replace(plainto_tsquery('english', ${args.query})::text, '&', '|'))` : sql`websearch_to_tsquery('english', ${args.query})`;
   const visibility = args.audience === 'public' ? sql`d.visibility = 'public'` : sql`(d.visibility in ('public','internal') or (d.visibility = 'restricted' and d.allowed_roles && ${sql.raw(`'{${args.roles.map((r) => r.replace(/[^a-z_]/g, '')).join(',')}}'`)}::text[]))`;
   const fts = await tx.execute<{ id: string; document_id: string; title: string; text: string; evidence_id: string; rank: number }>(sql`
     select c.id, c.document_id, d.title, c.text, d.evidence_id, ts_rank_cd(c.tsv, q) as rank
     from knowledge_chunks c join knowledge_documents d on d.id = c.document_id
     join evidence_records e on e.id = d.evidence_id and e.status = 'admitted',
-    websearch_to_tsquery('english', ${args.query}) q
+    ${tsq} q
     where c.tsv @@ q and ${visibility}
     order by rank desc limit 50`);
   const ftsRanked = fts.rows.map((r, i) => ({ ...r, ftsRank: i + 1 }));

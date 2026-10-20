@@ -33,7 +33,7 @@ function url(ctx: ConnectorContext, path: string): string {
 
 type LocalizationFields = { description?: string; keywords?: string; promotionalText?: string; whatsNew?: string };
 
-async function readLocalization(ctx: ConnectorContext, id: string): Promise<LocalizationFields & { locale?: string }> {
+export async function readLocalization(ctx: ConnectorContext, id: string): Promise<LocalizationFields & { locale?: string }> {
   const res = await ctx.http.request<{ data: { attributes: LocalizationFields & { locale?: string } } }>({
     method: 'GET',
     url: url(ctx, `appStoreVersionLocalizations/${encodeURIComponent(id)}`),

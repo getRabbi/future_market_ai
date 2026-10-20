@@ -11,6 +11,7 @@ import {
   kgEntities,
   reaJobs,
   withTenant,
+  sequential,
 } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
@@ -344,6 +345,6 @@ export async function listObservations(tx: DbOrTx, competitorId?: string) {
 }
 
 export async function listCompetitors(tx: DbOrTx) {
-  const [cs, sources] = await Promise.all([tx.select().from(competitors).orderBy(competitors.name), tx.select().from(competitorSources)]);
+  const [cs, sources] = await sequential([tx.select().from(competitors).orderBy(competitors.name), tx.select().from(competitorSources)]);
   return cs.map((c) => ({ ...c, sources: sources.filter((s) => s.competitorId === c.id) }));
 }

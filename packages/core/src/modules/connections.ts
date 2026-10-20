@@ -95,6 +95,22 @@ export async function listConnections(tx: Tx) {
 }
 
 /**
+ * Connector context for read paths (campaign sync, spend reports, Search Console, ASC reports).
+ * Writes never use this: they go through the M23 gateway.
+ */
+export async function readContext(deps: CoreDeps, tenantId: string, connectionId: string, expectProvider?: string) {
+  return withTenant(deps.db, { tenantId, actor: 'system:connector-read' }, async (tx) => {
+    const [c] = await tx.select().from(connections).where(eq(connections.id, connectionId));
+    if (!c) throw notFound('connection');
+    if (expectProvider && c.provider !== expectProvider) throw invalid(`connection is ${c.provider}, expected ${expectProvider}`);
+    if (c.status === 'revoked' || c.status === 'disabled') throw invalid(`connection is ${c.status}`);
+    const loaded = await loadCredentials(tx, deps.config, tenantId, c.id);
+    if (!loaded) throw invalid('connection credentials missing');
+    return { connection: c, ctx: connectorContext(deps, tenantId, loaded.creds, c) };
+  });
+}
+
+/**
  * Health check (M24 connector monitoring). A failing connection degrades to reauth_required so
  * that queued actions are preserved rather than attempted (product plan failure modes).
  */

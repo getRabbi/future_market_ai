@@ -2,6 +2,7 @@ import { run } from 'graphile-worker';
 import { createRuntime, loadEnv } from '@futuregrow/runtime';
 import { CRONTAB, buildTaskList } from './tasks.js';
 import { MODULE_CRONTAB } from './register-modules.js';
+import { CHANNEL_CRONTAB } from './register-channels.js';
 
 const env = loadEnv();
 const runtime = await createRuntime(env, 'worker');
@@ -11,7 +12,7 @@ const runner = await run({
   pgPool: runtime.pool,
   concurrency,
   taskList: buildTaskList(runtime.deps),
-  crontab: process.env.WORKER_CRONTAB ?? [CRONTAB, ...MODULE_CRONTAB].join('\n'),
+  crontab: process.env.WORKER_CRONTAB ?? [CRONTAB, ...MODULE_CRONTAB, ...CHANNEL_CRONTAB].join('\n'),
   noHandleSignals: false,
   pollInterval: 2000,
 });

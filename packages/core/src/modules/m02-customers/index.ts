@@ -21,6 +21,7 @@ import {
   segmentMembers,
   suppressions,
   withTenant,
+  sequential,
 } from '@futuregrow/db';
 import { conflict, forbidden, identifierHash, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { z } from 'zod';
@@ -334,7 +335,7 @@ export async function getProfile360(tx: Tx, id: string) {
   const [p] = await tx.select().from(customerProfiles).where(eq(customerProfiles.id, id));
   if (!p) throw notFound('customer profile');
   const target = p.mergedIntoId ?? p.id;
-  const [ids, consents, events, merges, scores] = await Promise.all([
+  const [ids, consents, events, merges, scores] = await sequential([
     tx.select({ kind: identityIdentifiers.kind, verified: identityIdentifiers.verified, firstSeenAt: identityIdentifiers.firstSeenAt }).from(identityIdentifiers).where(eq(identityIdentifiers.profileId, target)),
     tx.select().from(consentState).where(eq(consentState.profileId, target)),
     tx.select().from(customerEvents).where(eq(customerEvents.profileId, target)).orderBy(desc(customerEvents.occurredAt)).limit(100),
@@ -504,7 +505,7 @@ export async function executeDsarOptOut(deps: CoreDeps, tenantId: string, actor:
 export async function buildCustomerExport(tx: Tx, profileIds: string[]) {
   const ids = profileIds.length ? await profileClosure(tx, profileIds) : [];
   if (!ids.length) return { profiles: [], events: [], consents: [], consentHistory: [] };
-  const [profiles, events, consents, history] = await Promise.all([
+  const [profiles, events, consents, history] = await sequential([
     tx.select().from(customerProfiles).where(inArray(customerProfiles.id, ids)),
     tx.select().from(customerEvents).where(inArray(customerEvents.profileId, ids)).orderBy(customerEvents.occurredAt),
     tx.select().from(consentState).where(inArray(consentState.profileId, ids)),

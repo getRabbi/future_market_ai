@@ -42,6 +42,13 @@ export const EVENT_TYPES = {
   // M16-M22
   'social.post.scheduled': 1,
   'social.interaction.received': 1,
+  'ads.campaigns.synced': 1,
+  'ads.spend.synced': 1,
+  'seo.audit.completed': 1,
+  'aso.listing.validated': 1,
+  'app.install.recorded': 1,
+  'lifecycle.journey.activated': 1,
+  'lifecycle.enrollment.created': 1,
   'lifecycle.message.queued': 1,
   'lifecycle.message.status_changed': 1,
   'conversation.handoff.requested': 1,

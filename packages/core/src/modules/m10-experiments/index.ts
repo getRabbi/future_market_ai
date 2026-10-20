@@ -12,6 +12,7 @@ import {
   experimentVariants,
   experiments,
   withTenant,
+  sequential,
 } from '@futuregrow/db';
 import { assignVariant, inHoldout } from '@futuregrow/experiments';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
@@ -208,7 +209,7 @@ export async function requestAnalysis(tx: Tx, tenantId: string, actor: Actor, ex
 export async function experimentDetail(tx: DbOrTx, id: string) {
   const [e] = await tx.select().from(experiments).where(eq(experiments.id, id));
   if (!e) throw notFound('experiment');
-  const [variants, results, bandit, counts] = await Promise.all([
+  const [variants, results, bandit, counts] = await sequential([
     tx.select().from(experimentVariants).where(eq(experimentVariants.experimentId, id)),
     tx.select().from(experimentResults).where(eq(experimentResults.experimentId, id)).orderBy(desc(experimentResults.computedAt)).limit(5),
     tx.select().from(banditStates).where(eq(banditStates.experimentId, id)),

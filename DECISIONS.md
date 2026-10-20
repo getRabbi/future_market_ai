@@ -126,3 +126,26 @@ Each decision lists: context → decision → consequences. `[U]` marks values t
 - **Default model:** every reasoning purpose (planning, critique, generation, extraction) routes to `claude-opus-5-5`; no automatic downgrade to cheaper models for cost. Adaptive thinking is always on for this model (the `thinking` parameter is omitted); depth is controlled with `output_config.effort` set explicitly per purpose (its default is `medium`).
 - **Structured output:** responses are constrained with `output_config.format` (Zod schema via the SDK's `betaZodOutputFormat`) and re-validated with the full FUTUREGROW Zod contract; forced `tool_choice` is not used (rejected by this model).
 - **Refusal fallbacks vs. the licence gate:** the vendor recommends server-side `fallbacks: "default"`, but that lets the server pick a model that is not in FUTUREGROW's registry, which the product plan forbids ("never silently switch to an unapproved-licence model"). Decision: send `fallbacks` only as an explicit list of models that are registered **and approved** with purpose `fallback`; when none are approved, no fallback is sent and a refusal makes the step abstain. Every response's served-by model is checked against the approved registry before its output is used.
+
+## D-025 — Lifecycle journeys send as system proposals backed by trigger evidence
+
+- **Context:** Journeys (M20) send without a human in the loop for each message, but system/agent proposals must cite current evidence permitted for autonomous execution (D-023).
+- **Decision:** Each enrollment admits pseudonymous first-party evidence (the trigger event) with the journey's declared `evidence_freshness_hours` (1–720, default 168), set by the designer and approved when a different person activates the journey. Every send is a separate `email.send` action proposed by `system:journey:<id>`. Consent, suppression, frequency cap, quiet hours, sender identity (CAN-SPAM) and jurisdiction are evaluated at proposal and re-evaluated at preflight in the same transaction as rendering, immediately before the provider call. Whether sends run unattended depends only on the tenant's `MESSAGING` policy (`pre_authorized_within_limits` with `maxAudienceSize`); otherwise every send waits for approval.
+- **Consequence:** Next-best-message selection uses an M10 experiment (`send_experiment` step) so allocation is measurable; there is no opaque model-chosen messaging. DSAR deletion expires the trigger evidence, which stops further sends for that profile.
+
+## D-026 — Parameter resolution happens before any reservation or send
+
+- **Decision:** The M23 gateway calls module resolvers (email rendering, presigned media URLs) inside a savepoint before budget reservation and before the `PREFLIGHT_VERIFIED → EXECUTING` transitions. A resolution error moves `APPROVED → FAILED` with "nothing was sent". During verification a failing resolver falls back to stored params (verification reads provider state by receipt).
+
+## D-027 — Spend reconciliation envelope
+
+- **Decision:** The authorized envelope for a campaign-day is the daily budget in effect at the end of that UTC day, from append-only `ad_budget_history` (sync observations, verified M23 actions, and external changes, which also raise a drift alert). Only days older than `SETTLEMENT_LAG_DAYS = 3` enter the append-only spend ledger; restated settled days raise an alert rather than editing the ledger. A period is a discrepancy when spend on known-budget days exceeds the envelope by more than the tolerance (default 2 %), when a single day exceeds 2× its budget (Google Ads' documented overdelivery cap), or currencies disagree. Spend on days with no known budget makes the result `insufficient_data`, never `ok`.
+
+## D-028 — Retrieval for conversational questions
+
+- **Decision:** Chat (M21) and social replies (M16) query the knowledge base with OR semantics over stemmed terms (`to_tsquery('simple', …)` built from `plainto_tsquery('english', …)`), ranked by `ts_rank_cd`; document search elsewhere keeps AND semantics. Answers are released only if every citation resolves to a retrieved public excerpt, confidence ≥ 0.6, claim/brand lint passes, no commitment (refund, discount, guarantee, delivery date) appears unless the cited excerpt states it, and the customer message shows no injection markers; otherwise the conversation is handed to a human and the AI stops replying in it.
+
+## D-029 — Embedded Postgres clusters are initialised as UTF-8
+
+- **Context:** On Windows, `initdb` defaults to the WIN1252 code page, which rejected non-ASCII text (e.g. "→" in alert messages) that production (UTF-8) accepts.
+- **Decision:** Test and dev clusters are created with `--encoding=UTF8 --locale=C` and databases with `encoding 'UTF8' template template0`, matching managed Postgres.

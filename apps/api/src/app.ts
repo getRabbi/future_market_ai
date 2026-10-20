@@ -5,7 +5,7 @@ import swagger from '@fastify/swagger';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { jsonSchemaTransform, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { sql } from 'drizzle-orm';
-import type { CoreDeps, knowledge } from '@futuregrow/core';
+import { type CoreDeps, conversationsModule, type knowledge } from '@futuregrow/core';
 import { type Auth, createAuth } from './auth.js';
 import { type Env, origins } from '@futuregrow/runtime';
 import { type ApiContext, registerErrorHandler, registerTenantHooks, sendWebResponse, toWebRequest } from './http.js';
@@ -52,12 +52,24 @@ export async function buildApp({ env, deps, auth: providedAuth, embedder }: Buil
   });
 
   await app.register(helmet, { contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } });
-  await app.register(cors, {
+  const appCors = {
     origin: origins(env),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['content-type', 'idempotency-key', 'x-fg-tenant', 'x-request-id'],
     exposedHeaders: ['idempotent-replayed', 'x-request-id'],
+  };
+  // Chat widgets run on tenant storefronts: their origins come from the widget record, never
+  // with credentials. Everything else uses the control-plane origin list.
+  await app.register(cors, {
+    delegator: (req, cb) => {
+      const m = (req.url ?? '').match(/^\/chat\/v1\/w\/(fgw_pk_[A-Za-z0-9_-]{16,64})\//);
+      if (!m) return cb(null, appCors);
+      conversationsModule.widgetOrigins(deps, m[1]!).then(
+        (list) => cb(null, list.length ? { origin: list, credentials: false, methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['content-type', 'x-fg-visitor-token'] } : { origin: false }),
+        (err: Error) => cb(err, { origin: false }),
+      );
+    },
   });
   await app.register(rateLimit, { max: 600, timeWindow: '1 minute', keyGenerator: (req) => req.ip });
   await app.register(swagger, {

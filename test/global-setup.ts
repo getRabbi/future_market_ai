@@ -30,6 +30,8 @@ export default async function setup(project: TestProject) {
       password: PASSWORD,
       port: PORT,
       persistent: true,
+      // Production Postgres is UTF-8; Windows initdb would otherwise default to WIN1252.
+      initdbFlags: ['--encoding=UTF8', '--locale=C'],
       onLog: () => {},
       onError: () => {},
     });
@@ -42,7 +44,7 @@ export default async function setup(project: TestProject) {
   const admin = new pg.Client({ connectionString: adminUrl });
   await admin.connect();
   await admin.query(`drop database if exists ${template}`);
-  await admin.query(`create database ${template}`);
+  await admin.query(`create database ${template} encoding 'UTF8' template template0`);
   await admin.end();
   await runAllMigrations(adminUrl.replace(/\/[^/]*$/, `/${template}`));
 

@@ -21,8 +21,10 @@ import {
   connections,
   executionProofs,
   executions,
+  savepoint,
   setTransitionReason,
   withTenant,
+  sequential,
 } from '@futuregrow/db';
 import { approvalsSatisfy, evaluatePolicy } from '@futuregrow/policies';
 import { conflict, forbidden, invalid, notFound, sha256Canonical } from '@futuregrow/observability';
@@ -431,6 +433,20 @@ export async function executeAction(deps: CoreDeps, tenantId: string, actionId: 
       }
     }
 
+    // Resolve the exact connector input (render the email, presign media) before anything is
+    // reserved or sent. A resolution failure fails the action with nothing sent.
+    const resolver = getResolver(a.actionType);
+    let resolved: Record<string, unknown> = a.params;
+    if (resolver) {
+      try {
+        resolved = await savepoint(tx, (sp) => resolver(deps, sp, a));
+      } catch (err) {
+        const reason = `preflight: parameter resolution failed; nothing was sent (${err instanceof Error ? err.message : String(err)})`.slice(0, 1500);
+        const u = await transition(tx, tenantId, GATEWAY, a, 'FAILED', reason);
+        return { kind: 'stopped', status: u.status, reason };
+      }
+    }
+
     const risk = a.risk as ActionRisk;
     if (def.affectsSpend && risk.spendDeltaMicros > 0) {
       await lockTenantBudget(tx, tenantId);
@@ -441,8 +457,6 @@ export async function executeAction(deps: CoreDeps, tenantId: string, actionId: 
     const attempt = a.attempts + 1;
     const [ex] = await tx.insert(executions).values({ tenantId, actionId: a.id, attempt, outcome: 'in_flight' }).returning();
     cur = await transition(tx, tenantId, GATEWAY, cur, 'EXECUTING', `attempt ${attempt}`, { attempts: attempt });
-    const resolver = getResolver(a.actionType);
-    const resolved = resolver ? await resolver(deps, tx, cur) : a.params;
     return { kind: 'execute', action: cur, executionId: ex!.id, creds, conn, resolved };
   });
   if (prep.kind !== 'execute') return prep;
@@ -579,7 +593,15 @@ export async function verifyAction(deps: CoreDeps, tenantId: string, actionId: s
     const def = getActionType(a.actionType)!;
     const ctx = def.provider === 'internal' ? null : await connectorFor(deps, tx, tenantId, a);
     const resolver = getResolver(a.actionType);
-    const params = resolver && ex ? await resolver(deps, tx, a) : a.params;
+    let params: Record<string, unknown> = a.params;
+    if (resolver && ex) {
+      try {
+        params = await savepoint(tx, (sp) => resolver(deps, sp, a));
+      } catch (err) {
+        // Verification reads provider state by receipt; stored params are a safe fallback.
+        deps.logger.warn({ actionId: a.id, err: err instanceof Error ? err.message : String(err) }, 'param resolution failed during verification; using stored params');
+      }
+    }
     const prior = await tx.select({ n: sql<number>`count(*)::int` }).from(executionProofs).where(and(eq(executionProofs.actionId, a.id), eq(executionProofs.purpose, 'postcondition')));
     return { a, ex, def, ctx, params, attempt: (prior[0]?.n ?? 0) + 1 };
   });
@@ -775,7 +797,7 @@ export async function listActions(tx: Tx, filter: { status?: string[]; limit?: n
 export async function getActionDetail(tx: Tx, id: string) {
   const [a] = await tx.select().from(actionRequests).where(eq(actionRequests.id, id));
   if (!a) throw notFound('action');
-  const [history, appr, execs, proofs] = await Promise.all([
+  const [history, appr, execs, proofs] = await sequential([
     tx.select().from(actionTransitions).where(eq(actionTransitions.actionId, id)).orderBy(asc(actionTransitions.id)),
     tx.select().from(approvals).where(eq(approvals.actionId, id)).orderBy(asc(approvals.decidedAt)),
     tx.select().from(executions).where(eq(executions.actionId, id)).orderBy(asc(executions.attempt)),
