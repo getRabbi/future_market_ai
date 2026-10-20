@@ -51,20 +51,18 @@ describe('M02 data retention', () => {
       ]);
     });
     await withSystem(h.t.handle.db, 'test', (t) =>
-      t
-        .insert(webhookInbox)
-        .values({
-          provider: 'shopify',
-          providerEventId: `wh-${randomUUID()}`,
-          resolvedTenantId: h.tenantId,
-          topic: 'orders/create',
-          signatureValid: true,
-          headers: { 'x-shopify-topic': 'orders/create' },
-          payload: { email: 'buyer@example.com' },
-          payloadSha256: 'a'.repeat(64),
-          status: 'processed',
-          receivedAt: daysAgo(30),
-        }),
+      t.insert(webhookInbox).values({
+        provider: 'shopify',
+        providerEventId: `wh-${randomUUID()}`,
+        resolvedTenantId: h.tenantId,
+        topic: 'orders/create',
+        signatureValid: true,
+        headers: { 'x-shopify-topic': 'orders/create' },
+        payload: { email: 'buyer@example.com' },
+        payloadSha256: 'a'.repeat(64),
+        status: 'processed',
+        receivedAt: daysAgo(30),
+      }),
     );
     const c = await tx((t) => comp.addCompetitor(t, h.tenantId, h.users.operator, { name: 'Rival', domains: ['rival.example'] }));
     const src = await tx((t) => comp.proposeSource(t, h.tenantId, h.users.operator, { competitorId: c.id, url: 'https://rival.example/pricing', kind: 'pricing', lawfulBasisNote: 'public pricing page, no login required' }));
