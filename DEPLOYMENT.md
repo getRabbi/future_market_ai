@@ -81,7 +81,7 @@ Add the Pages origin to the api's `APP_ORIGINS` (CORS and Better Auth trusted or
 3. **Autonomy policy:** Governance → Autonomy policy. Leave categories unconfigured (always approval) until you deliberately pre-authorize limits.
 4. **Sender identity** (CAN-SPAM postal address) before any commercial email (B-008).
 5. **Remotion licence attestation** before renders (B-014).
-6. **Connections:** add provider accounts with least-privilege scopes, run health checks. Register webhooks:
+6. **Connections:** Control → **Connections**: pick the provider, fill its form (each field says where to find the value), **Test credentials** (a read-only call; nothing is stored), then **Save connection** (owner/admin with a two-factor session). Saved accounts have **Test connection**, **Update credentials** and **Disable**. Use least-privilege scopes. The same screen lists the webhook URLs below and whether each signing secret is set. Register webhooks:
    * Meta: `https://api.<domain>/webhooks/meta` (verify token = `META_WEBHOOK_VERIFY_TOKEN`, app secret = `META_APP_SECRET`)
    * Shopify: `https://api.<domain>/webhooks/shopify` (topics `orders/create`, `orders/paid`, `refunds/create`)
    * Resend: `https://api.<domain>/webhooks/resend` (svix secret = `RESEND_WEBHOOK_SECRET`)

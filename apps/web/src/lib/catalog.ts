@@ -37,7 +37,7 @@ export interface Section {
   summary: string;
   resources: Resource[];
   /** Bespoke component instead of / before resources. */
-  custom?: 'overview' | 'approvals' | 'governance' | 'audit' | 'settings' | 'assets';
+  custom?: 'overview' | 'approvals' | 'governance' | 'audit' | 'settings' | 'assets' | 'connections';
 }
 
 const iso = () => new Date().toISOString();
@@ -595,21 +595,9 @@ export const SECTIONS: Section[] = [
     slug: 'connections',
     title: 'Connections',
     modules: ['M23'],
-    summary: 'Authorized provider accounts. Credentials are encrypted and never returned.',
-    resources: [
-      {
-        title: 'Connections',
-        list: '/v1/connections',
-        columns: ['provider', 'displayName', 'externalAccountId', 'status', 'healthStatus', 'lastHealthCheckAt'],
-        create: { label: 'Connect', path: '/v1/connections', example: { provider: 'meta', externalAccountId: '1234567890', displayName: 'Acme Page', grantedScopes: ['pages_manage_posts', 'pages_read_engagement'], credentials: { accessToken: '…' } }, note: 'Requires an MFA-enrolled admin.' },
-        rowActions: [
-          { label: 'Health check', path: '/v1/connections/:id/health-check' },
-          { label: 'Rotate credentials', path: '/v1/connections/:id/credentials', prompt: { field: '*', label: '{ "credentials": { … } }', json: true } },
-          { label: 'Disable', path: '/v1/connections/:id/status', body: { status: 'disabled' }, danger: true },
-        ],
-      },
-      { title: 'Action types (allowlist)', list: '/v1/action-types', pick: 'actionTypes', columns: ['type', 'provider', 'category', 'verification', 'rollback', 'supported', 'blockerRef'] },
-    ],
+    summary: 'Provider accounts: connect with a form per provider, test credentials before saving, check saved connections. Credentials are encrypted and never returned.',
+    custom: 'connections',
+    resources: [{ title: 'Action types (allowlist)', list: '/v1/action-types', pick: 'actionTypes', columns: ['type', 'provider', 'category', 'verification', 'rollback', 'supported', 'blockerRef'] }],
   },
   { slug: 'governance', title: 'Governance', modules: ['M24'], summary: 'Autonomy policy, kill switches, sender identity, registries, incidents and cost.', resources: [], custom: 'governance' },
   { slug: 'audit', title: 'Audit trail', modules: ['M24'], summary: 'Hash-chained, append-only audit log with independent chain verification.', resources: [], custom: 'audit' },

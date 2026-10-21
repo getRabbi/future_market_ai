@@ -110,6 +110,28 @@ export async function readContext(deps: CoreDeps, tenantId: string, connectionId
   });
 }
 
+export const ConnectionTestSchema = ConnectionInputSchema.pick({ provider: true, externalAccountId: true, metadata: true, credentials: true });
+
+/** Providers whose credentials can be verified with a read-only call (READ_CONNECTORS). */
+export const TESTABLE_PROVIDERS = Object.keys(READ_CONNECTORS) as (keyof typeof READ_CONNECTORS)[];
+
+/**
+ * Checks credentials against the provider with the same read-only call as the health check,
+ * before anything is stored, so a typo never becomes a broken connection. Nothing is persisted
+ * except an audit entry without secrets.
+ */
+export async function testConnectionCredentials(deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
+  requireRole(actor, ADMIN_ROLES, 'testing connection credentials');
+  const input = ConnectionTestSchema.parse(raw);
+  const reader = READ_CONNECTORS[input.provider as keyof typeof READ_CONNECTORS];
+  if (!reader) throw invalid(`no connection test for ${input.provider}`);
+  const creds = { ...input.credentials, provider: input.provider } as ProviderCredentials;
+  const probe = { id: 'connection-test', provider: input.provider, externalAccountId: input.externalAccountId, metadata: input.metadata, appAudited: null } as typeof connections.$inferSelect;
+  const result = await reader.healthCheck(connectorContext(deps, tenantId, creds, probe)).catch((err: unknown) => ({ healthy: false, status: 'failing' as const, grantedScopes: null, details: { error: err instanceof Error ? err.message : String(err) } }));
+  await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) => audit(tx, tenantId, actor, 'connector.connection.tested', { type: 'connection', id: `${input.provider}:${input.externalAccountId}` }, { provider: input.provider, externalAccountId: input.externalAccountId, status: result.status }));
+  return result;
+}
+
 /**
  * Health check (M24 connector monitoring). A failing connection degrades to reauth_required so
  * that queued actions are preserved rather than attempted (product plan failure modes).

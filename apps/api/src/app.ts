@@ -124,7 +124,7 @@ export async function buildApp({ env, deps, auth: providedAuth, embedder, enviro
     handler: async (req, reply) => sendWebResponse(reply, await auth.handler(toWebRequest(req))),
   });
 
-  registerCoreRoutes(app, ctx);
+  registerCoreRoutes(app, ctx, env);
   registerModuleRoutes(app, ctx);
   registerPublicRoutes(app, ctx);
   registerWebhookRoutes(app, ctx, env);

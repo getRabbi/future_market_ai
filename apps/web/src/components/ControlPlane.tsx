@@ -3,6 +3,7 @@ import { api, getTenant, type Me, setTenant } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
 import { SECTION_GROUPS, SECTIONS, sectionBySlug } from '../lib/catalog.js';
 import { Approvals } from './Approvals.js';
+import { Connections } from './Connections.js';
 import { Governance } from './Governance.js';
 import { ResourcePanel } from './ResourcePanel.js';
 import { ErrorNotice } from './ui.js';
@@ -111,6 +112,7 @@ export function ControlPlane({ section }: { section: string }) {
         {current.custom === 'audit' ? <Audit /> : null}
         {current.custom === 'settings' ? <Settings me={me} onTenant={switchTenant} /> : null}
         {current.custom === 'assets' ? <AssetUpload /> : null}
+        {current.custom === 'connections' ? <Connections me={me} /> : null}
         {current.resources.map((r) => (
           <ResourcePanel key={r.title} resource={r} />
         ))}

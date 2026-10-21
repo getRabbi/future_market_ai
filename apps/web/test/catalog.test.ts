@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { buildApp } from '../../api/src/app.js';
+import { CONNECTION_CALLS } from '../src/components/Connections.js';
 import { REGISTRIES } from '../src/components/Governance.js';
 import { SECTION_GROUPS, SECTIONS } from '../src/lib/catalog.js';
 
@@ -42,6 +43,8 @@ function calls() {
       }
     }
   }
+  // Bespoke Connections screen.
+  for (const c of CONNECTION_CALLS) out.push({ where: 'connections screen', method: c.method, path: c.path });
   return out;
 }
 

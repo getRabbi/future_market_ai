@@ -2,6 +2,7 @@ import { LIFECYCLE_PROVIDERS } from '@futuregrow/connectors';
 import { KILL_SWITCH_SCOPES, listActionTypes, MODULES } from '@futuregrow/contracts';
 import { apiLifecycle, connectionsModule, evidence, execution, getAiBudget, governance, recordApiSunset } from '@futuregrow/core';
 import { alerts, artifactLicenses, authAccount, authUser, incidents, killSwitches, member, organization, platformCapabilities, withSystem } from '@futuregrow/db';
+import type { Env } from '@futuregrow/runtime';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -10,7 +11,7 @@ import { type ApiContext, actorOf, tenantOf, tenantTx } from '../http.js';
 
 const Id = z.object({ id: z.string().uuid() });
 
-export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext): void {
+export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: Pick<Env, 'META_APP_SECRET' | 'META_WEBHOOK_VERIFY_TOKEN' | 'SHOPIFY_WEBHOOK_SECRET' | 'RESEND_WEBHOOK_SECRET' | 'TIKTOK_CLIENT_SECRET'>): void {
   const r = app.withTypeProvider<ZodTypeProvider>();
   const { deps } = ctx;
 
@@ -158,6 +159,23 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext): void 
     tenantTx(ctx, req, (tx) => connectionsModule.setConnectionStatus(tx, tenantOf(req), actorOf(req), req.params.id, req.body.status)),
   );
   r.post('/v1/connections/:id/health-check', { schema: { tags: ['connections'], params: Id } }, async (req) => connectionsModule.checkConnectionHealth(deps, tenantOf(req), req.params.id));
+  r.post('/v1/connections/test', { schema: { tags: ['connections'], body: z.record(z.string(), z.unknown()) } }, async (req) => connectionsModule.testConnectionCredentials(deps, tenantOf(req), actorOf(req), req.body));
+  // What the Connections screen needs to guide setup: testable providers, the scopes their
+  // registered capabilities require, and the webhook endpoints with whether each secret is set.
+  r.get('/v1/connections/setup', { schema: { tags: ['connections'] } }, async (req) => {
+    const caps = await tenantTx(ctx, req, (tx) => tx.select({ platform: platformCapabilities.platform, requiredScopes: platformCapabilities.requiredScopes, supported: platformCapabilities.supported }).from(platformCapabilities));
+    const scopes = (p: string) => [...new Set(caps.filter((c) => c.platform === p && c.supported).flatMap((c) => c.requiredScopes))].sort();
+    const hook = (provider: string, envVar: string, configured: boolean) => ({ provider, url: `${deps.config.apiBaseUrl}/webhooks/${provider}`, envVar, secretConfigured: configured });
+    return {
+      providers: connectionsModule.TESTABLE_PROVIDERS.map((provider) => ({ provider, requiredScopes: scopes(provider) })),
+      webhooks: [
+        { ...hook('meta', 'META_APP_SECRET', Boolean(env.META_APP_SECRET)), verifyTokenConfigured: Boolean(env.META_WEBHOOK_VERIFY_TOKEN) },
+        hook('shopify', 'SHOPIFY_WEBHOOK_SECRET', Boolean(env.SHOPIFY_WEBHOOK_SECRET)),
+        hook('resend', 'RESEND_WEBHOOK_SECRET', Boolean(env.RESEND_WEBHOOK_SECRET)),
+        hook('tiktok', 'TIKTOK_CLIENT_SECRET', Boolean(env.TIKTOK_CLIENT_SECRET)),
+      ],
+    };
+  });
 
   /* ---------------- evidence (M01) ---------------- */
   r.post('/v1/evidence/sources', { schema: { tags: ['evidence'], body: z.record(z.string(), z.unknown()) } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => evidence.registerSource(tx, tenantOf(req), actorOf(req), req.body))));
