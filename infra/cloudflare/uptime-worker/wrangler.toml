@@ -1,0 +1,21 @@
+# FUTUREGROW external uptime monitor (Cloudflare Workers free plan: cron triggers + one KV key).
+# Deploy (owner, once): see DEPLOYMENT.md §9. No route and no workers.dev URL: it only runs on cron.
+name = "futuregrow-uptime"
+main = "src/index.ts"
+compatibility_date = "2026-09-15"
+workers_dev = false
+preview_urls = false
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+WEB_URL = "https://futuregrow.scalemyprints.com"
+API_URL = "https://http--api--mjmcf2c5fbyt.code.run"
+ENVIRONMENT = "production futuregrow.scalemyprints.com"
+
+# Created with: npx wrangler@4.147.0 kv namespace create futuregrow-uptime-state
+# then paste the returned id here. ALERT_WEBHOOK_URL is a secret: wrangler secret put ALERT_WEBHOOK_URL
+[[kv_namespaces]]
+binding = "STATE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

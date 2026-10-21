@@ -19,6 +19,8 @@
     "apps/web/test/**/*.ts",
     "test/**/*.ts",
     "e2e/**/*.ts",
+    "infra/cloudflare/*/src/**/*.ts",
+    "infra/cloudflare/*/test/**/*.ts",
     "scripts/**/*.ts"
   ]
 }

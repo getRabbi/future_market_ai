@@ -1,11 +1,11 @@
 import { AnthropicProvider, type ModelProvider, OpenAICompatibleEmbedder, OpenAICompatibleProvider } from '@futuregrow/agent-kernel';
 import { HttpClient } from '@futuregrow/connectors';
-import { buildCoreConfig, type CoreDeps, createModelGateway, type JobQueue, type knowledge, systemClock } from '@futuregrow/core';
+import { buildCoreConfig, type CoreDeps, createModelGateway, type JobQueue, type knowledge, ops, systemClock } from '@futuregrow/core';
 import { configureTenantRole, createDb, probeDatabase } from '@futuregrow/db';
 import { createLogger } from '@futuregrow/observability';
 import { createObjectStore } from '@futuregrow/storage';
 import { makeWorkerUtils, type WorkerUtils } from 'graphile-worker';
-import type { Env } from './env.js';
+import { alertEnvironment, type Env } from './env.js';
 
 export class GraphileJobQueue implements JobQueue {
   constructor(private readonly utils: WorkerUtils) {}
@@ -20,7 +20,9 @@ export class GraphileJobQueue implements JobQueue {
 }
 
 export interface Runtime {
-  deps: CoreDeps;
+  deps: CoreDeps & { notifier: ops.Notifier };
+  /** Label used in operator alerts. */
+  environment: string;
   pool: import('pg').Pool;
   embedder?: knowledge.Embedder;
   close(): Promise<void>;
@@ -51,7 +53,22 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
     configureTenantRole(false);
   }
   const utils = await makeWorkerUtils({ pgPool: handle.pool });
-  const deps: CoreDeps = {
+  const secrets = [
+    env.ANTHROPIC_API_KEY,
+    env.OPENAI_COMPATIBLE_API_KEY,
+    env.BETTER_AUTH_SECRET,
+    env.FG_SECRETS_KEY,
+    env.FG_IDENTIFIER_PEPPER,
+    env.R2_SECRET_ACCESS_KEY,
+    env.META_APP_SECRET,
+    env.SHOPIFY_WEBHOOK_SECRET,
+    env.RESEND_WEBHOOK_SECRET,
+    env.TIKTOK_CLIENT_SECRET,
+    env.NORTHFLANK_API_TOKEN,
+    env.EMBEDDINGS_API_KEY,
+  ].filter((x): x is string => Boolean(x));
+  const notifier: ops.Notifier = env.ALERT_WEBHOOK_URL ? new ops.WebhookNotifier(env.ALERT_WEBHOOK_URL, { knownSecrets: secrets, logger }) : new ops.LogNotifier(logger);
+  const deps: CoreDeps & { notifier: ops.Notifier } = {
     db: handle.db,
     store: createObjectStore(env),
     jobs: new GraphileJobQueue(utils),
@@ -59,6 +76,7 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
     logger,
     config: buildCoreConfig(env),
     clock: systemClock,
+    notifier,
   };
   // Model providers are configured only when credentials exist (B-003); models must also be
   // approved in the registry before the gateway will call them (D-002).
@@ -66,17 +84,18 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
   if (env.ANTHROPIC_API_KEY) providers.anthropic = new AnthropicProvider({ apiKey: env.ANTHROPIC_API_KEY });
   if (env.OPENAI_COMPATIBLE_BASE_URL) providers.openai_compatible = new OpenAICompatibleProvider({ baseUrl: env.OPENAI_COMPATIBLE_BASE_URL, ...(env.OPENAI_COMPATIBLE_API_KEY ? { apiKey: env.OPENAI_COMPATIBLE_API_KEY } : {}) });
   if (Object.keys(providers).length) {
-    const secrets = [env.ANTHROPIC_API_KEY, env.OPENAI_COMPATIBLE_API_KEY, env.BETTER_AUTH_SECRET, env.FG_SECRETS_KEY, env.FG_IDENTIFIER_PEPPER, env.R2_SECRET_ACCESS_KEY, env.META_APP_SECRET, env.SHOPIFY_WEBHOOK_SECRET, env.RESEND_WEBHOOK_SECRET, env.TIKTOK_CLIENT_SECRET, env.NORTHFLANK_API_TOKEN].filter(
-      (x): x is string => Boolean(x),
-    );
     deps.models = createModelGateway(deps, providers, secrets);
   } else {
     logger.warn('no model provider configured: agent stages will abstain (B-003)');
   }
   const embedder = env.EMBEDDINGS_BASE_URL && env.EMBEDDINGS_MODEL ? new OpenAICompatibleEmbedder({ baseUrl: env.EMBEDDINGS_BASE_URL, model: env.EMBEDDINGS_MODEL, ...(env.EMBEDDINGS_API_KEY ? { apiKey: env.EMBEDDINGS_API_KEY } : {}) }) : undefined;
-  logger.info({ pg: caps.serverVersion, dbTls: { ...handle.tls, encrypted: caps.ssl, version: caps.sslVersion }, pgvector: caps.pgvectorInstalled || caps.pgvectorAvailable, storage: deps.store.kind, models: Object.keys(providers), embeddings: Boolean(embedder) }, 'runtime ready');
+  logger.info(
+    { alerts: notifier.configured ? 'webhook' : 'log', pg: caps.serverVersion, dbTls: { ...handle.tls, encrypted: caps.ssl, version: caps.sslVersion }, pgvector: caps.pgvectorInstalled || caps.pgvectorAvailable, storage: deps.store.kind, models: Object.keys(providers), embeddings: Boolean(embedder) },
+    'runtime ready',
+  );
   return {
     deps,
+    environment: alertEnvironment(env),
     pool: handle.pool,
     ...(embedder ? { embedder } : {}),
     async close() {
@@ -84,4 +103,22 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
       await handle.close();
     },
   };
+}
+
+/**
+ * Crash alerts: an uncaught exception or unhandled rejection is logged, announced to the operator
+ * webhook (best effort, at most 3 s) and the process exits non-zero so the platform restarts it.
+ */
+export function installCrashAlerts(runtime: Pick<Runtime, 'deps' | 'environment'>, service: string): void {
+  let crashing = false;
+  const crash = (kind: string, err: unknown) => {
+    if (crashing) return;
+    crashing = true;
+    const e = err instanceof Error ? err : new Error(String(err));
+    runtime.deps.logger.fatal({ err: e, kind }, `${service} crashed`);
+    const alert = { severity: 'critical' as const, title: `${service} crashed (${kind})`, text: `${e.name}: ${e.message}`.slice(0, 500), source: service, environment: runtime.environment, dedupKey: `crash:${service}:${e.name}` };
+    void Promise.race([runtime.deps.notifier.send(alert).catch(() => {}), new Promise((r) => setTimeout(r, 3_000))]).finally(() => process.exit(1));
+  };
+  process.on('uncaughtException', (err) => crash('uncaughtException', err));
+  process.on('unhandledRejection', (reason) => crash('unhandledRejection', reason));
 }

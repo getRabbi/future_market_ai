@@ -1,4 +1,4 @@
-import { type CoreDeps, connectionsModule, evidence, execution, systemActor, webhooks, wireEventHandlers } from '@futuregrow/core';
+import { type CoreDeps, connectionsModule, evidence, execution, ops, systemActor, webhooks, wireEventHandlers } from '@futuregrow/core';
 import { actionRequests, connections, organization, outboxEvents, withSystem, withTenant } from '@futuregrow/db';
 import { EventBus, rowToEnvelope } from '@futuregrow/events';
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
@@ -27,7 +27,7 @@ export async function forEachTenant(deps: CoreDeps, fn: (tenantId: string) => Pr
   }
 }
 
-export function buildTaskList(deps: CoreDeps): TaskList {
+export function buildTaskList(deps: CoreDeps, opts: { environment?: string } = {}): TaskList {
   const bus = wireEventHandlers(new EventBus(), deps);
 
   const tasks: TaskList = {
@@ -121,10 +121,16 @@ export function buildTaskList(deps: CoreDeps): TaskList {
     webhook_retention: async () => {
       await webhooks.webhookRetentionSweep(deps.db, 30);
     },
+
+    /** Operator alerts: component health, critical alerts, severe incidents, failed jobs. */
+    ops_monitor: async () => {
+      const r = await ops.runOpsMonitor(deps.db, deps.notifier ?? new ops.LogNotifier(deps.logger), { environment: opts.environment ?? deps.config.environment });
+      if (r.sent || r.failed) deps.logger.info({ sent: r.sent, failed: r.failed, ok: r.status.ok }, 'ops monitor');
+    },
   };
   for (const f of extraTaskFactories) Object.assign(tasks, f(deps));
   return tasks;
 }
 
 /** Graphile crontab (UTC). Heavier jobs run on the Northflank analytics/media jobs instead. */
-export const CRONTAB = ['*/5 * * * * watchdog', '7 * * * * evidence_sweep', '17 * * * * connector_health', '23 3 * * * webhook_retention'].join('\n');
+export const CRONTAB = ['*/5 * * * * watchdog', '*/5 * * * * ops_monitor', '7 * * * * evidence_sweep', '17 * * * * connector_health', '23 3 * * * webhook_retention'].join('\n');

@@ -8,6 +8,7 @@ export * as knowledge from './modules/m03-knowledge/index.js';
 export * as execution from './modules/m23-execution/index.js';
 export * as governance from './modules/m24-governance/index.js';
 export * as webhooks from './modules/webhooks.js';
+export * as ops from './ops.js';
 export * from './secrets.js';
 export * from './util.js';
 

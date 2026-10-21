@@ -146,7 +146,7 @@ export function registerTenantHooks(app: FastifyInstance, ctx: ApiContext): void
   });
 }
 
-export function registerErrorHandler(app: FastifyInstance): void {
+export function registerErrorHandler(app: FastifyInstance, onServerError?: (err: Error, req: FastifyRequest) => void): void {
   app.setErrorHandler((rawErr, req, reply) => {
     const err = rawErr as Error;
     const send = (status: number, code: string, message: string, details?: unknown) => reply.status(status).send({ error: { code, message, ...(details ? { details } : {}) } });
@@ -161,6 +161,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
     const status = (err as { statusCode?: number }).statusCode;
     if (status && status >= 400 && status < 500) return send(status, 'BAD_REQUEST', err.message);
     req.log.error({ err }, 'unhandled error');
+    onServerError?.(err, req);
     return send(500, 'INTERNAL', 'internal error');
   });
 }

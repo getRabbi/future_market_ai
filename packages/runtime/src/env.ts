@@ -57,6 +57,10 @@ export const EnvSchema = z
     NORTHFLANK_PROJECT_ID: z.string().optional(),
     NORTHFLANK_ANALYTICS_JOB_ID: z.string().optional(),
     NORTHFLANK_MEDIA_JOB_ID: z.string().optional(),
+    // Operator alerts (Slack/Discord incoming webhook or any https JSON endpoint). Unset = log only.
+    ALERT_WEBHOOK_URL: z.string().url().startsWith('https://').optional(),
+    /** Label in alerts; defaults to "<NODE_ENV> <APP_BASE_URL host>". */
+    ALERT_ENVIRONMENT: z.string().max(80).optional(),
     VERIFICATION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(12),
     VERIFICATION_BASE_DELAY_SECONDS: z.coerce.number().int().min(1).max(3600).default(15),
   })
@@ -92,6 +96,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   }
   return env;
 }
+
+export const alertEnvironment = (env: Env) => env.ALERT_ENVIRONMENT ?? `${env.NODE_ENV} ${new URL(env.APP_BASE_URL).host}`;
 
 export const origins = (env: Env) =>
   env.APP_ORIGINS.split(',')

@@ -1,12 +1,13 @@
 import { governance } from '@futuregrow/core';
-import { createRuntime, loadEnv } from '@futuregrow/runtime';
+import { createRuntime, installCrashAlerts, loadEnv } from '@futuregrow/runtime';
 import { buildApp } from './app.js';
 
 const env = loadEnv();
 const runtime = await createRuntime(env, 'api');
+installCrashAlerts(runtime, 'api');
 await governance.syncCapabilityRegistry(runtime.deps.db);
 await governance.seedModelRegistry(runtime.deps.db);
-const { app } = await buildApp({ env, deps: runtime.deps, ...(runtime.embedder ? { embedder: runtime.embedder } : {}) });
+const { app } = await buildApp({ env, deps: runtime.deps, environment: runtime.environment, ...(runtime.embedder ? { embedder: runtime.embedder } : {}) });
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutting down');

@@ -2,7 +2,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
-import { type CoreDeps, conversationsModule, type knowledge } from '@futuregrow/core';
+import { type CoreDeps, conversationsModule, type knowledge, ops } from '@futuregrow/core';
 import { type Env, origins } from '@futuregrow/runtime';
 import { sql } from 'drizzle-orm';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -19,9 +19,11 @@ export interface BuildAppOptions {
   deps: CoreDeps;
   auth?: Auth;
   embedder?: knowledge.Embedder;
+  /** Label for operator alerts (runtime.environment). */
+  environment?: string;
 }
 
-export async function buildApp({ env, deps, auth: providedAuth, embedder }: BuildAppOptions): Promise<{ app: FastifyInstance; auth: Auth }> {
+export async function buildApp({ env, deps, auth: providedAuth, embedder, environment = env.NODE_ENV }: BuildAppOptions): Promise<{ app: FastifyInstance; auth: Auth }> {
   const auth = providedAuth ?? createAuth(deps.db, env);
   const app = Fastify({
     logger: env.NODE_ENV === 'test' ? false : { level: env.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers.cookie'] },
@@ -83,7 +85,15 @@ export async function buildApp({ env, deps, auth: providedAuth, embedder }: Buil
   });
 
   const ctx: ApiContext = { deps, auth, ...(embedder ? { embedder } : {}) };
-  registerErrorHandler(app);
+  // Unhandled 5xx: one operator alert per route and error type per 15 min (max 10 per hour).
+  const notifier = deps.notifier ?? new ops.LogNotifier(deps.logger);
+  const throttle = new ops.AlertThrottle();
+  registerErrorHandler(app, (err, req) => {
+    const route = req.routeOptions.url ?? 'unknown';
+    const key = `api5xx:${req.method} ${route}:${err.name}`;
+    if (!throttle.allow(key)) return;
+    void notifier.send({ severity: 'critical', title: `API error on ${req.method} ${route}`, text: `${err.name}: ${err.message}`.slice(0, 500), source: 'api', environment, dedupKey: key, fields: { requestId: req.id } }).catch((e: unknown) => req.log.warn({ err: e }, 'operator alert failed'));
+  });
   registerTenantHooks(app, ctx);
 
   app.get('/healthz', { config: { public: true } }, async () => ({ ok: true }));
@@ -95,6 +105,15 @@ export async function buildApp({ env, deps, auth: providedAuth, embedder }: Buil
     } catch (err) {
       return reply.status(503).send({ ok: false, reason: err instanceof Error ? err.message : 'db unavailable' });
     }
+  });
+  // Coarse component status for uptime monitors (no tenant data): 503 when a component is stale or failing.
+  let statusCache: { at: number; value: ops.PlatformStatus } | null = null;
+  app.get('/statusz', { config: { public: true } }, async (_req, reply) => {
+    if (!statusCache || Date.now() - statusCache.at > 30_000) statusCache = { at: Date.now(), value: await ops.platformStatus(deps.db) };
+    const s = statusCache.value;
+    reply.header('cache-control', 'no-store');
+    const components = Object.fromEntries(Object.entries(s.components).map(([k, v]) => [k, { state: v.state, ...(v.ageSeconds === undefined ? {} : { ageSeconds: v.ageSeconds }) }]));
+    return reply.status(s.ok ? 200 : 503).send({ ok: s.ok, checkedAt: s.checkedAt, components });
   });
   app.get('/v1/openapi.json', { config: { public: true } }, async () => app.swagger());
 

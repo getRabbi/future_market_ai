@@ -3,6 +3,7 @@ import type { ApiVersions, HttpClient, ProviderEndpoints } from '@futuregrow/con
 import type { Db } from '@futuregrow/db';
 import type { Logger } from '@futuregrow/observability';
 import type { ObjectStore } from '@futuregrow/storage';
+import type { Notifier } from './ops.js';
 
 export interface JobOptions {
   runAt?: Date;
@@ -53,6 +54,8 @@ export interface CoreDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Registry-gated model gateway; absent when no provider is configured (B-003). */
   models?: ModelGateway;
+  /** Operator alerts (ALERT_WEBHOOK_URL); absent = log only. */
+  notifier?: Notifier;
 }
 
 export interface Actor {

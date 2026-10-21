@@ -567,3 +567,48 @@ export const backupRuns = pgTable(
   },
   (t) => [index('backup_runs_kind_time_idx').on(t.kind, t.finishedAt), oneOf('backup_runs_kind_chk', t.kind, ['backup', 'verification', 'restore_drill']), oneOf('backup_runs_status_chk', t.status, ['succeeded', 'failed'])],
 );
+
+/**
+ * Operator notifications (alert webhook) with durable de-duplication: one row per dedup key, so
+ * an alert, incident, failed job or component problem is announced once (re-announced only after
+ * `renotify` intervals) and its recovery once. Not tenant-scoped; written by the system role.
+ */
+export const opsNotifications = pgTable(
+  'ops_notifications',
+  {
+    dedupKey: text('dedup_key').primaryKey(),
+    kind: text('kind').notNull(),
+    severity: text('severity').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    payload: json<Record<string, unknown>>('payload').notNull().default({}),
+    firstSentAt: ts('first_sent_at').notNull().defaultNow(),
+    lastSentAt: ts('last_sent_at').notNull().defaultNow(),
+    delivered: boolean('delivered').notNull().default(false),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    resolvedAt: ts('resolved_at'),
+  },
+  (t) => [index('ops_notifications_open_idx').on(t.kind, t.resolvedAt), oneOf('ops_notifications_severity_chk', t.severity, ['info', 'warning', 'critical'])],
+);
+
+/**
+ * Provider API deprecation evidence (FG-P2-001): HTTP Deprecation/Sunset headers (RFC 9745 /
+ * RFC 8594), provider-specific warnings, version auto-upgrades and registry end-of-life dates.
+ */
+export const apiDeprecationSignals = pgTable(
+  'api_deprecation_signals',
+  {
+    id: pk(),
+    provider: text('provider').notNull(),
+    apiVersion: text('api_version').notNull(),
+    signal: text('signal').notNull(),
+    endpoint: text('endpoint').notNull(),
+    sunsetAt: ts('sunset_at'),
+    detail: text('detail'),
+    occurrences: integer('occurrences').notNull().default(1),
+    firstSeenAt: ts('first_seen_at').notNull().defaultNow(),
+    lastSeenAt: ts('last_seen_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('api_deprecation_signals_uq').on(t.provider, t.apiVersion, t.signal, t.endpoint), oneOf('api_deprecation_signals_signal_chk', t.signal, ['deprecation_header', 'sunset_header', 'provider_warning', 'version_upgraded', 'registry_eol'])],
+);
