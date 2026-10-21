@@ -1,5 +1,6 @@
 # Continuous integration: typecheck, lint, real-PostgreSQL tests (embedded PG 17), Python engine
-# tests, production builds, SBOM + licence policy, and container image builds (no push).
+# tests, production builds, SBOM + licence policy, browser E2E (Playwright) and container image
+# builds (no push).
 # Third-party actions are pinned by commit SHA.
 name: ci
 
@@ -74,6 +75,35 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libnss3 libdbus-1-3 libatk1.0-0 libgbm1 libasound2t64 libxrandr2 libxkbcommon0 libxfixes3 libxcomposite1 libxdamage1 libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 fonts-liberation
       - run: npm ci --no-audit --no-fund
       - run: npx vitest run jobs/media/test/render.test.ts
+
+  e2e:
+    # Browser click-through of the control plane (Playwright + Chromium) against the real API,
+    # embedded PostgreSQL and the production web build served with its _headers CSP.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Web build (same-origin, as behind the Pages proxy)
+        env:
+          PUBLIC_API_BASE: ''
+        run: npm run build -w @futuregrow/web
+      - name: Browser end-to-end tests
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: failure()
+        with:
+          name: e2e-report
+          path: |
+            dist/e2e-report/
+            dist/e2e-results/
+          retention-days: 14
 
   images:
     needs: verify

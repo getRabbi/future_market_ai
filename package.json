@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:py": "node scripts/run-python-tests.mjs",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "db:generate": "drizzle-kit generate --config packages/db/drizzle.config.ts",
     "db:migrate": "tsx packages/db/src/cli/migrate.ts",
     "db:probe": "tsx packages/db/src/cli/probe.ts",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
+    "@playwright/test": "1.63.0",
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",

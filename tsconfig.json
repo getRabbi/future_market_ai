@@ -18,6 +18,7 @@
     "apps/web/functions/**/*.ts",
     "apps/web/test/**/*.ts",
     "test/**/*.ts",
+    "e2e/**/*.ts",
     "scripts/**/*.ts"
   ]
 }
