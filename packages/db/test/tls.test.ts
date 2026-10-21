@@ -72,7 +72,8 @@ describe.skipIf(!py)('TLS against a real PostgreSQL server', () => {
       user: 'postgres',
       password: PASSWORD,
       port: PORT,
-      persistent: false,
+      // persistent: our afterAll removes the directory with retries (Windows holds handles briefly).
+      persistent: true,
       initdbFlags: ['--encoding=UTF8', '--locale=C'],
       postgresFlags: ['-c', 'ssl=on', '-c', `ssl_cert_file=${posix(path.join(certs, 'server.pem'))}`, '-c', `ssl_key_file=${posix(path.join(certs, 'server.key'))}`],
       onLog: () => {},

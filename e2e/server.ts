@@ -39,7 +39,7 @@ const freePort = () =>
 const pgPort = await freePort();
 const pgDir = path.join(root, '.data', `pg-e2e-${process.pid}`);
 fs.rmSync(pgDir, { recursive: true, force: true });
-const pgServer = new EmbeddedPostgres({ databaseDir: pgDir, user: 'postgres', password: 'fg-e2e-only', port: pgPort, persistent: false, initdbFlags: ['--encoding=UTF8', '--locale=C'], onLog: () => {}, onError: () => {} });
+const pgServer = new EmbeddedPostgres({ databaseDir: pgDir, user: 'postgres', password: 'fg-e2e-only', port: pgPort, persistent: true, initdbFlags: ['--encoding=UTF8', '--locale=C'], onLog: () => {}, onError: () => {} });
 await pgServer.initialise();
 await pgServer.start();
 const admin = new pg.Client({ connectionString: `postgres://postgres:fg-e2e-only@localhost:${pgPort}/postgres` });
@@ -122,7 +122,14 @@ const stop = async () => {
   await app.close().catch(() => {});
   await runtime.close().catch(() => {});
   await pgServer.stop().catch(() => {});
-  fs.rmSync(pgDir, { recursive: true, force: true });
+  for (let i = 0; i < 10; i++) {
+    try {
+      fs.rmSync(pgDir, { recursive: true, force: true });
+      break;
+    } catch {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
   process.exit(0);
 };
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, () => void stop());
