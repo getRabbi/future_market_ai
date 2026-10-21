@@ -5,7 +5,7 @@ import { createDb } from '@futuregrow/db';
 import { loadEnv } from '../env.js';
 
 const env = loadEnv();
-const handle = createDb({ connectionString: env.DATABASE_URL, max: 1, applicationName: 'futuregrow-key-rotation' });
+const handle = createDb({ connectionString: env.DATABASE_URL, max: 1, applicationName: 'futuregrow-key-rotation', ssl: env.DATABASE_SSL, sslCa: env.DATABASE_SSL_CA, production: env.NODE_ENV === 'production' });
 try {
   const result = await reencryptCredentials(handle.db, buildCoreConfig(env));
   console.log(JSON.stringify(result));

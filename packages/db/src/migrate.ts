@@ -4,7 +4,7 @@ import { ACTION_TRANSITIONS } from '@futuregrow/contracts';
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { runMigrations as runGraphileMigrations } from 'graphile-worker';
-import { createDb } from './client.js';
+import { type CreateDbOptions, createDb } from './client.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const MIGRATIONS_FOLDER = process.env.FG_MIGRATIONS_FOLDER ?? path.resolve(here, '../drizzle');
@@ -14,14 +14,17 @@ export interface MigrateResult {
   transitions: number;
 }
 
+export type MigrateOptions = Pick<CreateDbOptions, 'ssl' | 'sslCa' | 'production'>;
+
 /**
  * Apply all migrations: Graphile Worker schema first (the outbox trigger enqueues into it),
  * then application migrations, then idempotent security/reference-data sync.
  */
-export async function runAllMigrations(connectionString: string): Promise<MigrateResult> {
-  await runGraphileMigrations({ connectionString });
-  const handle = createDb({ connectionString, max: 1, applicationName: 'futuregrow-migrate' });
+export async function runAllMigrations(connectionString: string, opts: MigrateOptions = {}): Promise<MigrateResult> {
+  // One pool (with the TLS policy) for Graphile and Drizzle, so both verify the server the same way.
+  const handle = createDb({ connectionString, max: 2, applicationName: 'futuregrow-migrate', ...opts });
   try {
+    await runGraphileMigrations({ pgPool: handle.pool });
     await migrate(handle.db, { migrationsFolder: MIGRATIONS_FOLDER });
     const pairs = Object.entries(ACTION_TRANSITIONS).flatMap(([from, tos]) => tos.map((to) => [from, to] as const));
     await handle.db.transaction(async (tx) => {

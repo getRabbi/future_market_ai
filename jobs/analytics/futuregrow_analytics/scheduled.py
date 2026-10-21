@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg
 
 from . import backup, runner
+from .pgtls import secure_dsn
 
 
 def backup_due(last_success: datetime | None, now: datetime, interval_hours: float) -> bool:
@@ -38,6 +39,7 @@ def main() -> int:
     if not dsn or not os.environ.get("FG_BACKUP_KEY"):
         print(json.dumps({"backups": "not configured (FG_BACKUP_KEY unset)"}))
         return rc
+    dsn = secure_dsn(dsn)
     key = backup.load_key(os.environ["FG_BACKUP_KEY"])
     store = backup.store_from_env()
     interval = float(os.environ.get("FG_BACKUP_INTERVAL_HOURS", "24"))

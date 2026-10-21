@@ -46,6 +46,8 @@ import psycopg
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from psycopg import sql
 
+from .pgtls import secure_dsn
+
 FORMAT = "futuregrow-logical-backup"
 VERSION = 1
 MAGIC = b"FGB1"
@@ -457,6 +459,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     if not dsn:
         print("DATABASE_URL is required", file=sys.stderr)
         return 2
+    dsn = secure_dsn(dsn)
     store = store_from_env()
     key = load_key(os.environ.get("FG_BACKUP_KEY"))
     started = datetime.now(timezone.utc)
@@ -478,14 +481,14 @@ def main(argv: Iterable[str] | None = None) -> int:
     if args.cmd == "verify":
         res = verify_backup(store, object_key, key)
         if res["ok"] and args.restore_into:
-            drill = restore_backup(store, object_key, key, args.restore_into)
+            drill = restore_backup(store, object_key, key, secure_dsn(args.restore_into))
             res["restoreDrill"] = drill
             res["ok"] = drill["ok"]
             _record(dsn, "restore_drill", "succeeded" if drill["ok"] else "failed", started, object_key, None, None, {}, drill)
         _record(dsn, "verification", "succeeded" if res["ok"] else "failed", started, object_key, None, None, res.get("rows", {}), {"problems": res["problems"], "decrypted": res["decrypted"]})
         print(json.dumps(res, default=str))
         return 0 if res["ok"] else 1
-    res = restore_backup(store, object_key, key, args.into)
+    res = restore_backup(store, object_key, key, secure_dsn(args.into))
     print(json.dumps(res, default=str))
     return 0 if res["ok"] else 1
 

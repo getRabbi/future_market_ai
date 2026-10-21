@@ -18,6 +18,7 @@ import numpy as np
 
 from . import __version__, experiments, forecasting, mmm, propensity, topics, trends
 from .db import Store, dumps, emit, jsonb
+from .pgtls import secure_dsn
 
 STEP = {"hour": timedelta(hours=1), "day": timedelta(days=1), "week": timedelta(weeks=1)}
 SEASON = {"hour": 24, "day": 7, "week": 52, "month": 12}
@@ -355,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     if not dsn:
         print("DATABASE_URL is required", file=sys.stderr)
         return 2
+    dsn = secure_dsn(dsn)
     budget = float(os.environ.get("ANALYTICS_MAX_SECONDS", "900"))
     worker = f"analytics:{socket.gethostname()}:{os.getpid()}"
     store = Store(dsn)

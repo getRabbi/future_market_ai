@@ -36,7 +36,9 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
     connectionString: env.DATABASE_URL,
     max: env.DATABASE_POOL_MAX,
     applicationName: `futuregrow-${service}`,
-    ssl: env.DATABASE_SSL ? { rejectUnauthorized: true, ...(env.DATABASE_SSL_CA ? { ca: env.DATABASE_SSL_CA } : {}) } : undefined,
+    ssl: env.DATABASE_SSL,
+    sslCa: env.DATABASE_SSL_CA,
+    production: env.NODE_ENV === 'production',
     onPoolError: (err) => logger.error({ err }, 'database pool error'),
   });
   const caps = await probeDatabase(handle.db);
@@ -72,7 +74,7 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
     logger.warn('no model provider configured: agent stages will abstain (B-003)');
   }
   const embedder = env.EMBEDDINGS_BASE_URL && env.EMBEDDINGS_MODEL ? new OpenAICompatibleEmbedder({ baseUrl: env.EMBEDDINGS_BASE_URL, model: env.EMBEDDINGS_MODEL, ...(env.EMBEDDINGS_API_KEY ? { apiKey: env.EMBEDDINGS_API_KEY } : {}) }) : undefined;
-  logger.info({ pg: caps.serverVersion, pgvector: caps.pgvectorInstalled || caps.pgvectorAvailable, storage: deps.store.kind, models: Object.keys(providers), embeddings: Boolean(embedder) }, 'runtime ready');
+  logger.info({ pg: caps.serverVersion, dbTls: { ...handle.tls, encrypted: caps.ssl, version: caps.sslVersion }, pgvector: caps.pgvectorInstalled || caps.pgvectorAvailable, storage: deps.store.kind, models: Object.keys(providers), embeddings: Boolean(embedder) }, 'runtime ready');
   return {
     deps,
     pool: handle.pool,

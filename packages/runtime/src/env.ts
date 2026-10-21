@@ -10,8 +10,9 @@ export const EnvSchema = z
     LOG_LEVEL: z.string().default('info'),
     DATABASE_URL: z.string().min(1),
     DATABASE_POOL_MAX: z.coerce.number().int().positive().default(5),
-    DATABASE_SSL: bool.default(false),
-    /** PEM CA bundle for managed PostgreSQL with a private CA. Certificate verification is never disabled. */
+    /** TLS to PostgreSQL (always verify-full). Unset: from sslmode in DATABASE_URL; production defaults to TLS. */
+    DATABASE_SSL: bool.optional(),
+    /** PEM CA bundle (or a path to one) for managed PostgreSQL with a private CA. Verification is never disabled. */
     DATABASE_SSL_CA: z.string().optional(),
     /** Public URL of this API (Better Auth baseURL, unsubscribe and referral links). */
     API_BASE_URL: z.string().url().default('http://localhost:8080'),
