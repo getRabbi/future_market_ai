@@ -47,6 +47,8 @@ const csp = [
   "object-src 'none'",
 ].join('; ');
 
+// HTML pages carry `no-transform` so the Cloudflare edge leaves them byte-for-byte as built: the
+// zone's Web Analytics auto-injection would otherwise add a beacon script the CSP above blocks.
 const headers = `/*
   Content-Security-Policy: ${csp}
   X-Content-Type-Options: nosniff
@@ -59,11 +61,17 @@ const headers = `/*
 /_astro/*
   Cache-Control: public, max-age=31536000, immutable
 
+/
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
+
 /app/*
-  Cache-Control: no-store
+  Cache-Control: no-store, no-transform
 
 /login/*
-  Cache-Control: no-store
+  Cache-Control: no-store, no-transform
+
+/invite/*
+  Cache-Control: no-store, no-transform
 `;
 writeFileSync(join(dist, '_headers'), headers);
 console.log(`_headers written: ${files.length} pages, ${scripts.size} inline script hash(es), ${styles.size} inline style hash(es)`);
