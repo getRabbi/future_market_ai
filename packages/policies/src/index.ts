@@ -1,6 +1,6 @@
 import type { ActionRisk, ActionTypeDefinition, ApprovalGroup, CategoryPolicy, DataPurpose, PlatformCapability, PolicyDecision, PolicyOutcome, Proposer, RiskCategory, TenantPolicy, TenantRole } from '@futuregrow/contracts';
 
-export const POLICY_VERSION = 'fg-policy-1.0.0';
+export const POLICY_VERSION = 'fg-policy-1.1.0';
 
 /* ------------------------------------------------------------------ */
 /* Inputs: facts are gathered by the caller from the database; the      */
@@ -66,6 +66,8 @@ export interface PolicyFacts {
   engagedKillSwitches: readonly { scope: string; targetRef: string | null; reason: string }[];
   capability: PlatformCapability | null;
   configuredApiVersion: string | null;
+  /** Effective sunset of the configured provider API version (FG-P2-001); null = none known. */
+  apiVersionSunset?: { at: string; basis: string } | null;
   connection: ConnectionFact | null;
   evidence: readonly EvidenceFact[];
   missingEvidenceIds: readonly string[];
@@ -168,6 +170,11 @@ function ruleCapability(i: PolicyInput): Finding[] {
   if (!cap.supported) return [deny('R-CAPABILITY', 'CAPABILITY_UNSUPPORTED', `${d.capability} is marked unsupported (fallback ${cap.fallback})`)];
   if (i.facts.configuredApiVersion && cap.apiVersion !== i.facts.configuredApiVersion) {
     return [deny('R-CAPABILITY', 'API_VERSION_UNREGISTERED', `configured API version ${i.facts.configuredApiVersion} has no capability record (registered ${cap.apiVersion})`)];
+  }
+  // Unsupported versions are blocked before the provider removes them (product plan, risk table).
+  const sunset = i.facts.apiVersionSunset;
+  if (sunset && Date.parse(sunset.at) <= i.now.getTime()) {
+    return [deny('R-CAPABILITY', 'API_VERSION_SUNSET', `${d.provider} API ${i.facts.configuredApiVersion ?? ''} reached its sunset on ${sunset.at.slice(0, 10)} (${sunset.basis}); upgrade the connector version`)];
   }
   return [];
 }
@@ -436,6 +443,7 @@ export function defaultTenantPolicy(): TenantPolicy {
     mmmGates: null,
     approvedJurisdictions: [],
     evidenceMaxAgeHours: null,
+    aiSpend: null,
   };
 }
 

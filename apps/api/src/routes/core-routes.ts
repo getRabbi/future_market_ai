@@ -1,5 +1,6 @@
+import { LIFECYCLE_PROVIDERS } from '@futuregrow/connectors';
 import { KILL_SWITCH_SCOPES, listActionTypes, MODULES } from '@futuregrow/contracts';
-import { connectionsModule, evidence, execution, governance } from '@futuregrow/core';
+import { apiLifecycle, connectionsModule, evidence, execution, getAiBudget, governance, recordApiSunset } from '@futuregrow/core';
 import { alerts, artifactLicenses, authAccount, authUser, incidents, killSwitches, member, organization, platformCapabilities, withSystem } from '@futuregrow/db';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -86,7 +87,23 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext): void 
   r.post('/v1/governance/artifacts/:id/approve', { schema: { tags: ['governance'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => governance.approveArtifact(tx, tenantOf(req), actorOf(req), req.params.id)));
   r.get('/v1/governance/costs', { schema: { tags: ['governance'], querystring: z.object({ days: z.coerce.number().int().min(1).max(366).default(30) }) } }, async (req) => tenantTx(ctx, req, (tx) => governance.costSummary(tx, tenantOf(req), new Date(Date.now() - req.query.days * 86_400_000))));
 
+  r.get('/v1/governance/ai-budget', { schema: { tags: ['governance'] } }, async (req) => tenantTx(ctx, req, (tx) => getAiBudget(tx, tenantOf(req), deps.config)));
+  r.get('/v1/governance/api-lifecycle', { schema: { tags: ['governance'] } }, async (req) => tenantTx(ctx, req, (tx) => apiLifecycle(tx, deps.config.versions)));
+
   // Platform-operator controls (platform admin only; checked inside core).
+  r.put(
+    '/v1/platform/api-lifecycle',
+    {
+      schema: {
+        tags: ['platform'],
+        body: z.object({ provider: z.enum(LIFECYCLE_PROVIDERS as [string, ...string[]]), apiVersion: z.string().min(1).max(20), sunsetAt: z.string().datetime({ offset: true }), sourceUrl: z.string().url() }),
+      },
+    },
+    async (req) => {
+      await recordApiSunset(deps.db, { userId: actorOf(req).id }, req.body as Parameters<typeof recordApiSunset>[2]);
+      return { ok: true };
+    },
+  );
   r.post('/v1/platform/system-halt', { schema: { tags: ['platform'], body: z.object({ engaged: z.boolean(), reason: z.string().min(3) }) } }, async (req) => {
     await governance.setSystemHalt(deps.db, { userId: actorOf(req).id }, req.body.engaged, req.body.reason);
     return { ok: true };

@@ -130,7 +130,58 @@ function Policy() {
   );
 }
 
-const REGISTRIES: Resource[] = [
+interface AiBudgetView {
+  limitUsd: number | null;
+  source: 'tenant' | 'platform' | 'none';
+  warnAtFraction: number;
+  periodStart: string;
+  spentUsd: number;
+  unpricedCalls: number;
+  reservedUsd: number;
+  remainingUsd: number | null;
+}
+
+const money = (n: number) => n.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 });
+
+/** FG-P2-001: month-to-date model spend against the tenant's limit (set aiSpend in the policy). */
+function AiSpending() {
+  const b = useApi<AiBudgetView>('/v1/governance/ai-budget');
+  const d = b.data;
+  const used = d?.limitUsd ? Math.min(1, (d.spentUsd + d.reservedUsd) / d.limitUsd) : 0;
+  return (
+    <section className="card" aria-labelledby="ai-spend">
+      <header>
+        <h2 id="ai-spend">AI spending this month</h2>
+        <span className="small muted">Every model call is checked first; when the limit would be exceeded the agent abstains and a critical alert is raised.</span>
+      </header>
+      <ErrorNotice error={b.error} />
+      {d ? (
+        <div className="stack">
+          <p>
+            <strong>{money(d.spentUsd)}</strong> spent since {d.periodStart.slice(0, 10)}
+            {d.limitUsd ? (
+              <>
+                {' '}
+                of <strong>{money(d.limitUsd)}</strong> ({d.source === 'tenant' ? 'organization limit' : 'platform default'}); {money(d.remainingUsd ?? 0)} left.
+              </>
+            ) : (
+              ' with no limit set.'
+            )}
+          </p>
+          {d.limitUsd ? <meter min={0} max={1} low={d.warnAtFraction} high={0.95} optimum={0} value={used} aria-label="Share of the monthly AI limit used" style={{ width: '100%' }} /> : null}
+          {d.unpricedCalls ? <div className="notice warn">{d.unpricedCalls} model call(s) this month have no registry price, so spend against a limit cannot be measured; calls stop while a limit applies.</div> : null}
+          <p className="small muted">
+            Set or change the limit in the autonomy policy: <code>{'"aiSpend": { "monthlyLimitUsd": 25, "warnAtFraction": 0.8 }'}</code>.
+          </p>
+        </div>
+      ) : (
+        <p className="muted">Loading…</p>
+      )}
+    </section>
+  );
+}
+
+export const REGISTRIES: Resource[] = [
   {
     title: 'Sender identity (CAN-SPAM)',
     create: { label: 'Save sender identity', method: 'PUT', path: '/v1/governance/sender-identity', example: { fromName: 'Acme', fromEmail: 'hello@acme.example', replyTo: 'support@acme.example', postalAddress: '1 Market St, San Francisco, CA 94105, USA' } },
@@ -173,6 +224,14 @@ const REGISTRIES: Resource[] = [
     },
     rowActions: [{ label: 'Approve for production', path: '/v1/governance/artifacts/:id/approve', when: { field: 'approvedForProduction', values: [false] } }],
   },
+  {
+    title: 'Provider API lifecycle',
+    list: '/v1/governance/api-lifecycle',
+    pick: 'apis',
+    columns: ['provider', 'apiVersion', 'status', 'sunsetAt', 'daysLeft', 'sunsetSource', 'basis'],
+    note: 'Versions past their sunset are blocked by policy (API_VERSION_SUNSET). Platform admins record published dates with PUT /v1/platform/api-lifecycle.',
+  },
+  { title: 'Model end of life', list: '/v1/governance/api-lifecycle', pick: 'models', columns: ['provider', 'modelId', 'eolAt', 'daysLeft', 'status'], note: 'Approved models past their end-of-life date are no longer called.' },
   { title: 'Platform capabilities', list: '/v1/governance/capabilities', columns: ['platform', 'capability', 'apiVersion', 'supported', 'requiredScopes', 'appReviewRequired', 'termsCheckedAt'] },
   { title: 'Cost (30 days)', list: '/v1/governance/costs', columns: ['category', 'provider', 'quantity', 'known_usd', 'unpriced_rows'], note: 'Rows without a registry price are counted, never estimated.' },
 ];
@@ -182,6 +241,7 @@ export function Governance() {
     <div className="stack">
       <KillSwitches />
       <Policy />
+      <AiSpending />
       {REGISTRIES.map((r) => (
         <ResourcePanel key={r.title} resource={r} />
       ))}

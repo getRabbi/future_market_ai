@@ -4,6 +4,7 @@ import { actionRequests, assets, budgetReservations, claims, connections, consen
 import { identifierHash } from '@futuregrow/observability';
 import type { DisclosureFact, MessagingFact, PolicyFacts } from '@futuregrow/policies';
 import { and, eq, gte, inArray, ne, sql } from 'drizzle-orm';
+import { effectiveSunset } from '../../api-lifecycle.js';
 import type { CoreDeps } from '../../deps.js';
 import { approvedJurisdictions, engagedKillSwitchesFor, isSystemHalted, senderIdentityComplete } from '../m24-governance/index.js';
 
@@ -175,6 +176,7 @@ export async function gatherPolicyFacts(tx: Tx, deps: CoreDeps, input: FactInput
     }),
     capability,
     configuredApiVersion: configured,
+    apiVersionSunset: def && def.provider !== 'internal' ? await effectiveSunset(tx, def.provider, deps.config.versions, now) : null,
     connection,
     evidence,
     missingEvidenceIds: input.evidenceIds.filter((id) => !evRows.some((e) => e.id === id)),

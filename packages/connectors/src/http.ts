@@ -64,6 +64,8 @@ export interface HttpClientOptions {
   baseBackoffMs?: number;
   userAgent?: string;
   requestIdHeaders?: string[];
+  /** Observes every provider response (deprecation monitoring). Must not throw or block. */
+  onResponse?: (info: { url: string; status: number; headers: Headers }) => void;
 }
 
 const DEFAULT_REQUEST_ID_HEADERS = ['x-request-id', 'x-fb-trace-id', 'request-id', 'x-goog-request-id', 'x-tt-logid', 'x-shopify-request-id'];
@@ -82,6 +84,7 @@ export class HttpClient {
   private readonly baseBackoffMs: number;
   private readonly userAgent: string;
   private readonly requestIdHeaders: string[];
+  private readonly onResponse: HttpClientOptions['onResponse'];
 
   constructor(opts: HttpClientOptions = {}) {
     this.fetchImpl = opts.fetchImpl ?? fetch;
@@ -89,6 +92,7 @@ export class HttpClient {
     this.baseBackoffMs = opts.baseBackoffMs ?? 250;
     this.userAgent = opts.userAgent ?? 'FUTUREGROW/0.1 (+https://futuregrow.invalid/bot)';
     this.requestIdHeaders = opts.requestIdHeaders ?? DEFAULT_REQUEST_ID_HEADERS;
+    this.onResponse = opts.onResponse;
   }
 
   async request<T = unknown>(req: HttpRequest): Promise<HttpResponse<T>> {
@@ -139,6 +143,11 @@ export class HttpClient {
       });
     }
 
+    try {
+      this.onResponse?.({ url: req.url, status: res.status, headers: res.headers });
+    } catch {
+      /* observers never affect the request */
+    }
     let raw: Buffer;
     try {
       raw = await readLimited(res, req.maxResponseBytes ?? 5 * 1024 * 1024);

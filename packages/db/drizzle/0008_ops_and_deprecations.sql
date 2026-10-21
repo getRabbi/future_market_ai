@@ -29,4 +29,6 @@ CREATE TABLE "ops_notifications" (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX "api_deprecation_signals_uq" ON "api_deprecation_signals" USING btree ("provider","api_version","signal","endpoint");--> statement-breakpoint
-CREATE INDEX "ops_notifications_open_idx" ON "ops_notifications" USING btree ("kind","resolved_at");
+CREATE INDEX "ops_notifications_open_idx" ON "ops_notifications" USING btree ("kind","resolved_at");--> statement-breakpoint
+-- Global table: tenants (fg_tenant) may read deprecation evidence for policy facts; writes are system-only.
+INSERT INTO fg_security_config (table_name, tenant_privileges) VALUES ('api_deprecation_signals', 'SELECT') ON CONFLICT (table_name) DO UPDATE SET tenant_privileges = EXCLUDED.tenant_privileges;

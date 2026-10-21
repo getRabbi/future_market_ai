@@ -15,6 +15,7 @@ export interface RuntimeEnv {
   SHOPIFY_API_VERSION?: string;
   VERIFICATION_MAX_ATTEMPTS?: number | string;
   VERIFICATION_BASE_DELAY_SECONDS?: number | string;
+  FG_TENANT_AI_MONTHLY_LIMIT_USD?: number | string;
 }
 
 export function buildCoreConfig(env: RuntimeEnv): CoreConfig {
@@ -39,5 +40,6 @@ export function buildCoreConfig(env: RuntimeEnv): CoreConfig {
       baseDelaySeconds: Number(env.VERIFICATION_BASE_DELAY_SECONDS ?? 15),
     },
     environment,
+    aiSpendDefaultMonthlyUsd: env.FG_TENANT_AI_MONTHLY_LIMIT_USD === undefined || env.FG_TENANT_AI_MONTHLY_LIMIT_USD === '' ? null : Number(env.FG_TENANT_AI_MONTHLY_LIMIT_USD),
   };
 }

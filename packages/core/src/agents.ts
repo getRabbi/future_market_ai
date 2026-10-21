@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { AbstainError, type ApprovedModel, type GenerateResult, ModelGateway, type ModelProvider, type PromptDefinition, type StructuredRequest, type UsageRecord } from '@futuregrow/agent-kernel';
 import { agentRuns, type Db, killSwitches, modelRegistry, withSystem, withTenant } from '@futuregrow/db';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import type { z } from 'zod';
+import { guardAiCall, releaseAiCall } from './ai-budget.js';
 import { actorRef, type CoreDeps, systemActor } from './deps.js';
 import { recordCost } from './modules/m24-governance/index.js';
 import { audit } from './util.js';
@@ -16,7 +17,8 @@ export async function approvedModels(db: Db): Promise<ApprovedModel[]> {
     tx
       .select()
       .from(modelRegistry)
-      .where(and(eq(modelRegistry.approvedForProduction, true), eq(modelRegistry.status, 'active'))),
+      // Past its end-of-life date a model is never called, even if still marked approved (FG-P2-001).
+      .where(and(eq(modelRegistry.approvedForProduction, true), eq(modelRegistry.status, 'active'), or(isNull(modelRegistry.eolAt), gt(modelRegistry.eolAt, new Date())))),
   );
   cache = {
     at: Date.now(),
@@ -29,12 +31,22 @@ export function clearModelCache(): void {
   cache = null;
 }
 
-/** Gateway bound to the registry; usage of every attempt (incl. abstentions) goes to the cost ledger. */
-export function createModelGateway(deps: Pick<CoreDeps, 'db'>, providers: Record<string, ModelProvider>, knownSecrets: string[] = []): ModelGateway {
+/**
+ * Gateway bound to the registry; usage of every attempt (incl. abstentions) goes to the cost
+ * ledger, every attempt is checked against the tenant's AI spending limit first, and an
+ * unavailable provider fails over to the next approved one (FG-P2-001).
+ */
+export function createModelGateway(deps: Pick<CoreDeps, 'db' | 'config'> & Partial<Pick<CoreDeps, 'logger'>>, providers: Record<string, ModelProvider>, knownSecrets: string[] = []): ModelGateway {
   return new ModelGateway({
     providers,
     approvedModels: () => approvedModels(deps.db),
     knownSecrets,
+    beforeCall: async (call) => {
+      const scope = usageScope.getStore();
+      if (scope) await guardAiCall(deps.db, deps.config, scope.tenantId, call);
+    },
+    afterCall: releaseAiCall,
+    onProviderFailure: (f) => deps.logger?.warn({ provider: f.provider, model: f.modelId, status: f.status, error: f.message }, 'model provider unavailable; failing over'),
     recordUsage: async (u: UsageRecord) => {
       const scope = usageScope.getStore();
       if (!scope) return;
@@ -126,7 +138,7 @@ export async function runAgent<R>(deps: CoreDeps, tenantId: string, args: { kind
         costUsd: r.costUsd,
         startedAt,
         finishedAt: deps.clock.now().toISOString(),
-        summary: { attempts: r.attempts },
+        summary: { attempts: r.attempts, ...(r.failedOver.length ? { failedOver: r.failedOver.map((f) => `${f.provider}/${f.modelId}: ${f.message}`) } : {}) },
       });
       return r as GenerateResult<never>;
     },

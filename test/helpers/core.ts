@@ -65,6 +65,7 @@ export function testConfig(endpointBase?: string): CoreConfig {
     versions: DEFAULT_API_VERSIONS,
     verification: { maxAttempts: 4, baseDelaySeconds: 1 },
     environment: 'test',
+    aiSpendDefaultMonthlyUsd: null,
   };
 }
 

@@ -57,6 +57,8 @@ export const EnvSchema = z
     NORTHFLANK_PROJECT_ID: z.string().optional(),
     NORTHFLANK_ANALYTICS_JOB_ID: z.string().optional(),
     NORTHFLANK_MEDIA_JOB_ID: z.string().optional(),
+    /** Default monthly model spend limit per tenant (USD at registry prices) when the tenant set none. */
+    FG_TENANT_AI_MONTHLY_LIMIT_USD: z.coerce.number().positive().max(1_000_000).optional(),
     // Operator alerts (Slack/Discord incoming webhook or any https JSON endpoint). Unset = log only.
     ALERT_WEBHOOK_URL: z.string().url().startsWith('https://').optional(),
     /** Label in alerts; defaults to "<NODE_ENV> <APP_BASE_URL host>". */

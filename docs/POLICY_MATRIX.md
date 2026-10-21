@@ -2,7 +2,7 @@
 
 # Policy matrix
 
-Every consequential write is an ActionRequest evaluated by the deterministic policy engine (`fg-policy-1.0.0`) at proposal and again at preflight. Outcomes: ALLOW (pre-authorized), REQUIRE_APPROVAL (one approval per required group, distinct people, never the proposer, MFA, bound to the action hash), or DENY. No action is successful until VERIFIED by independent read-back.
+Every consequential write is an ActionRequest evaluated by the deterministic policy engine (`fg-policy-1.1.0`) at proposal and again at preflight. Outcomes: ALLOW (pre-authorized), REQUIRE_APPROVAL (one approval per required group, distinct people, never the proposer, MFA, bound to the action hash), or DENY. No action is successful until VERIFIED by independent read-back.
 
 ## Action allowlist
 
@@ -50,7 +50,7 @@ A legal group (`legal_approver` or `owner`) is added by R-JURISDICTION and R-CLA
 | --- | --- |
 | R-ALLOWLIST | Action type must be on the deny-by-default allowlist and supported; unsupported types (SMS, WhatsApp, payouts) are denied with their blocker reference. |
 | R-KILL | No engaged kill switch in scope (system, tenant, connector, object, model, agent). Re-checked immediately before the provider call. |
-| R-CAPABILITY | Capability exists in the registry with the configured API version; app-review requirements are met. |
+| R-CAPABILITY | Capability exists in the registry with the configured API version; app-review requirements are met; the configured provider API version has not reached its sunset (FG-P2-001). |
 | R-CONNECTION | Connection is active, healthy enough, and holds every required scope. |
 | R-EVIDENCE | Agent/system proposals need admitted, current evidence permitted for autonomous execution (D-023); human proposals without evidence need approval. |
 | R-CHILDREN / R-SENSITIVE | Children's data and sensitive or proxy attributes never drive targeting or messaging (BLOCK). |

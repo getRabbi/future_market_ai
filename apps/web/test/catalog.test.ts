@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { buildApp } from '../../api/src/app.js';
+import { REGISTRIES } from '../src/components/Governance.js';
 import { SECTION_GROUPS, SECTIONS } from '../src/lib/catalog.js';
 
 let h: CoreHarness;
@@ -29,7 +30,8 @@ const isRead = (path: string) => /\/(lineage|points|stats|performance|snapshots|
 
 function calls() {
   const out: { where: string; method: string; path: string }[] = [];
-  for (const s of SECTIONS) {
+  // Catalog sections plus the bespoke Governance screen's registries.
+  for (const s of [...SECTIONS, { slug: 'governance', resources: REGISTRIES }]) {
     for (const r of s.resources) {
       if (r.list) out.push({ where: `${s.slug}/${r.title} list`, method: 'GET', path: r.list });
       if (r.detail) out.push({ where: `${s.slug}/${r.title} detail`, method: 'GET', path: r.detail });

@@ -354,6 +354,17 @@ export const TenantPolicySchema = z.object({
     .default(null),
   approvedJurisdictions: z.array(z.string().min(2)).default([]),
   evidenceMaxAgeHours: z.number().positive().nullable().default(null),
+  /**
+   * Per-tenant model spending limit for the calendar month (UTC), in USD at registry prices
+   * (FG-P2-001). null = the platform default (FG_TENANT_AI_MONTHLY_LIMIT_USD), if any.
+   */
+  aiSpend: z
+    .object({
+      monthlyLimitUsd: z.number().positive().max(1_000_000),
+      warnAtFraction: z.number().gt(0).lt(1).default(0.8),
+    })
+    .nullable()
+    .default(null),
 });
 export type TenantPolicy = z.infer<typeof TenantPolicySchema>;
 

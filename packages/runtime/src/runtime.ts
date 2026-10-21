@@ -1,6 +1,6 @@
 import { AnthropicProvider, type ModelProvider, OpenAICompatibleEmbedder, OpenAICompatibleProvider } from '@futuregrow/agent-kernel';
 import { HttpClient } from '@futuregrow/connectors';
-import { buildCoreConfig, type CoreDeps, createModelGateway, type JobQueue, type knowledge, ops, systemClock } from '@futuregrow/core';
+import { buildCoreConfig, type CoreDeps, createModelGateway, DeprecationRecorder, type JobQueue, type knowledge, ops, systemClock } from '@futuregrow/core';
 import { configureTenantRole, createDb, probeDatabase } from '@futuregrow/db';
 import { createLogger } from '@futuregrow/observability';
 import { createObjectStore } from '@futuregrow/storage';
@@ -68,13 +68,16 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
     env.EMBEDDINGS_API_KEY,
   ].filter((x): x is string => Boolean(x));
   const notifier: ops.Notifier = env.ALERT_WEBHOOK_URL ? new ops.WebhookNotifier(env.ALERT_WEBHOOK_URL, { knownSecrets: secrets, logger }) : new ops.LogNotifier(logger);
+  const config = buildCoreConfig(env);
+  // Every provider response is checked for Deprecation/Sunset headers and version upgrades.
+  const deprecations = new DeprecationRecorder(handle.db, config.endpoints, config.versions, logger);
   const deps: CoreDeps & { notifier: ops.Notifier } = {
     db: handle.db,
     store: createObjectStore(env),
     jobs: new GraphileJobQueue(utils),
-    http: new HttpClient(),
+    http: new HttpClient({ onResponse: (r) => deprecations.observe(r) }),
     logger,
-    config: buildCoreConfig(env),
+    config,
     clock: systemClock,
     notifier,
   };

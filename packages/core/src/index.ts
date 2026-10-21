@@ -1,3 +1,4 @@
+export * from './api-lifecycle.js';
 export * from './bootstrap.js';
 export * from './deps.js';
 export * from './event-handlers.js';
@@ -15,6 +16,7 @@ export * from './util.js';
 import './modules/m02-customers/executors.js';
 
 export * from './agents.js';
+export * from './ai-budget.js';
 export * as competitorsModule from './modules/m05-competitors/index.js';
 export * as ideas from './modules/m06-ideas/index.js';
 export * as brain from './modules/m07-brain/index.js';

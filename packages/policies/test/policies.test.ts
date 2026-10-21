@@ -141,6 +141,10 @@ describe('policy engine', () => {
     expect(codes(evaluatePolicy(budgetInput({}, { engagedKillSwitches: [{ scope: 'connector', targetRef: 'x', reason: 'r' }] })))).toContain('KILL_SWITCH_ENGAGED');
     expect(codes(evaluatePolicy(budgetInput({}, { capability: null })))).toContain('CAPABILITY_UNKNOWN');
     expect(codes(evaluatePolicy(budgetInput({}, { configuredApiVersion: 'v27' })))).toContain('API_VERSION_UNREGISTERED');
+    // FG-P2-001: a configured version past its effective sunset is blocked; before it, allowed.
+    const now = new Date('2026-10-21T00:00:00Z');
+    expect(codes(evaluatePolicy(budgetInput({ now }, { apiVersionSunset: { at: '2026-10-20T00:00:00.000Z', basis: 'test' } })))).toContain('API_VERSION_SUNSET');
+    expect(codes(evaluatePolicy(budgetInput({ now }, { apiVersionSunset: { at: '2026-12-01T00:00:00.000Z', basis: 'test' } })))).not.toContain('API_VERSION_SUNSET');
     expect(codes(evaluatePolicy(budgetInput({}, { connection: { provider: 'google_ads', status: 'active', grantedScopes: [], appAudited: null, accessLevel: null } })))).toContain('MISSING_SCOPES');
     expect(codes(evaluatePolicy(budgetInput({}, { connection: { provider: 'google_ads', status: 'reauth_required', grantedScopes: [], appAudited: null, accessLevel: null } })))).toContain('CONNECTION_NOT_ACTIVE');
   });

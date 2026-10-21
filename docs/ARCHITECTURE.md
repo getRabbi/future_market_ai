@@ -40,7 +40,7 @@ The Sandbox is for development and a controlled beta only; a public production l
 |---|---|
 | `packages/contracts` | Zod schemas and enums shared everywhere: action allowlist, state machine, evidence, events, 24-module registry, canonical JSON. |
 | `packages/db` | Drizzle schema, SQL migrations (`drizzle/`), RLS/role application, hash-chained audit, tenancy helpers (`withTenant`, `withSystem`, `sequential`). |
-| `packages/policies` | Deterministic policy engine `fg-policy-1.0.0` and approval-group matching. |
+| `packages/policies` | Deterministic policy engine `fg-policy-1.1.0` and approval-group matching. |
 | `packages/connectors` | Official-API executors (execute / verify / rollback), read connectors, SSRF-guarded public fetch, robots.txt, webhook signature verifiers, capability seeds. |
 | `packages/agent-kernel` | Model gateway (registry-gated, circuit breaker, schema re-validation, secret scan, served-by check), Anthropic and OpenAI-compatible adapters, versioned prompts, safety utilities. |
 | `packages/core` | All 24 modules: `m01-evidence` … `m24-governance`, connections, webhooks, agents. |

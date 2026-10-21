@@ -34,6 +34,8 @@ export interface CoreConfig {
   versions: ApiVersions;
   verification: { maxAttempts: number; baseDelaySeconds: number };
   environment: 'development' | 'test' | 'staging' | 'production';
+  /** Monthly model spend limit (USD) for tenants without their own aiSpend policy; null = none. */
+  aiSpendDefaultMonthlyUsd: number | null;
 }
 
 export interface Clock {

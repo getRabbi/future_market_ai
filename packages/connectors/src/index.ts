@@ -9,6 +9,7 @@ import { youtubeRead, youtubeUploadVideo } from './providers/youtube.js';
 import type { ActionExecutor, ReadConnector } from './types.js';
 
 export * from './capabilities.js';
+export * from './deprecations.js';
 export * from './html.js';
 export * from './http.js';
 export { appStoreConnectJwt, fetchSalesReport, readLocalization } from './providers/apple.js';

@@ -1,4 +1,4 @@
-import { type CoreDeps, connectionsModule, evidence, execution, ops, systemActor, webhooks, wireEventHandlers } from '@futuregrow/core';
+import { type CoreDeps, checkApiLifecycle, connectionsModule, evidence, execution, ops, systemActor, webhooks, wireEventHandlers } from '@futuregrow/core';
 import { actionRequests, connections, organization, outboxEvents, withSystem, withTenant } from '@futuregrow/db';
 import { EventBus, rowToEnvelope } from '@futuregrow/events';
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
@@ -122,6 +122,11 @@ export function buildTaskList(deps: CoreDeps, opts: { environment?: string } = {
       await webhooks.webhookRetentionSweep(deps.db, 30);
     },
 
+    /** FG-P2-001: API version / model end-of-life milestones and observed deprecation signals. */
+    api_lifecycle: async () => {
+      await checkApiLifecycle(deps.db, deps.notifier ?? new ops.LogNotifier(deps.logger), deps.config.versions, opts.environment ?? deps.config.environment);
+    },
+
     /** Operator alerts: component health, critical alerts, severe incidents, failed jobs. */
     ops_monitor: async () => {
       const r = await ops.runOpsMonitor(deps.db, deps.notifier ?? new ops.LogNotifier(deps.logger), { environment: opts.environment ?? deps.config.environment });
@@ -133,4 +138,4 @@ export function buildTaskList(deps: CoreDeps, opts: { environment?: string } = {
 }
 
 /** Graphile crontab (UTC). Heavier jobs run on the Northflank analytics/media jobs instead. */
-export const CRONTAB = ['*/5 * * * * watchdog', '*/5 * * * * ops_monitor', '7 * * * * evidence_sweep', '17 * * * * connector_health', '23 3 * * * webhook_retention'].join('\n');
+export const CRONTAB = ['*/5 * * * * watchdog', '*/5 * * * * ops_monitor', '31 * * * * api_lifecycle', '7 * * * * evidence_sweep', '17 * * * * connector_health', '23 3 * * * webhook_retention'].join('\n');
