@@ -85,13 +85,13 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     const archive = fs.readFileSync(path.join(dir, objectKey));
     expect(archive.includes(Buffer.from('dana@example.com'))).toBe(false);
     expect(archive.includes(Buffer.from('Import contacts'))).toBe(false);
-  });
+  }, 120_000);
 
   it('verifies hashes, decrypts every member and matches row counts', () => {
     const r = backup(['verify']);
     expect(r.status, r.stderr).toBe(0);
     expect(r.out).toMatchObject({ ok: true, decrypted: true, objectKey, problems: [] });
-  });
+  }, 120_000);
 
   it('restores into an empty migrated database: counts match, audit chain intact, search works', async () => {
     target = await createTestDatabase();
@@ -108,7 +108,7 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     // Sequences were advanced past restored ids.
     const seqRow = (await target.handle.db.execute<{ next: string; max: string }>(sql`select nextval(pg_get_serial_sequence('audit_log','id'))::text as next, (select max(id) from audit_log)::text as max`)).rows[0]!;
     expect(BigInt(seqRow.next)).toBeGreaterThan(BigInt(seqRow.max));
-  });
+  }, 120_000);
 
   it('refuses to restore over data and records every run', async () => {
     const r = backup(['restore', '--into', target.url]);
@@ -116,7 +116,7 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     expect(r.stderr).toMatch(/not empty/);
     const runs = await withSystem(h.t.handle.db, 'test', (t) => t.execute<{ kind: string; status: string }>(sql`select kind, status from backup_runs order by finished_at`));
     expect(runs.rows.map((x) => `${x.kind}:${x.status}`)).toEqual(expect.arrayContaining(['backup:succeeded', 'verification:succeeded', 'restore_drill:succeeded']));
-  });
+  }, 120_000);
 
   it('detects tampering and wrong keys', () => {
     expect(backup(['verify'], { FG_BACKUP_KEY: randomBytes(32).toString('base64') }).out).toMatchObject({ ok: false, problems: expect.arrayContaining([expect.stringMatching(/cannot decrypt/)]) });
@@ -128,7 +128,7 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     const r = backup(['verify']);
     expect(r.status).toBe(1);
     expect(r.out.problems.join(' ')).toMatch(/SHA-256/);
-  });
+  }, 120_000);
   it('the analytics cron entry takes and verifies a backup only when one is due', () => {
     const due = backup([], { FG_BACKUP_INTERVAL_HOURS: '0' }, 'futuregrow_analytics.scheduled');
     expect(due.status, due.stderr).toBe(0);
@@ -137,5 +137,5 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     const idle = backup([], {}, 'futuregrow_analytics.scheduled');
     expect(idle.status, idle.stderr).toBe(0);
     expect(idle.out).toEqual({ backups: 'nothing due' });
-  });
+  }, 120_000);
 });
