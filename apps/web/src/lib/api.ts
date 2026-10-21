@@ -7,6 +7,13 @@ export const API_BASE = (import.meta.env.PUBLIC_API_BASE ?? '').replace(/\/$/, '
 
 const TENANT_KEY = 'fg.tenant';
 
+/** Fired on window after any successful change, so progress views can re-check. */
+export const CHANGED_EVENT = 'fg:changed';
+
+export function notifyChanged(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(CHANGED_EVENT));
+}
+
 export function getTenant(): string | null {
   try {
     return localStorage.getItem(TENANT_KEY);
@@ -61,6 +68,7 @@ export async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' 
     const message = e.error?.message ?? e.message ?? `${res.status} ${res.statusText}`;
     throw new ApiError(message, res.status, e.error?.code ?? e.code ?? null, e.error?.details ?? null);
   }
+  if (method !== 'GET') notifyChanged();
   return data as T;
 }
 
@@ -76,6 +84,7 @@ export async function uploadBinary<T = unknown>(path: string, file: File, meta: 
   const res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers, credentials: 'include', body: file });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError((data as { error?: { message?: string } } | null)?.error?.message ?? `${res.status}`, res.status, null, data);
+  notifyChanged();
   return data as T;
 }
 

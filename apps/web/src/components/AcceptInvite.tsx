@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import { setTenant } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
+import { Logo } from './ui.js';
 
 /** Invitation landing: create an account for the invited address (if needed), then join. */
 export function AcceptInvite() {
@@ -51,6 +52,9 @@ export function AcceptInvite() {
 
   return (
     <main className="auth-box" id="content">
+      <div className="auth-brand">
+        <Logo /> FUTUREGROW
+      </div>
       <h1>Join FUTUREGROW</h1>
       {signedIn === null ? <p className="muted">Checking your session…</p> : null}
       <form onSubmit={submit}>

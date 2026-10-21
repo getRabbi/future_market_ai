@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from 'react';
 import { authClient } from '../lib/auth.js';
+import { Logo } from './ui.js';
 
 function nextUrl(): string {
   const n = new URLSearchParams(window.location.search).get('next');
@@ -38,6 +39,9 @@ export function Login() {
 
   return (
     <main className="auth-box" id="content">
+      <div className="auth-brand">
+        <Logo /> FUTUREGROW
+      </div>
       <h1>Sign in to FUTUREGROW</h1>
       {step === 'password' ? (
         <form onSubmit={signIn}>

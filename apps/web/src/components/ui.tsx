@@ -163,3 +163,12 @@ export function Drawer({ title, onClose, children }: { title: string; onClose: (
 export function Json({ value }: { value: unknown }) {
   return <pre>{JSON.stringify(value, null, 2)}</pre>;
 }
+
+export function Logo({ size = 28 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="logo">
+      <rect width="32" height="32" rx="8" fill="var(--accent)" />
+      <path d="M9 22l5-6 4 3 5-8" stroke="var(--accent-contrast)" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

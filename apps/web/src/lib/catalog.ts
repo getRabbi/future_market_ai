@@ -4,6 +4,8 @@
  * per-row actions; governance-critical screens (approvals, kill switches, audit) are bespoke.
  */
 
+import { DAILY_SECTIONS, STAGES } from './journey.js';
+
 export interface RowAction {
   label: string;
   /** Path with `:id` (row.id) substituted. */
@@ -604,14 +606,8 @@ export const SECTIONS: Section[] = [
   { slug: 'settings', title: 'Account & security', modules: [], summary: 'Two-factor authentication, organizations and session.', resources: [], custom: 'settings' },
 ];
 
-export const SECTION_GROUPS: { title: string; slugs: string[] }[] = [
-  { title: 'Control', slugs: ['overview', 'approvals', 'governance', 'audit', 'connections'] },
-  { title: 'Foundation', slugs: ['evidence', 'customers', 'knowledge'] },
-  { title: 'Intelligence', slugs: ['market', 'brain', 'analytics', 'experiments', 'audiences'] },
-  { title: 'Creation', slugs: ['offers', 'creative', 'assets', 'personas'] },
-  { title: 'Channels', slugs: ['social', 'ads', 'discovery', 'app', 'lifecycle', 'conversations', 'creators'] },
-  { title: 'Account', slugs: ['settings'] },
-];
+/** Navigation follows the growth journey: daily screens first, then one group per stage. */
+export const SECTION_GROUPS: { title: string; slugs: string[]; stage?: number }[] = [{ title: 'Today', slugs: DAILY_SECTIONS }, ...STAGES.map((s) => ({ title: s.title, slugs: s.sections, stage: s.n }))];
 
 export function sectionBySlug(slug: string): Section | undefined {
   return SECTIONS.find((s) => s.slug === slug);

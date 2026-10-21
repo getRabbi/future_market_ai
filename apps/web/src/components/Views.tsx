@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, type Me, uploadBinary } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
 import { ChangePassword } from './ChangePassword.js';
+import { JourneyHero, Pipeline, RankLadder, Roadmap } from './Journey.js';
 import { Members } from './Members.js';
 import { Badge, DataTable, ErrorNotice, Json, useApi } from './ui.js';
 
@@ -61,33 +62,47 @@ export function Overview({ me }: { me: Me }) {
   const policy = useApi<{ configured: boolean; version: number }>('/v1/governance/policy');
   const openIncidents = (incidents.data ?? []).filter((i) => i.status === 'open');
   const engaged = (kill.data ?? []).filter((k) => k.engaged);
+  const tiles: { label: string; hint: string; href: string; value: number | undefined; tone: 'warn' | 'danger' }[] = [
+    { label: 'Awaiting approval', hint: 'Review the exact action, then approve or reject', href: '/app/approvals', value: approvals.data?.length, tone: 'warn' },
+    { label: 'Escalated / rollback required', hint: 'Needs a person to decide what happens next', href: '/app/approvals?tab=attention', value: escalated.data?.length, tone: 'danger' },
+    { label: 'Open incidents', hint: 'Investigate and resolve in Governance', href: '/app/governance', value: incidents.data ? openIncidents.length : undefined, tone: 'danger' },
+    { label: 'Kill switches engaged', hint: 'Release once the cause is fixed', href: '/app/governance', value: kill.data ? engaged.length : undefined, tone: 'danger' },
+  ];
   return (
-    <div className="stack">
-      {!me.mfaVerified ? (
-        <div className="notice warn">
-          Two-factor authentication is not enabled for your account. Approvals, kill switches, policy changes and connections require it. <a href="/app/settings">Enable TOTP</a>.
-        </div>
-      ) : null}
-      {policy.data && !policy.data.configured ? <div className="notice">The autonomy policy is unconfigured, so every consequential action needs human approval. Configure it under Governance.</div> : null}
-      <div className="grid">
-        <a className="card" href="/app/approvals" style={{ textDecoration: 'none', color: 'inherit' }}>
-          <div className="muted small">Awaiting approval</div>
-          <div className="stat">{approvals.data?.length ?? '…'}</div>
-        </a>
-        <a className="card" href="/app/approvals?tab=attention" style={{ textDecoration: 'none', color: 'inherit' }}>
-          <div className="muted small">Escalated / rollback required</div>
-          <div className="stat">{escalated.data?.length ?? '…'}</div>
-        </a>
-        <a className="card" href="/app/governance" style={{ textDecoration: 'none', color: 'inherit' }}>
-          <div className="muted small">Open incidents</div>
-          <div className="stat">{incidents.data ? openIncidents.length : '…'}</div>
-        </a>
-        <a className="card" href="/app/governance" style={{ textDecoration: 'none', color: 'inherit' }}>
-          <div className="muted small">Kill switches engaged</div>
-          <div className="stat">{kill.data ? engaged.length : '…'}</div>
-        </a>
+    <div className="stack overview">
+      <JourneyHero />
+      <RankLadder />
+
+      <div className="section-head">
+        <h2>Needs you now</h2>
+        <p className="small muted">Handle these first: nothing consequential moves while it waits for a person.</p>
       </div>
+      <div className="grid tiles">
+        {tiles.map((t) => (
+          <a key={t.label} className={`card tile${t.value ? ` ${t.tone}` : ''}`} href={t.href}>
+            <div className="tile-label">{t.label}</div>
+            <div className="stat">{t.value ?? '…'}</div>
+            <div className="tile-hint">{t.value ? t.hint : 'All clear'}</div>
+          </a>
+        ))}
+      </div>
+      {policy.data && !policy.data.configured ? <div className="notice">The autonomy policy is unconfigured, so every consequential action needs human approval. Configure it in Stage 2 (Governance).</div> : null}
       <ErrorNotice error={approvals.error ?? alerts.error ?? incidents.error} />
+
+      <div className="section-head">
+        <h2>Your growth journey</h2>
+        <p className="small muted">
+          Seven stages in the order they build on each other. Tasks tick themselves off from your live data{me.mfaVerified ? '' : ' (start with two-factor sign-in)'}; every task earns XP, and working through the stages in order raises your rank one step per stage. Open any stage to see its tasks.
+        </p>
+      </div>
+      <Roadmap />
+
+      <div className="section-head">
+        <h2>How work flows through FUTUREGROW</h2>
+        <p className="small muted">Every growth move follows the same path. Models propose; deterministic checks, a second person and an independent read-back decide.</p>
+      </div>
+      <Pipeline />
+
       <section className="card">
         <header>
           <h2>Unacknowledged alerts</h2>

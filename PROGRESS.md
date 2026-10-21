@@ -84,6 +84,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Catalog-driven sections for all 24 modules (lists, JSON create forms validated server-side, row actions, detail drawers); a contract test proves every UI call maps to a registered API route and method.
 - [x] Pages Functions proxy for `/v1` and `/api/auth` (D-013) with client-IP hygiene and cookie re-scoping.
 - [x] Playwright browser E2E (B-017 resolved 2026-10-21): six Chromium flows against the real API and production web build with the CSP enforced; CI job `e2e`.
+- [x] Growth journey (2026-10-21): navigation, overview and every section follow seven ordered stages; 18 tasks checked against live data (never ticked by hand), XP ranks Seed → Evergreen, a "do this next" card that respects roles, a stage banner with "how this works" steps per section, and previous/next paging (`apps/web/src/lib/journey.ts`, tested in `apps/web/test/journey.test.ts`).
 
 ### M10 Hardening & deploy — ☑ (deployed 2026-10-20; local container builds ⛔ B-016)
 - [x] FG-P1-005 red-team suite (16 scenarios, models scripted to comply with attacks); retrieved-excerpt injection screening; broader secret detection.

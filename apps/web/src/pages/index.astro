@@ -1,6 +1,7 @@
 ---
 import { MODULES } from '@futuregrow/contracts';
 import Base from '../layouts/Base.astro';
+import { RANKS, STAGES } from '../lib/journey.ts';
 
 const groups = [
   { title: 'Foundation', ids: ['M01', 'M02', 'M03'] },
@@ -14,8 +15,8 @@ const byId = new Map(MODULES.map((m) => [m.id, m]));
 
 <Base title="FUTUREGROW AI — evidence-governed growth">
   <main class="landing" id="content">
-    <section class="hero">
-      <p class="small muted">Controlled beta · invitation only</p>
+    <section class="hero-landing">
+      <p class="eyebrow">Controlled beta · invitation only</p>
       <h1>Growth automation that proves what it did.</h1>
       <p>
         FUTUREGROW turns first-party data, market evidence and experiments into growth decisions. Models propose; deterministic code checks evidence, policy, budgets and approvals, executes through official APIs, and
@@ -23,8 +24,27 @@ const byId = new Map(MODULES.map((m) => [m.id, m]));
       </p>
       <p class="row" style="margin-top: 1.25rem">
         <a class="btn primary" href="/login">Sign in</a>
+        <a class="btn" href="#journey">See the seven stages</a>
         <a class="btn" href="#principles">How it stays safe</a>
       </p>
+    </section>
+
+    <section id="journey" style="margin-top: 2.5rem">
+      <h2>Seven stages, in order</h2>
+      <p class="muted">Each stage builds on the one before it. The control plane tracks your progress from live data and ranks your organization from {RANKS[0]!.name} to {RANKS[RANKS.length - 1]!.name}.</p>
+      <ol class="landing-steps">
+        {
+          STAGES.map((s) => (
+            <li>
+              <span class="landing-num">{s.n}</span>
+              <div>
+                <strong>{s.title}</strong>
+                <p class="small muted">{s.tagline}</p>
+              </div>
+            </li>
+          ))
+        }
+      </ol>
     </section>
 
     <section id="principles" style="margin-top: 2.5rem">

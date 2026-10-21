@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { notifyChanged } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
 import { DataTable, ErrorNotice } from './ui.js';
 
@@ -42,6 +43,7 @@ export function Members({ tenantId, canManage }: { tenantId: string; canManage: 
     if (r.error) return setError(new Error(r.error.message ?? 'could not invite'));
     const id = (r.data as { id?: string } | null)?.id;
     if (id) setLink(`${window.location.origin}/invite?id=${encodeURIComponent(id)}`);
+    notifyChanged();
     setEmail('');
     await load();
   };
