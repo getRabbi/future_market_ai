@@ -103,6 +103,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Ops monitoring: public `/statusz`, worker cron `ops_monitor`, operator alerts through one webhook (`ALERT_WEBHOOK_URL`), API 5xx/crash alerts, Cloudflare Workers uptime probe (`infra/cloudflare/uptime-worker`, not yet deployed).
 - [x] FG-P2-001 controls (above) with Governance panels for AI spending and API lifecycle; routes `/v1/governance/ai-budget`, `/v1/governance/api-lifecycle`, `PUT /v1/platform/api-lifecycle`.
 - [x] Playwright browser E2E (B-017).
+- [x] Hosted model providers (B-003, partly): OpenRouter, OpenAI, Gemini and Groq through one adapter, verified live with the agents' strict schemas; gpt-oss-120b on Groq and Claude Opus 5.5 via OpenRouter approved in production with a $25/month default tenant limit.
 
 **Test status (commit 12cdbe1):** 272/272 TS tests (33 files) + 36/36 Python tests + 6/6 browser E2E; typecheck, lint, docs drift, bundles, web build and SBOM policy pass. See TEST_REPORT.md.
 
