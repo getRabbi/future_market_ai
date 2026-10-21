@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type Me, uploadBinary } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
+import { ChangePassword } from './ChangePassword.js';
 import { Members } from './Members.js';
 import { Badge, DataTable, ErrorNotice, Json, useApi } from './ui.js';
 
@@ -196,6 +197,7 @@ export function Settings({ me, onTenant }: { me: Me; onTenant: (id: string) => v
           </div>
         ) : null}
       </section>
+      <ChangePassword email={me.email ?? null} passwordChangedAt={me.passwordChangedAt ?? null} />
       <Members tenantId={me.tenantId} canManage={me.roles.some((r) => r === 'owner' || r === 'admin')} />
       <section className="card">
         <h2>Organizations</h2>
@@ -231,7 +233,7 @@ export function Settings({ me, onTenant }: { me: Me; onTenant: (id: string) => v
       <section className="card">
         <h2>Session</h2>
         <p className="small muted">
-          Signed in as {me.userId}. Roles in this organization: {me.roles.join(', ') || '—'}.
+          Signed in as {me.email ?? me.userId}. Roles in this organization: {me.roles.join(', ') || '—'}.
         </p>
         <button
           type="button"

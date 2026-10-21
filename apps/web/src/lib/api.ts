@@ -81,8 +81,10 @@ export async function uploadBinary<T = unknown>(path: string, file: File, meta: 
 
 export interface Me {
   userId: string;
+  email?: string | null;
   tenantId: string;
   roles: string[];
   mfaVerified: boolean;
+  passwordChangedAt?: string | null;
   memberships: { organizationId: string; role: string; name: string; slug: string }[];
 }

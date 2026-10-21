@@ -7,6 +7,7 @@ import { haveIBeenPwned, organization, twoFactor } from 'better-auth/plugins';
 import { createAccessControl } from 'better-auth/plugins/access';
 import { defaultStatements } from 'better-auth/plugins/organization/access';
 import { and, eq, gt, sql } from 'drizzle-orm';
+import { accountSecurityHooks } from './account-security.js';
 
 /**
  * Better Auth: email/password + TOTP two-factor + organizations (= tenants, D-008).
@@ -55,6 +56,8 @@ export function createAuth(db: Db, env: Env) {
       minPasswordLength: 12,
       maxPasswordLength: 256,
     },
+    // Password policy, per-user change limits, forced session revocation and audit (account-security.ts).
+    hooks: accountSecurityHooks(db),
     databaseHooks: {
       user: {
         create: {

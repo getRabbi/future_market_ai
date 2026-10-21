@@ -1,7 +1,7 @@
 import { KILL_SWITCH_SCOPES, listActionTypes, MODULES } from '@futuregrow/contracts';
 import { connectionsModule, evidence, execution, governance } from '@futuregrow/core';
-import { alerts, artifactLicenses, incidents, killSwitches, member, organization, platformCapabilities, withSystem } from '@futuregrow/db';
-import { desc, eq, isNull, sql } from 'drizzle-orm';
+import { alerts, artifactLicenses, authAccount, authUser, incidents, killSwitches, member, organization, platformCapabilities, withSystem } from '@futuregrow/db';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -16,8 +16,17 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext): void 
   /* ---------------- identity ---------------- */
   r.get('/v1/me', { schema: { tags: ['identity'] } }, async (req) => {
     const actor = actorOf(req);
-    const memberships = await withSystem(deps.db, `user:${actor.id}`, (tx) => tx.select({ organizationId: member.organizationId, role: member.role, name: organization.name, slug: organization.slug }).from(member).innerJoin(organization, eq(organization.id, member.organizationId)).where(eq(member.userId, actor.id)));
-    return { userId: actor.id, tenantId: tenantOf(req), roles: actor.roles, mfaVerified: actor.mfaVerified, memberships };
+    const { memberships, user, credential } = await withSystem(deps.db, `user:${actor.id}`, async (tx) => ({
+      memberships: await tx.select({ organizationId: member.organizationId, role: member.role, name: organization.name, slug: organization.slug }).from(member).innerJoin(organization, eq(organization.id, member.organizationId)).where(eq(member.userId, actor.id)),
+      user: (await tx.select({ email: authUser.email }).from(authUser).where(eq(authUser.id, actor.id)))[0],
+      credential: (
+        await tx
+          .select({ updatedAt: authAccount.updatedAt })
+          .from(authAccount)
+          .where(and(eq(authAccount.userId, actor.id), eq(authAccount.providerId, 'credential')))
+      )[0],
+    }));
+    return { userId: actor.id, email: user?.email ?? null, tenantId: tenantOf(req), roles: actor.roles, mfaVerified: actor.mfaVerified, passwordChangedAt: credential?.updatedAt.toISOString() ?? null, memberships };
   });
 
   r.get('/v1/modules', { schema: { tags: ['identity'] } }, async () => ({ modules: MODULES }));
