@@ -235,11 +235,24 @@ export async function syncCapabilityRegistry(db: Db): Promise<number> {
   return CAPABILITY_SEEDS.length;
 }
 
+const REASONING = ['planning', 'critic', 'generation', 'extraction', 'classification'] as const;
+const ANTHROPIC_TERMS = 'Anthropic Commercial Terms of Service (vendor review required)';
+
 /** Seed default models as NOT approved (D-002): approval requires vendor review. */
-/** D-024: the current Opus serves every reasoning purpose; Opus 4.8 is a refusal-fallback candidate. */
+/**
+ * D-024: the current Opus serves every reasoning purpose (direct, or through OpenRouter restricted
+ * to upstreams that do not collect data); Opus 4.8 is a refusal-fallback candidate. The hosted
+ * OpenAI-compatible models are failover candidates (FG-P2-001). Prices are list prices per million
+ * tokens as published on 2026-10-21 and are re-confirmed at approval time.
+ */
 export const DEFAULT_MODELS = [
-  { provider: 'anthropic', modelId: 'claude-opus-5-5', displayName: 'Claude Opus 5.5', purposes: ['planning', 'critic', 'generation', 'extraction', 'classification'], inputUsdPerMtok: 4, outputUsdPerMtok: 20 },
-  { provider: 'anthropic', modelId: 'claude-opus-4-8', displayName: 'Claude Opus 4.8 (refusal fallback)', purposes: ['fallback'], inputUsdPerMtok: 5, outputUsdPerMtok: 25 },
+  { provider: 'anthropic', modelId: 'claude-opus-5-5', displayName: 'Claude Opus 5.5', purposes: REASONING, inputUsdPerMtok: 4, outputUsdPerMtok: 20, terms: ANTHROPIC_TERMS },
+  { provider: 'anthropic', modelId: 'claude-opus-4-8', displayName: 'Claude Opus 4.8 (refusal fallback)', purposes: ['fallback'], inputUsdPerMtok: 5, outputUsdPerMtok: 25, terms: ANTHROPIC_TERMS },
+  { provider: 'openrouter', modelId: 'anthropic/claude-opus-5.5', displayName: 'Claude Opus 5.5 via OpenRouter', purposes: REASONING, inputUsdPerMtok: 4, outputUsdPerMtok: 20, terms: 'OpenRouter Terms of Service and Anthropic Commercial Terms; requests restricted to upstreams with data_collection=deny' },
+  { provider: 'openai', modelId: 'gpt-5.5', displayName: 'GPT-5.5', purposes: REASONING, inputUsdPerMtok: 5, outputUsdPerMtok: 30, terms: 'OpenAI Services Agreement (API data not used for training by default)' },
+  { provider: 'openai', modelId: 'gpt-5.4-mini', displayName: 'GPT-5.4 mini', purposes: REASONING, inputUsdPerMtok: 0.75, outputUsdPerMtok: 4.5, terms: 'OpenAI Services Agreement (API data not used for training by default)' },
+  { provider: 'gemini', modelId: 'gemini-3.5-flash', displayName: 'Gemini 3.5 Flash', purposes: REASONING, inputUsdPerMtok: 1.5, outputUsdPerMtok: 9, terms: 'Gemini API Additional Terms: paid tier only (the unpaid tier may use prompts to improve Google products)' },
+  { provider: 'groq', modelId: 'openai/gpt-oss-120b', displayName: 'gpt-oss-120b on Groq', purposes: REASONING, inputUsdPerMtok: 0.15, outputUsdPerMtok: 0.6, terms: 'Groq Services Agreement (no training on inputs/outputs, no retention by default); weights Apache-2.0' },
 ] as const;
 
 export async function seedModelRegistry(db: Db): Promise<void> {
@@ -252,11 +265,10 @@ export async function seedModelRegistry(db: Db): Promise<void> {
           modelId: m.modelId,
           displayName: m.displayName,
           purposes: [...m.purposes],
-          licenseOrTerms: 'Anthropic Commercial Terms of Service (vendor review required)',
+          licenseOrTerms: m.terms,
           commercialUse: 'unknown',
           trainingOnCustomerData: 'unknown',
           approvedForProduction: false,
-          // List prices as published by the vendor on 2026-10-06; re-confirmed at approval time.
           inputUsdPerMtok: m.inputUsdPerMtok,
           outputUsdPerMtok: m.outputUsdPerMtok,
         })

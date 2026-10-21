@@ -2,10 +2,18 @@ import { z } from 'zod';
 import { findSecrets } from './safety.js';
 import { AbstainError, type ApprovedModel, type ModelProvider, type ProviderOutcome, ProviderUnavailableError, type ProviderUsage, type StructuredRequest } from './types.js';
 
-/** Default routing (D-024): the current Opus for every reasoning purpose. */
+/**
+ * Default routing (D-024): the current Opus for every reasoning purpose, direct or through
+ * OpenRouter; the other approved providers serve as failover (FG-P2-001) in this order.
+ */
 export const PREFERRED_MODELS: Record<string, string[]> = {
   anthropic: ['claude-opus-5-5'],
+  openrouter: ['anthropic/claude-opus-5.5'],
+  openai: ['gpt-5.5', 'gpt-5.4-mini'],
+  gemini: ['gemini-3.5-flash'],
+  groq: ['openai/gpt-oss-120b'],
 };
+const PROVIDER_ORDER = Object.keys(PREFERRED_MODELS);
 
 const EFFORT_BY_PURPOSE = { planning: 'high', critic: 'high', generation: 'medium', extraction: 'low', classification: 'low' } as const;
 
@@ -224,10 +232,11 @@ export function maxCost(models: ApprovedModel[], system: string, messages: { con
   return worst;
 }
 
+/** Provider order first, then the provider's own preference; unlisted providers and models last. */
 function rank(m: ApprovedModel): number {
-  const pref = PREFERRED_MODELS[m.provider] ?? [];
-  const i = pref.indexOf(m.modelId);
-  return i === -1 ? 100 : i;
+  const p = PROVIDER_ORDER.indexOf(m.provider);
+  const i = (PREFERRED_MODELS[m.provider] ?? []).indexOf(m.modelId);
+  return (p === -1 ? PROVIDER_ORDER.length : p) * 100 + (i === -1 ? 99 : i);
 }
 
 function approved(servedBy: string, ids: Set<string>): boolean {

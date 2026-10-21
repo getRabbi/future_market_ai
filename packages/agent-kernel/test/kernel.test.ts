@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
-import { AbstainError, AnthropicProvider, type ApprovedModel, findSecrets, injectionSignals, ModelGateway, type ModelProvider, PROMPTS, type ProviderOutcome, ProviderUnavailableError, redactPii, untrustedBlock } from '../src/index.js';
+import { AbstainError, AnthropicProvider, type ApprovedModel, findSecrets, HOSTED_PROVIDERS, type HostedProvider, injectionSignals, ModelGateway, type ModelProvider, OpenAICompatibleProvider, PROMPTS, type ProviderOutcome, ProviderUnavailableError, redactPii, untrustedBlock } from '../src/index.js';
 
 const Out = z.object({ title: z.string(), score: z.number() });
 const opus: ApprovedModel = { provider: 'scripted', modelId: 'claude-opus-5-5', purposes: ['planning', 'critic', 'generation', 'extraction', 'classification'], inputUsdPerMtok: 4, outputUsdPerMtok: 20 };
@@ -242,5 +242,85 @@ describe('AnthropicProvider (official SDK) against a fixture endpoint', () => {
     const err = await gw.generate(req).catch((e) => e);
     expect(err).toBeInstanceOf(AbstainError);
     expect(err.reason).toBe('OUTPUT_TRUNCATED');
+  });
+});
+
+describe('hosted OpenAI-compatible providers (B-003) against a fixture endpoint', () => {
+  const server = new FixtureServer();
+  beforeAll(() => server.start());
+  afterAll(() => server.stop());
+  beforeEach(() => server.reset());
+
+  const completion = (overrides: Record<string, unknown> = {}, message: Record<string, unknown> = {}) => ({
+    id: 'gen-1',
+    model: 'anthropic/claude-opus-5.5',
+    choices: [{ message: { role: 'assistant', content: JSON.stringify({ title: 'Launch', score: 0.3 }), ...message }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 120, completion_tokens: 30 },
+    ...overrides,
+  });
+  const hosted = (name: HostedProvider, path: string) => new OpenAICompatibleProvider({ ...HOSTED_PROVIDERS[name], chatUrl: `${server.baseUrl}${path}`, name, apiKey: `${name}-key` });
+
+  it('sends each host its own token parameter, routing fields and a schema without $schema', async () => {
+    server.on('POST', '/api/v1/chat/completions', { json: completion() });
+    const out = await hosted('openrouter', '/api/v1/chat/completions').generateStructured(req, { model: 'anthropic/claude-opus-5.5', fallbackModels: [] });
+    expect(out).toMatchObject({ kind: 'ok', output: { title: 'Launch', score: 0.3 }, servedBy: 'anthropic/claude-opus-5.5', requestId: 'gen-1', usage: { inputTokens: 120, outputTokens: 30 } });
+    const r = server.requests[0]!;
+    const body = r.json as Record<string, any>;
+    expect(body).toMatchObject({ model: 'anthropic/claude-opus-5.5', max_tokens: 8000, provider: { require_parameters: true, data_collection: 'deny' } });
+    expect(body.response_format.json_schema).toMatchObject({ strict: true, schema: { type: 'object', additionalProperties: false, required: ['title', 'score'] } });
+    expect(body.response_format.json_schema.schema).not.toHaveProperty('$schema');
+    expect(body.messages[0]).toEqual({ role: 'system', content: req.system });
+    expect(r.headers.authorization).toBe('Bearer openrouter-key');
+
+    server.on('POST', '/v1beta/openai/chat/completions', { json: completion({ model: 'gemini-3.5-flash' }) });
+    await hosted('gemini', '/v1beta/openai/chat/completions').generateStructured(req, { model: 'gemini-3.5-flash', fallbackModels: [] });
+    const gemini = server.requests[1]!.json as Record<string, any>;
+    expect(gemini).toMatchObject({ max_completion_tokens: 8000 });
+    expect(gemini).not.toHaveProperty('max_tokens');
+    expect(gemini).not.toHaveProperty('provider');
+  });
+
+  it('maps refusals, truncation and outages; exhausted credit is an outage the gateway fails over from', async () => {
+    const p = hosted('openai', '/v1/chat/completions');
+    const call = () => p.generateStructured(req, { model: 'gpt-5.5', fallbackModels: [] });
+    server.on('POST', '/v1/chat/completions', { json: completion({}, { content: null, refusal: 'I cannot help with that.' }) });
+    expect(await call()).toMatchObject({ kind: 'refusal', category: 'refusal' });
+    server.on('POST', '/v1/chat/completions', { json: completion({ choices: [{ message: { content: '' }, finish_reason: 'content_filter' }] }) });
+    expect(await call()).toMatchObject({ kind: 'refusal', category: 'content_filter' });
+    server.on('POST', '/v1/chat/completions', { json: completion({ choices: [{ message: { content: '{"title":' }, finish_reason: 'length' }] }) });
+    expect(await call()).toMatchObject({ kind: 'truncated' });
+    server.on('POST', '/v1/chat/completions', { status: 429, json: { error: { message: 'You have no credits remaining. sk-secret', type: 'insufficient_quota', code: 'credit_balance_exhausted' } } });
+    const err = await call().catch((e) => e);
+    expect(err).toBeInstanceOf(ProviderUnavailableError);
+    expect(err).toMatchObject({ status: 429, retryable: true });
+    expect(err.message).toBe('openai responded 429 (credit_balance_exhausted)');
+    server.on('POST', '/v1/chat/completions', { status: 401, json: { error: { message: 'bad key', code: 'invalid_api_key' } } });
+    await expect(call()).rejects.toMatchObject({ retryable: false, status: 401 });
+
+    const gw = new ModelGateway({
+      providers: { openai: p, groq: hosted('groq', '/openai/v1/chat/completions') },
+      approvedModels: async () => [
+        { ...opus, provider: 'groq', modelId: 'openai/gpt-oss-120b' },
+        { ...opus, provider: 'openai', modelId: 'gpt-5.5' },
+      ],
+    });
+    server.on('POST', '/v1/chat/completions', { status: 429, json: { error: { type: 'insufficient_quota' } } });
+    server.on('POST', '/openai/v1/chat/completions', { json: completion({ model: 'openai/gpt-oss-120b' }) });
+    const r = await gw.generate(req);
+    expect(r).toMatchObject({ provider: 'groq', servedBy: 'openai/gpt-oss-120b', failedOver: [{ provider: 'openai', modelId: 'gpt-5.5', status: 429 }] });
+  });
+
+  it('prefers Opus (direct, then OpenRouter) and orders the other providers deterministically', async () => {
+    const answer = (servedBy: string) => () => ({ kind: 'ok' as const, output: { title: servedBy, score: 0.5 }, servedBy, usage, stopReason: 'stop', requestId: null });
+    const providers = Object.fromEntries(['groq', 'gemini', 'openai', 'openrouter'].map((n) => [n, Object.assign(new Scripted(answer(n)), { name: n })]));
+    const models: ApprovedModel[] = [
+      { ...opus, provider: 'groq', modelId: 'openai/gpt-oss-120b' },
+      { ...opus, provider: 'gemini', modelId: 'gemini-3.5-flash' },
+      { ...opus, provider: 'openai', modelId: 'gpt-5.4-mini' },
+      { ...opus, provider: 'openai', modelId: 'gpt-5.5' },
+      { ...opus, provider: 'openrouter', modelId: 'anthropic/claude-opus-5.5' },
+    ];
+    const plan = await new ModelGateway({ providers, approvedModels: async () => models }).plan('planning');
+    expect(plan.map((c) => `${c.primary.provider}:${c.primary.modelId}`)).toEqual(['openrouter:anthropic/claude-opus-5.5', 'openai:gpt-5.5', 'openai:gpt-5.4-mini', 'gemini:gemini-3.5-flash', 'groq:openai/gpt-oss-120b']);
   });
 });

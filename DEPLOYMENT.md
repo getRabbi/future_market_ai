@@ -76,7 +76,7 @@ Add the Pages origin to the api's `APP_ORIGINS` (CORS and Better Auth trusted or
 
 ## 6. Governance setup before any automation
 
-1. **Models (B-003):** platform admin → `POST /v1/platform/models/approve` for `claude-opus-5-5` once the vendor terms are reviewed; set `ANTHROPIC_API_KEY`. Without it every agent stage abstains.
+1. **Models (B-003):** set at least one provider key — `ANTHROPIC_API_KEY`, or the hosted OpenAI-compatible providers `OPENROUTER_API_KEY` (Claude Opus 5.5 via OpenRouter, restricted to upstreams that do not collect data), `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`. The api seeds their models unapproved; a platform admin approves each with `POST /v1/platform/models/approve` once the vendor terms are reviewed (models that may train on customer data cannot be approved, so Gemini only on a paid project). The gateway prefers Opus (direct, then OpenRouter) and fails over in the order OpenAI, Gemini, Groq. Without an approved model every agent stage abstains.
 2. **Jurisdictions (B-013):** legal publishes rule packs (`POST /v1/platform/jurisdiction-rules`) and the tenant lists them in `approvedJurisdictions`; otherwise every public/messaging/spend action needs legal approval.
 3. **Autonomy policy:** Governance → Autonomy policy. Leave categories unconfigured (always approval) until you deliberately pre-authorize limits.
 4. **Sender identity** (CAN-SPAM postal address) before any commercial email (B-008).

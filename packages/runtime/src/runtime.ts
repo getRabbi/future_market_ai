@@ -1,4 +1,4 @@
-import { AnthropicProvider, type ModelProvider, OpenAICompatibleEmbedder, OpenAICompatibleProvider } from '@futuregrow/agent-kernel';
+import { AnthropicProvider, HOSTED_PROVIDERS, type HostedProvider, type ModelProvider, OpenAICompatibleEmbedder, OpenAICompatibleProvider } from '@futuregrow/agent-kernel';
 import { HttpClient } from '@futuregrow/connectors';
 import { buildCoreConfig, type CoreDeps, createModelGateway, DeprecationRecorder, type JobQueue, type knowledge, ops, systemClock } from '@futuregrow/core';
 import { configureTenantRole, createDb, probeDatabase } from '@futuregrow/db';
@@ -55,6 +55,10 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
   const utils = await makeWorkerUtils({ pgPool: handle.pool });
   const secrets = [
     env.ANTHROPIC_API_KEY,
+    env.OPENAI_API_KEY,
+    env.GROQ_API_KEY,
+    env.GEMINI_API_KEY,
+    env.OPENROUTER_API_KEY,
     env.OPENAI_COMPATIBLE_API_KEY,
     env.BETTER_AUTH_SECRET,
     env.FG_SECRETS_KEY,
@@ -85,6 +89,10 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
   // approved in the registry before the gateway will call them (D-002).
   const providers: Record<string, ModelProvider> = {};
   if (env.ANTHROPIC_API_KEY) providers.anthropic = new AnthropicProvider({ apiKey: env.ANTHROPIC_API_KEY });
+  const hostedKeys: Record<HostedProvider, string | undefined> = { openai: env.OPENAI_API_KEY, groq: env.GROQ_API_KEY, gemini: env.GEMINI_API_KEY, openrouter: env.OPENROUTER_API_KEY };
+  for (const [name, apiKey] of Object.entries(hostedKeys) as [HostedProvider, string | undefined][]) {
+    if (apiKey) providers[name] = new OpenAICompatibleProvider({ ...HOSTED_PROVIDERS[name], name, apiKey });
+  }
   if (env.OPENAI_COMPATIBLE_BASE_URL) providers.openai_compatible = new OpenAICompatibleProvider({ baseUrl: env.OPENAI_COMPATIBLE_BASE_URL, ...(env.OPENAI_COMPATIBLE_API_KEY ? { apiKey: env.OPENAI_COMPATIBLE_API_KEY } : {}) });
   if (Object.keys(providers).length) {
     deps.models = createModelGateway(deps, providers, secrets);

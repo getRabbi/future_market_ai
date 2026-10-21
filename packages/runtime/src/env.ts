@@ -46,6 +46,11 @@ export const EnvSchema = z
     TIKTOK_CLIENT_SECRET: z.string().optional(),
     // Model gateway (B-003)
     ANTHROPIC_API_KEY: z.string().optional(),
+    // Hosted OpenAI-compatible APIs (agent-kernel HOSTED_PROVIDERS); each key enables one provider.
+    OPENAI_API_KEY: z.string().optional(),
+    GROQ_API_KEY: z.string().optional(),
+    GEMINI_API_KEY: z.string().optional(),
+    OPENROUTER_API_KEY: z.string().optional(),
     OPENAI_COMPATIBLE_BASE_URL: z.string().url().optional(),
     OPENAI_COMPATIBLE_API_KEY: z.string().optional(),
     // Optional embeddings endpoint (D-007); full-text retrieval works without it.
