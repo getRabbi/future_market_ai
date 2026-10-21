@@ -1,38 +1,43 @@
 # FUTUREGROW AI — Test report
 
-Date: 2026-10-20 · Commit: see `git log -1` · Environment: Windows 11, Node 24.22.0, npm 12.2, Python 3.13.16, embedded PostgreSQL 17.10 (UTF-8 cluster).
+Date: 2026-10-21 · Commit: see `git log -1` · Environment: Windows 11 (8 GB RAM), Node 24.22.0, npm 12.2, Python 3.13.16, embedded PostgreSQL 17.10 (UTF-8 cluster), Playwright 1.63.0 Chromium.
 
 ## 1. Results
 
-Final verification on commit `9e7b651` (all commands run in sequence, logs kept by the operator):
+Verification on commit `12cdbe1` (FG-P2-001 and beta hardening; all commands run in sequence):
 
 | Check | Command | Result |
 |---|---|---|
 | Typecheck (strict TS, all packages, apps, jobs, tests) | `npm run typecheck` | **pass** |
-| Lint (Biome; errors fail) | `npm run lint` | **pass** — 0 errors, 66 warnings |
+| Lint (Biome; errors fail) | `npm run lint` | **pass** — 0 errors, 67 warnings |
 | Generated docs current | `npm run docs -- --check` | **pass** |
-| TypeScript tests (real PostgreSQL 17, fixture servers, real renders) | `npx vitest run` | **220 / 220 passed**, 25 files, 0 skipped, 196 s |
-| Python engine + backup tests | `npm run test:py` | **30 / 30 passed**, 378 s |
+| TypeScript tests (real PostgreSQL 17, fixture servers, real renders) | `npx vitest run` | **272 / 272 passed**, 33 files, 0 skipped, 457 s. Two files (`db`, `migrate-lock`) reported an `afterAll` timeout in `DROP DATABASE … WITH (FORCE)` while the machine was short of memory; re-run alone both passed 15 / 15 in 40 s |
+| Python engine, backup and TLS tests | `npm run test:py` | **36 / 36 passed**, 418 s |
 | Production bundles | `node scripts/build.mjs all` | **pass** — api (main, migrate, probe, reencrypt-credentials), worker, media |
 | Web control plane | `npm run build -w @futuregrow/web` | **pass** — 28 pages, `_headers` with 2 script + 1 style hashes |
 | SBOM + licence policy | `npm run sbom` | **pass** — 439 npm + 4 Python + 2 image components; 0 violations; 6 weak-copyleft components listed for legal review; 21 Remotion components under the B-014 exception |
+| Browser E2E (Chromium, CSP enforced) | `npm run test:e2e` | **6 / 6 passed**, 2.1 min |
+
+The M10 baseline on commit `9e7b651` was 220 / 220 TypeScript and 30 / 30 Python tests.
 
 Tests per file (TypeScript):
 
 | File | Tests | File | Tests |
 |---|---|---|---|
 | packages/contracts | 13 | packages/core/test/execution | 12 |
-| packages/db | 12 | packages/core/test/data-modules | 13 |
+| packages/db (db, migration lock, verify-full TLS) | 25 | packages/core/test/data-modules | 13 |
 | packages/policies | 16 | packages/core/test/intelligence | 13 |
-| packages/connectors (core + providers) | 36 | packages/core/test/analytics-job (spawns Python) | 3 |
-| packages/agent-kernel | 12 | packages/core/test/audiences | 3 |
+| packages/connectors (core, providers, deprecations) | 40 | packages/core/test/analytics-job (spawns Python) | 3 |
+| packages/agent-kernel (incl. provider failover) | 17 | packages/core/test/audiences | 3 |
 | packages/experiments | 3 | packages/core/test/creation | 7 |
-| apps/api (api, invitations, public channels) | 14 | packages/core/test/channels-acquisition | 15 |
+| apps/api (api, account security, invitations, ops, public channels) | 21 | packages/core/test/channels-acquisition | 15 |
 | apps/web (catalog contract, proxy) | 6 | packages/core/test/channels-retention | 15 |
 | jobs/media (real Remotion render) | 2 | packages/core/test/backup-job (spawns Python) | 6 |
 | test/redteam | 16 | packages/core/test/retention, secrets-rotation | 3 |
+| infra/cloudflare/uptime-worker | 5 | packages/core/test/ops (status, monitor, notifier) | 10 |
+| | | packages/core/test/p2-controls (AI budget, failover, API lifecycle) | 8 |
 
-Python: `tests/test_engines.py` 25 (forecasting, MMM/NUTS diagnostics, experiments/bandits, trends, topics, propensity incl. PSI drift), `tests/test_backup.py` 5 (SigV4 vectors, member encryption, store, scheduling).
+Python: `tests/test_engines.py` 25 (forecasting, MMM/NUTS diagnostics, experiments/bandits, trends, topics, propensity incl. PSI drift), `tests/test_backup.py` 5 (SigV4 vectors, member encryption, store, scheduling), `tests/test_pgtls.py` 6 (`verify-full` DSN building, refusal of non-verifying modes).
 
 Additional manual verification: the bundled api booted against PostgreSQL (`/healthz`, `/readyz`, OpenAPI 3.1 with 176 paths, 401 on `/v1/me`), the bundled worker registered all 19 tasks, bundled `migrate.mjs`/`probe.mjs` ran (RLS role available, pgvector absent), and two real renders passed using the prebuilt Remotion bundle shipped in the media image.
 
@@ -43,6 +48,7 @@ Additional manual verification: the bundled api booted against PostgreSQL (`/hea
 * **Models** are replaced by scripted providers behind the real model gateway (registry gating, schema validation, secret scanning, cost recording). The red-team suite scripts the model to *comply* with attacks to prove the deterministic controls hold. The Anthropic adapter is tested against a fixture endpoint with the official SDK.
 * **Python engines** run under pytest; the cross-language test spawns the real analytics job against the test database.
 * **Media**: two real Remotion renders (Chrome Headless Shell + FFmpeg) produce an H.264 MP4 checked for dimensions, duration, hash and inherited rights; the prebuilt-bundle path used by the container image was also rendered.
+* **Browser E2E** (`npm run test:e2e`): `e2e/server.ts` starts embedded PostgreSQL, the real API and the production web build on one origin with `dist/_headers` applied; Playwright drives Chromium through six flows, and any page or console error (CSP violations included) fails a test.
 * **Production artifacts**: the esbuild bundles were booted against PostgreSQL (API health/readiness/OpenAPI and 401 on `/v1`; worker task registration; bundled migrate/probe), the web app was built, and the SBOM licence policy was run.
 
 ## 3. Coverage by module
@@ -63,9 +69,12 @@ Additional manual verification: the bundled api booted against PostgreSQL (`/hea
 | M21 Conversations | Origin-checked widgets and per-widget CORS, PII redaction before the model, citations resolvable, handoff on missing knowledge / bad citations / unsupported commitments / model outage / injection, human takeover | `channels-retention`, `public-channels`, `redteam` |
 | M22 Creators | Evidence-backed contracts with disclosure, sentiment-conditioned terms rejected, hashed clicks + velocity flag, Shopify attribution, proportional clawback, self-referral, refund window, payouts denied (B-015), conspicuous-disclosure check | `channels-retention`, `public-channels` |
 | M23 Execution | Allowlist, state machine enforced by DB triggers, approvals bound to hash with separation of duties and MFA, preflight re-evaluation, resolver-before-send, idempotent replays, ambiguous → escalation, rollback, kill switches before send, budget reservations | `execution`, `db`, `policies`, `redteam` |
-| M24 Governance | Hash-chained audit + tamper detection, registries, alerts/incidents, cost ledger, backups (encrypted, verified, restore drill), credential key rotation, SBOM licence policy | `db`, `backup-job`, `secrets-rotation`, `scripts/sbom.mjs` |
-| API / auth | Better Auth sessions + TOTP, tenant resolution, Idempotency-Key contract, MFA gates, webhooks with signatures, invite-only onboarding | `apps/api/test` |
-| Web control plane | Every UI call maps to a registered route and method (with negative controls); all 24 modules reachable; Pages proxy header hygiene and cookie re-scoping | `apps/web/test` |
+| M24 Governance | Hash-chained audit + tamper detection, registries, alerts/incidents, cost ledger, backups (encrypted, verified, restore drill), credential key rotation, SBOM licence policy; per-tenant AI spend limits, model end of life, provider API sunsets blocked by policy and deprecation headers recorded (FG-P2-001) | `db`, `backup-job`, `secrets-rotation`, `p2-controls`, `connectors/deprecations`, `scripts/sbom.mjs` |
+| Model gateway | Registry gating, structured output, secret scanning, cost recording; failover to another approved provider on outage or open circuit, never on refusal or budget stop | `agent-kernel`, `p2-controls` |
+| Operations | `/statusz` component status, ops monitor (announce once, re-announce, recovery, retry undelivered), webhook formats with secret redaction, API 5xx alert throttling, external uptime probe | `core/test/ops`, `apps/api/test/ops`, `uptime-worker` |
+| Database | Migration advisory lock (concurrent migrators), `verify-full` TLS with a throwaway CA | `db/migrate-lock`, `db/tls` |
+| API / auth | Better Auth sessions + TOTP, tenant resolution, Idempotency-Key contract, MFA gates, webhooks with signatures, invite-only onboarding, change password (rate limit, other sessions revoked, audit) | `apps/api/test` |
+| Web control plane | Every UI call maps to a registered route and method (with negative controls); all 24 modules reachable; Pages proxy header hygiene and cookie re-scoping; Playwright E2E of six flows in Chromium with the CSP enforced | `apps/web/test`, `e2e/` |
 | Security (FG-P1-005) | Allowlist escape, self-approval, approval replay, destination smuggling, secret exfiltration, log redaction, fence closing, poisoned retrieval, customer injection, planted facts, SSRF/DNS rebinding, cross-tenant retrieval, agent kill switch | `test/redteam` |
 
 ## 4. Not verified here (and why)
@@ -74,12 +83,12 @@ Additional manual verification: the bundled api booted against PostgreSQL (`/hea
 |---|---|---|
 | Live provider APIs (Meta, Google Ads, TikTok, YouTube, Shopify, App Store Connect, Resend, Search Console, Chatwoot) | No credentials / app reviews (B-005…B-009) | Fixture contract tests; enable one provider at a time in the beta with approval-required policy |
 | Live model calls | No API key / vendor review (B-003) | Scripted providers through the real gateway; SDK request shape tested against a fixture |
-| Container image builds | No Docker/Podman here (B-016) | Bundles booted locally; CI `images` job builds all four |
-| Browser click-through of the control plane | No browser automation here (B-017) | Route-contract + build + API tests; add Playwright in CI |
-| CI pipeline execution | No Git remote (B-018) | Owner pushes; the workflow mirrors the local commands in §1 |
-| Northflank template import | No account (B-001) | Review in the Northflank editor before running |
+| Container image builds locally | No Docker/Podman here (B-016) | Bundles booted locally; CI `images` job builds all four and Northflank builds them on every push |
 | pgvector path | Not available in the embedded build (B-004) | Exact-cosine fallback is the tested path |
-| Load, failover and DR timing (P2) | Out of scope for the beta; RTO/RPO `[U]` | Restore drill procedure in RUNBOOK §9 |
+| Load and DR timing (P2) | Out of scope for the beta; RTO/RPO `[U]` | Restore drill procedure in RUNBOOK §9; model-provider failover is tested with scripted providers (`agent-kernel`) |
+| Uptime Worker on Cloudflare | Not deployed yet (needs `ALERT_WEBHOOK_URL` and the owner's approval) | Monitor logic tested with fake fetch and KV (`infra/cloudflare/uptime-worker/test`) |
+
+Resolved since the first report: browser click-through (B-017, Playwright E2E in CI), CI execution (B-018) and the Northflank deployment (B-001).
 
 ## 5. Known warnings
 

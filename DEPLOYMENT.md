@@ -1,6 +1,6 @@
 # Deployment — controlled beta on Northflank Sandbox + Cloudflare
 
-This guide deploys FUTUREGROW exactly as built: 2 Northflank services (`api`, `worker`), 2 cron jobs (`analytics-job`, `media-job`), 1 PostgreSQL 17 addon, Cloudflare Pages for the control plane and Cloudflare R2 for objects and backups. Steps marked **(owner)** need an account holder; nothing here has been executed against live accounts from this repository (BLOCKERS B-001, B-002).
+This guide deploys FUTUREGROW exactly as built: 2 Northflank services (`api`, `worker`), 2 cron jobs (`analytics-job`, `media-job`), 1 PostgreSQL 17 addon, Cloudflare Pages for the control plane and Cloudflare R2 for objects and backups. Steps marked **(owner)** need an account holder. The controlled beta was deployed with these steps on 2026-10-20 (BLOCKERS B-001, B-002, B-004, B-018 resolved); the template fixes found on the live accounts are in `infra/northflank/template.json`.
 
 > The Northflank Developer Sandbox is for development and a controlled beta. Do not market a Sandbox deployment as production; upgrade plans for a public launch (tech stack, "Final verdict").
 
@@ -90,7 +90,7 @@ Add the Pages origin to the api's `APP_ORIGINS` (CORS and Better Auth trusted or
 ## 7. Smoke test
 
 ```sh
-curl -fsS https://api.<domain>/healthz && curl -fsS https://api.<domain>/readyz
+curl -fsS https://api.<domain>/healthz && curl -fsS https://api.<domain>/readyz && curl -fsS https://api.<domain>/statusz
 curl -fsS https://api.<domain>/v1/openapi.json | head -c 200
 ```
 
@@ -101,3 +101,22 @@ Then in the control plane: Audit trail → **Verify chain now** (valid), Evidenc
 * Upgrade Northflank plans (the MMM sampler and Remotion renders are CPU-bound on Sandbox; correctness is unchanged, throughput improves).
 * Run migrations as a dedicated pre-deploy job once more than one api instance is needed.
 * Close the external blockers listed in `BLOCKERS.md` for each channel before enabling it.
+
+## 9. Monitoring, alerts and spend limits
+
+1. **Operator alerts:** set `ALERT_WEBHOOK_URL` (https; a Slack or Discord incoming webhook, or any endpoint accepting JSON) in the runtime secret group so both `api` and `worker` get it; optional `ALERT_ENVIRONMENT` labels the messages. Unset, alerts are only logged. The worker's `ops_monitor` cron (every 5 min) reports component problems, critical tenant alerts, sev1/sev2 incidents and Graphile jobs that exhausted their retries; the api reports 5xx responses and crashes.
+2. **Component status:** `GET /statusz` (public, coarse, cached 30 s) returns 503 when the database, worker, backups or job queues are stale or failing.
+3. **External uptime probe (owner, Cloudflare Workers free plan):** `infra/cloudflare/uptime-worker` runs on a 5-minute cron outside Northflank, probes the web app, the Pages→API proxy, `/healthz` and `/statusz`, and alerts after 2 consecutive failures. It has no route and no workers.dev URL, and writes its one KV key only when a check changes state.
+   ```sh
+   cd infra/cloudflare/uptime-worker
+   npx wrangler@4.147.0 kv namespace create futuregrow-uptime-state   # paste the id into wrangler.toml
+   npx wrangler@4.147.0 secret put ALERT_WEBHOOK_URL
+   npx wrangler@4.147.0 deploy
+   ```
+4. **AI spend limits:** `FG_TENANT_AI_MONTHLY_LIMIT_USD` sets a platform default per tenant per calendar month (UTC, USD at model-registry prices). A tenant overrides it in the autonomy policy with `"aiSpend": { "monthlyLimitUsd": 25, "warnAtFraction": 0.8 }`. Every model attempt is checked first; over the limit the agent abstains (`BUDGET_EXCEEDED`) and a critical alert is raised. While a limit applies, models without a registry price are refused (`BUDGET_UNMEASURABLE`). Governance → *AI spending this month* shows the position.
+5. **Provider API lifecycle:** the worker's `api_lifecycle` cron (hourly) alerts at 90, 30 and 7 days before a configured API version's or approved model's sunset, and the policy rule `API_VERSION_SUNSET` blocks actions on a version past its sunset. Shopify dates are derived from its 12-month support policy; Meta Graph and Google Ads publish per-version dates, so a platform admin records them:
+   ```sh
+   curl -fsS -X PUT https://api.<domain>/v1/platform/api-lifecycle -H 'content-type: application/json' -H 'idempotency-key: sunset-meta-v26.0' -H 'cookie: <admin session>' \
+     -d '{"provider":"meta","apiVersion":"v26.0","sunsetAt":"<published date, ISO 8601>","sourceUrl":"<provider changelog URL>"}'
+   ```
+   Deprecation and sunset headers seen on live provider responses are recorded and shown in Governance → *Provider API lifecycle*.

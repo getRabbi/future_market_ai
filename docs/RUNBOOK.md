@@ -8,6 +8,8 @@ Procedures for the controlled beta (Northflank Sandbox + Cloudflare). Every oper
 2. **Governance → Alerts**: `governance.spend.discrepancy` (critical), `ads.spend.restated`, `ads.budget.external_change`, `connector.reauth_required`, `knowledge.injection_detected`, `analytics.anomaly`.
 3. Northflank → jobs: the last `analytics-job` run exited 0 (its log ends with the backup/verification JSON); `media-job` runs are not failing repeatedly.
 4. `select kind, status, finished_at from backup_runs order by finished_at desc limit 5;` — a `backup` and a `verification` row with `succeeded` within the last 24 h.
+5. `GET /statusz` returns 200 with every component `ok`. The alert channel (`ALERT_WEBHOOK_URL`) has no unresolved problem announcements (§12).
+6. Governance → *AI spending this month* and *Provider API lifecycle*: no tenant near its limit, no API version or model in `critical` or `sunset` (§13).
 
 ## 2. Stopping things (kill switches)
 
@@ -81,4 +83,25 @@ Severity guide: sev1 = data exposure or uncontrolled spend/publishing; sev2 = am
 
 ## 11. Deploying a new release
 
-CI must be green (tests, lint, generated docs current, SBOM policy, image builds). Northflank rebuilds api, worker and both jobs from the branch; the api applies migrations on start (single instance — keep `instances: 1` while migrations run on start). Migrations are forward-only; a rollback means deploying the previous image **only if** no new migration ran, otherwise restore from backup.
+CI must be green (tests, lint, generated docs current, SBOM policy, image builds). Northflank rebuilds api, worker and both jobs from the branch; the api applies migrations on start. Concurrent migrators are serialised by a PostgreSQL advisory lock, so a second instance waits instead of racing; on the Sandbox keep `instances: 1`. Migrations are forward-only; a rollback means deploying the previous image **only if** no new migration ran, otherwise restore from backup.
+
+## 12. Operator alerts and uptime
+
+Alerts go to one webhook (`ALERT_WEBHOOK_URL`; DEPLOYMENT §9). Component problems are repeated every 6 h while they last and their recovery is announced once; other alerts are sent once.
+
+| Alert | First steps |
+|---|---|
+| Component stale/failing (`database`, `worker`, `backups`, `analytics`/`media` queues) | `GET /statusz` for the component detail; Northflank → service or job logs. A stale worker means no cron or queue processing: restart `worker`. Backups: RUNBOOK §9. |
+| Uptime probe: web, proxy or API down (Cloudflare Worker `futuregrow-uptime`) | Fires after 2 consecutive failed probes. Web/proxy only → Cloudflare Pages; API too → Northflank `api` status and logs. |
+| Critical tenant alert, sev1/sev2 incident | Handle as §10; the control plane has the detail. |
+| Graphile job exhausted its retries | Worker logs for the task; fix the cause, then re-propose or re-run (the watchdog re-enqueues approved/unverified actions). |
+| API 5xx or process crash | Request id in the alert → api logs. A crash exits non-zero and Northflank restarts the container. |
+
+## 13. AI spend limits and provider API lifecycle (FG-P2-001)
+
+* **`BUDGET_EXCEEDED`:** a tenant's month-to-date model spend plus in-flight calls would pass its limit; agents abstain until the next month (UTC) or until the limit is raised in the autonomy policy (`aiSpend`). Raise it only after checking the cost ledger for a runaway agent; engage an `agent` kill switch if one is looping.
+* **`BUDGET_UNMEASURABLE`:** a limit applies but a model has no registry price, so calls are refused. Record the model's prices in the model registry rather than removing the limit.
+* **API version approaching sunset (90/30/7 days):** upgrade the connector's configured version (`META_GRAPH_API_VERSION`, `GOOGLE_ADS_API_VERSION`, `SHOPIFY_API_VERSION`, …) together with its capability records, test against the provider, redeploy. Past the sunset, policy denies actions on that provider with `API_VERSION_SUNSET`.
+* **Version unverified:** Meta Graph and Google Ads publish per-version dates; a platform admin records them with `PUT /v1/platform/api-lifecycle` (DEPLOYMENT §9) from the provider's changelog.
+* **Deprecation signal observed:** a live response carried `Deprecation`/`Sunset` headers, a provider deprecation warning, or the provider served a newer version than requested. Treat it as an early sunset warning for that endpoint.
+* **Model end of life:** approve the replacement model (`POST /v1/platform/models/approve`) before the date.

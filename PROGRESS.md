@@ -18,7 +18,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 | **M7 Strategy & creation** | M11, M12, M13, M14 (Remotion media job), M15. | FG-P1-004 |
 | **M8 Channels** | M16–M22 + connectors. | — |
 | **M9 Web control plane** | Astro + React dashboard for all modules, approvals, kill switches, audit. | — |
-| **M10 Hardening & deploy** | Red-team suite, SBOM, CI, Dockerfiles, Northflank/Cloudflare config, test report, deployment guide. | FG-P1-005, FG-P2-001 (partial) |
+| **M10 Hardening & deploy** | Red-team suite, SBOM, CI, Dockerfiles, Northflank/Cloudflare config, test report, deployment guide. | FG-P1-005, FG-P2-001 |
 
 ## Milestone log
 
@@ -83,19 +83,29 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Bespoke screens: overview, hash-bound approvals (policy reasons, approval groups, proofs, state history, cancel), governance (kill switches, versioned autonomy policy, sender identity, alerts, incidents, model/artifact/capability registries, cost), audit-chain verification, account security (TOTP enrolment, organizations, members and invitations), asset upload with rights declarations, invitation acceptance page.
 - [x] Catalog-driven sections for all 24 modules (lists, JSON create forms validated server-side, row actions, detail drawers); a contract test proves every UI call maps to a registered API route and method.
 - [x] Pages Functions proxy for `/v1` and `/api/auth` (D-013) with client-IP hygiene and cookie re-scoping.
-- ⛔ Browser click-through automation not available here (B-017).
+- [x] Playwright browser E2E (B-017 resolved 2026-10-21): six Chromium flows against the real API and production web build with the CSP enforced; CI job `e2e`.
 
-### M10 Hardening & deploy — ☑ (deployment execution ⛔ B-001/B-002/B-016/B-018)
+### M10 Hardening & deploy — ☑ (deployed 2026-10-20; local container builds ⛔ B-016)
 - [x] FG-P1-005 red-team suite (16 scenarios, models scripted to comply with attacks); retrieved-excerpt injection screening; broader secret detection.
 - [x] Encrypted logical backups to R2 with verification and restore drills, run by the analytics cron job (D-030); credential key re-encryption CLI.
 - [x] Retention policies enforced daily (FG-P0-006); PSI drift gate for propensity scores (D-032); invite-only onboarding that works without email (D-031).
 - [x] Production bundles (`scripts/build.mjs`) booted against PostgreSQL; Dockerfiles for api/worker, media job (prebuilt Remotion bundle, browser baked in) and analytics job, base images pinned by digest.
 - [x] CI workflow (typecheck, lint, generated-docs drift, real-PG tests, pytest, render, builds, SBOM, image builds; actions pinned by SHA); CycloneDX SBOM with licence policy.
 - [x] Northflank template, Pages `wrangler.toml`, R2 CORS; `.env.example`; docs: ARCHITECTURE, RUNBOOK, DEPLOYMENT, generated MODULES / EVENT_TAXONOMY / CONNECTOR_CAPABILITIES / POLICY_MATRIX; TEST_REPORT.
-- Partial (P2): provider failover and API-deprecation monitoring are not automated; cost is recorded per tenant (cost ledger, summary) but no tenant model-spend cap is enforced yet.
+- [x] FG-P2-001 (2026-10-21): model gateway fails over across providers (not only across models of one provider); per-tenant monthly AI spend limits enforced before every model attempt (`TenantPolicy.aiSpend`, platform default `FG_TENANT_AI_MONTHLY_LIMIT_USD`, unpriced models refused while a limit applies); provider API deprecation monitoring (lifecycle rules per configured version, RFC 9745/8594 and provider headers recorded from live responses, operator alerts at 90/30/7 days, policy rule `API_VERSION_SUNSET` in `fg-policy-1.1.0` blocks actions on a version past its sunset).
 
-**Test status (final, commit 9e7b651):** 220/220 TS tests (25 files, real PostgreSQL, real renders) + 30/30 Python tests; typecheck, lint, docs drift, bundles, web build and SBOM policy all pass. See TEST_REPORT.md.
+**Test status (M10, commit 9e7b651):** 220/220 TS tests (25 files, real PostgreSQL, real renders) + 30/30 Python tests; typecheck, lint, docs drift, bundles, web build and SBOM policy all pass.
+
+### Beta hardening (2026-10-20/21, after go-live) — ☑
+- [x] Controlled beta deployed 2026-10-20 (Northflank Sandbox + Cloudflare Pages/R2; B-001, B-002, B-004, B-018 resolved).
+- [x] Change password with per-user rate limit, other sessions revoked, audit; `/v1/me` shows email and last change.
+- [x] PostgreSQL TLS `verify-full` in Node services and Python jobs; migrations serialised with an advisory lock.
+- [x] Ops monitoring: public `/statusz`, worker cron `ops_monitor`, operator alerts through one webhook (`ALERT_WEBHOOK_URL`), API 5xx/crash alerts, Cloudflare Workers uptime probe (`infra/cloudflare/uptime-worker`, not yet deployed).
+- [x] FG-P2-001 controls (above) with Governance panels for AI spending and API lifecycle; routes `/v1/governance/ai-budget`, `/v1/governance/api-lifecycle`, `PUT /v1/platform/api-lifecycle`.
+- [x] Playwright browser E2E (B-017).
+
+**Test status (commit 12cdbe1):** 272/272 TS tests (33 files) + 36/36 Python tests + 6/6 browser E2E; typecheck, lint, docs drift, bundles, web build and SBOM policy pass. See TEST_REPORT.md.
 
 ## Completion summary
 
-All 24 modules are implemented and tested against real PostgreSQL with provider APIs exercised through fixture servers. Every P0 gate (FG-P0-001…008) and P1 item (FG-P1-001…006) is implemented and verified. What remains is external: live credentials and app reviews, account setup on Northflank/Cloudflare, legal rule packs, vendor reviews and the payout provider — each listed with its unblock step in BLOCKERS.md (B-001…B-018). Deployment steps: DEPLOYMENT.md; operations: docs/RUNBOOK.md.
+All 24 modules are implemented and tested against real PostgreSQL with provider APIs exercised through fixture servers. Every P0 gate (FG-P0-001…008) and P1 item (FG-P1-001…006) is implemented and verified. FG-P2-001 (failover, AI spend limits, deprecation monitoring) is implemented and tested; the controlled beta is live. What remains is external: live credentials and app reviews, legal rule packs, vendor reviews and the payout provider — each listed with its unblock step in BLOCKERS.md. Deployment steps: DEPLOYMENT.md; operations: docs/RUNBOOK.md.
