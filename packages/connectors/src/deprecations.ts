@@ -27,6 +27,13 @@ export interface ApiLifecycleRule {
 
 export const LIFECYCLE_CHECKED_AT = '2026-10-21';
 
+/**
+ * Google Ads sunset timetable by major version, as published on the sunset-dates page on
+ * LIFECYCLE_CHECKED_AT. Google gives a month only (tentative; the sunset can fall on any day of
+ * it) and retires minor versions with their major version.
+ */
+export const GOOGLE_ADS_SUNSET_MONTHS: Readonly<Record<number, string>> = { 23: '2027-02', 24: '2027-05', 25: '2027-08', 26: '2027-11', 27: '2028-02' };
+
 export function lifecycleRule(provider: LifecycleProvider, apiVersion: string): ApiLifecycleRule {
   switch (provider) {
     case 'shopify': {
@@ -36,8 +43,12 @@ export function lifecycleRule(provider: LifecycleProvider, apiVersion: string): 
     }
     case 'meta':
       return { provider, apiVersion, kind: 'dated', sunsetAt: null, basis: 'Meta keeps each Graph API version available for at least two years after release; record the date from the changelog.', sourceUrl: 'https://developers.facebook.com/docs/graph-api/changelog' };
-    case 'googleAds':
-      return { provider, apiVersion, kind: 'dated', sunsetAt: null, basis: 'Google Ads publishes a sunset date for every API version; record it from the sunset-dates page.', sourceUrl: 'https://developers.google.com/google-ads/api/docs/sunset-dates' };
+    case 'googleAds': {
+      const major = /^v(\d+)(?:[._]\d+)?$/.exec(apiVersion)?.[1];
+      const month = major ? GOOGLE_ADS_SUNSET_MONTHS[Number(major)] : undefined;
+      const basis = month ? `Google Ads lists ${apiVersion} for sunset in ${month} (tentative, any day of that month; checked ${LIFECYCLE_CHECKED_AT}); the date is the first day, the earliest possible sunset.` : 'Google Ads publishes a sunset date for every API version; record it from the sunset-dates page.';
+      return { provider, apiVersion, kind: 'dated', sunsetAt: month ? `${month}-01T00:00:00.000Z` : null, basis, sourceUrl: 'https://developers.google.com/google-ads/api/docs/sunset-dates' };
+    }
     case 'tiktok':
       return { provider, apiVersion, kind: 'evergreen', sunsetAt: null, basis: 'No published sunset for the v2 open API; watched through response headers.', sourceUrl: 'https://developers.tiktok.com/doc/overview' };
     case 'youtube':

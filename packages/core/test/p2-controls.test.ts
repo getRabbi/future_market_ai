@@ -177,6 +177,7 @@ describe('API deprecation monitoring', () => {
     const { apis } = await withSystem(db(), 'test', (tx) => apiLifecycle(tx, h.deps.config.versions, now));
     const by = Object.fromEntries(apis.map((a) => [a.provider, a]));
     expect(by.shopify).toMatchObject({ apiVersion: '2026-10', sunsetAt: '2027-10-01T00:00:00.000Z', sunsetSource: 'provider_policy', status: 'ok', daysLeft: 345 });
+    expect(by.googleAds).toMatchObject({ apiVersion: 'v26', sunsetAt: '2027-11-01T00:00:00.000Z', sunsetSource: 'provider_policy', status: 'ok', daysLeft: 376 });
     expect(by.meta).toMatchObject({ apiVersion: 'v26.0', status: 'unverified', sunsetAt: null });
     expect(by.youtube).toMatchObject({ kind: 'evergreen', status: 'ok' });
 
@@ -192,7 +193,7 @@ describe('API deprecation monitoring', () => {
     const n = new Recording();
     await checkApiLifecycle(db(), n, h.deps.config.versions, 'test', now);
     await checkApiLifecycle(db(), n, h.deps.config.versions, 'test', new Date(now.getTime() + 3_600_000));
-    expect(n.sent.map((a) => a.dedupKey).sort()).toEqual(['lifecycle:googleAds:v26:unverified', 'lifecycle:meta:v26.0:90d']);
+    expect(n.sent.map((a) => a.dedupKey).sort()).toEqual(['lifecycle:meta:v26.0:90d']);
     await checkApiLifecycle(db(), n, h.deps.config.versions, 'test', new Date('2026-11-28T00:00:00Z'));
     expect(n.sent.at(-1)).toMatchObject({ dedupKey: 'lifecycle:meta:v26.0:7d', severity: 'critical' });
   });

@@ -31,9 +31,14 @@ describe('provider API deprecation detection', () => {
     expect(detect('https://graph.facebook.com/v26.0/me', { 'facebook-api-version': 'v27.0' })[0]).toMatchObject({ signal: 'version_upgraded', provider: 'meta' });
   });
 
-  it('derives the earliest Shopify sunset from its support policy and leaves dated APIs to operators', () => {
+  it('derives the earliest Shopify and Google Ads sunsets from published policy and leaves the rest to operators', () => {
     expect(lifecycleRule('shopify', '2026-10')).toMatchObject({ kind: 'dated', sunsetAt: '2027-10-01T00:00:00.000Z' });
     expect(lifecycleRule('shopify', 'unstable').sunsetAt).toBeNull();
+    // Google publishes a month; minor versions retire with their major version.
+    expect(lifecycleRule('googleAds', 'v26')).toMatchObject({ kind: 'dated', sunsetAt: '2027-11-01T00:00:00.000Z', basis: expect.stringContaining('2027-11') });
+    expect(lifecycleRule('googleAds', 'v26_1').sunsetAt).toBe('2027-11-01T00:00:00.000Z');
+    expect(lifecycleRule('googleAds', 'v23').sunsetAt).toBe('2027-02-01T00:00:00.000Z');
+    expect(lifecycleRule('googleAds', 'v99')).toMatchObject({ kind: 'dated', sunsetAt: null });
     expect(lifecycleRule('meta', 'v26.0')).toMatchObject({ kind: 'dated', sunsetAt: null });
     expect(lifecycleRule('youtube', 'v3').kind).toBe('evergreen');
   });
