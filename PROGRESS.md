@@ -105,6 +105,8 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] FG-P2-001 controls (above) with Governance panels for AI spending and API lifecycle; routes `/v1/governance/ai-budget`, `/v1/governance/api-lifecycle`, `PUT /v1/platform/api-lifecycle`.
 - [x] Playwright browser E2E (B-017).
 - [x] Hosted model providers (B-003, partly): OpenRouter, OpenAI, Gemini and Groq through one adapter, verified live with the agents' strict schemas; gpt-oss-120b on Groq and Claude Opus 5.5 via OpenRouter approved in production with a $25/month default tenant limit.
+- [x] Simpler two-factor (2026-10-27): enrolment by QR code (setup key only as a fallback), the current session counts as two-factor as soon as the code verifies (no re-login), and "Remember this device for 30 days" at sign-in (Better Auth trust record, renewed on each sign-in, removed when two-factor is disabled).
+- [x] Meta Page and ads tokens separated (2026-10-27): ad account calls use an optional ads (user/system-user) token with its own `appsecret_proof`; the health check reads the ad account so a token without ads access shows as degraded.
 
 **Test status (commit 12cdbe1):** 272/272 TS tests (33 files) + 36/36 Python tests + 6/6 browser E2E; typecheck, lint, docs drift, bundles, web build and SBOM policy pass. See TEST_REPORT.md.
 

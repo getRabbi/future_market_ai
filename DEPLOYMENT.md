@@ -70,7 +70,7 @@ Add the Pages origin to the api's `APP_ORIGINS` (CORS and Better Auth trusted or
      -d '{"email":"owner@your-company.com","password":"<long unique passphrase>","name":"Owner"}'
    ```
    Then set `FG_ALLOW_SIGNUP=false` and redeploy. Afterwards people join by invitation only: an owner/admin creates the invitation in **Account & security → Members** and shares the `/invite?id=…` link (D-031); only the invited address can create an account.
-2. Create the organization in **Account & security**, then enrol TOTP and sign in again (approvals, kill switches, policy and connections require a two-factor session).
+2. Create the organization in **Account & security**, then **Turn on two-factor**: scan the QR code with an authenticator app and enter its code (approvals, kill switches, policy and connections require two-factor; the current session counts once the code verifies).
 3. Grant platform admin (needed to approve models, publish jurisdiction rules and system halt) with one audited SQL statement in the addon console:
    `update auth_user set is_platform_admin = true where email = 'owner@your-company.com';`
 

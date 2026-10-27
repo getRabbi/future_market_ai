@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { encode } from 'uqr';
 import { api, type Me, uploadBinary } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
 import { ChangePassword } from './ChangePassword.js';
@@ -124,7 +125,22 @@ export function Overview({ me }: { me: Me }) {
 /* Account & security                                                  */
 /* ------------------------------------------------------------------ */
 
-export function Settings({ me, onTenant }: { me: Me; onTenant: (id: string) => void }) {
+/** QR code drawn as one SVG path (no inline script or style, so the hashed CSP is unaffected). */
+function QrCode({ text, size = 208 }: { text: string; size?: number }) {
+  const qr = encode(text, { ecc: 'M', border: 4 });
+  let d = '';
+  for (let y = 0; y < qr.size; y++) {
+    for (let x = 0; x < qr.size; x++) if (qr.data[y]![x]) d += `M${x} ${y}h1v1h-1z`;
+  }
+  return (
+    <svg role="img" aria-label="QR code for your authenticator app" viewBox={`0 0 ${qr.size} ${qr.size}`} width={size} height={size} shapeRendering="crispEdges">
+      <rect width={qr.size} height={qr.size} fill="#fff" />
+      <path d={d} fill="#000" />
+    </svg>
+  );
+}
+
+export function Settings({ me, onTenant, onChanged }: { me: Me; onTenant: (id: string) => void; onChanged: () => void }) {
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState<{ uri: string; secret: string; backupCodes: string[] } | null>(null);
   const [code, setCode] = useState('');
@@ -135,18 +151,21 @@ export function Settings({ me, onTenant }: { me: Me; onTenant: (id: string) => v
   const enable = async () => {
     setError(null);
     const r = await authClient.twoFactor.enable({ password });
-    if (r.error) return setError(new Error(r.error.message ?? 'could not start enrolment'));
+    if (r.error) return setError(new Error(r.error.message ?? 'could not turn on two-factor'));
     if (r.data.method !== 'totp') return setError(new Error('the server did not start TOTP enrolment'));
     const uri = r.data.totpURI;
     setTotp({ uri, secret: new URL(uri).searchParams.get('secret') ?? '', backupCodes: r.data.backupCodes });
     setPassword('');
   };
+  // Better Auth replaces the session once the code verifies, and the API treats a user with
+  // two-factor enabled as MFA-verified, so this session can approve right away (no re-login).
   const verify = async () => {
     setError(null);
     const r = await authClient.twoFactor.verifyTotp({ code });
     if (r.error) return setError(new Error(r.error.message ?? 'invalid code'));
     setTotp(null);
-    setMsg('Two-factor authentication is enabled. Sign out and back in to start a two-factor session.');
+    setMsg('Two-factor is on. From now on, sign-in asks for the code from your app.');
+    onChanged();
   };
   const createOrg = async () => {
     setError(null);
@@ -165,42 +184,38 @@ export function Settings({ me, onTenant }: { me: Me; onTenant: (id: string) => v
         {msg ? <div className="notice ok">{msg}</div> : null}
         <ErrorNotice error={error} />
         {!me.mfaVerified && !totp ? (
-          <div className="row" style={{ alignItems: 'end' }}>
-            <div className="field" style={{ flex: '1 1 16rem' }}>
-              <label htmlFor="pw">Confirm your password</label>
-              <input id="pw" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            </div>
-            <div className="field">
-              <button type="button" className="primary" disabled={!password} onClick={() => void enable()}>
-                Start enrolment
-              </button>
+          <div className="stack">
+            <p className="small">You will scan a QR code with an authenticator app (Google Authenticator, Microsoft Authenticator or Authy) and type the 6-digit code it shows.</p>
+            <div className="row" style={{ alignItems: 'end' }}>
+              <div className="field" style={{ flex: '1 1 16rem' }}>
+                <label htmlFor="pw">Confirm your password</label>
+                <input id="pw" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              </div>
+              <div className="field">
+                <button type="button" className="primary" disabled={!password} onClick={() => void enable()}>
+                  Turn on two-factor
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
         {totp ? (
           <div className="stack">
-            <p className="small">Add this account to your authenticator app using the setup key, then enter the 6-digit code.</p>
-            <div className="field">
-              <p className="small">
-                <strong>Setup key</strong>
-              </p>
+            <p className="small">
+              <strong>1.</strong> Open your authenticator app, add an account and scan this code.
+            </p>
+            <QrCode text={totp.uri} />
+            <details className="small">
+              <summary>Can't scan? Enter a setup key instead</summary>
               <code className="mono" style={{ fontSize: '1rem', letterSpacing: '0.08em' }}>
                 {totp.secret.replace(/(.{4})/g, '$1 ').trim()}
               </code>
-            </div>
-            <details className="small">
-              <summary>otpauth URI</summary>
-              <code>{totp.uri}</code>
             </details>
-            <div className="field">
-              <p className="small">
-                <strong>Backup codes</strong> (store them offline; each works once)
-              </p>
-              <pre>{totp.backupCodes.join('\n')}</pre>
-            </div>
             <div className="row" style={{ alignItems: 'end' }}>
               <div className="field">
-                <label htmlFor="code">Code</label>
+                <label htmlFor="code">
+                  <strong>2.</strong> Code from the app
+                </label>
                 <input id="code" inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
               </div>
               <div className="field">
@@ -208,6 +223,12 @@ export function Settings({ me, onTenant }: { me: Me; onTenant: (id: string) => v
                   Verify and enable
                 </button>
               </div>
+            </div>
+            <div className="field">
+              <p className="small">
+                <strong>Backup codes</strong>: save them somewhere safe. If you lose your phone, each one signs you in once.
+              </p>
+              <pre>{totp.backupCodes.join('\n')}</pre>
             </div>
           </div>
         ) : null}

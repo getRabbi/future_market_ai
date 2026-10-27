@@ -39,7 +39,7 @@ export const STAGES: Stage[] = [
     tagline: 'Two-factor sign-in and a second person, so every consequential action gets a real review.',
     sections: ['settings'],
     tasks: [
-      { id: 'mfa', title: 'Turn on two-factor sign-in', why: 'Approvals, kill switches, policy changes and connections all require a two-factor session.', how: 'Two-factor authentication → Start enrolment, then sign out and back in.', section: 'settings', xp: 20 },
+      { id: 'mfa', title: 'Turn on two-factor sign-in', why: 'Approvals, kill switches, policy changes and connections all require a two-factor session.', how: 'Two-factor authentication → Turn on two-factor, scan the QR code with an authenticator app and enter its code.', section: 'settings', xp: 20 },
       { id: 'team', title: 'Add a teammate who can approve', why: 'Whoever proposes an action can never approve it, so you need at least two people.', how: 'Members → Invite someone with the approver role; it counts once they join.', section: 'settings', xp: 20, roles: ADMINS },
     ],
   },
@@ -199,7 +199,7 @@ export function neighbours(slug: string): { prev: string | null; next: string | 
 /** "How this works": the order things happen in on each section. */
 export const SECTION_FLOWS: Record<string, string[]> = {
   approvals: ['An agent or a person proposes an action', 'Policy checks evidence, limits and kill switches', 'A different person approves the exact action hash', 'It runs through the official API', 'An independent read-back marks it VERIFIED'],
-  settings: ['Turn on two-factor sign-in', 'Sign out and back in for a two-factor session', 'Change the starter password', 'Invite teammates with the right roles'],
+  settings: ['Turn on two-factor sign-in', 'Scan the QR code and enter the code from your app', 'Change the starter password', 'Invite teammates with the right roles'],
   governance: ['Configure the autonomy policy', 'Set an AI spending limit', 'Save the sender identity for email', 'Engage a kill switch the moment anything looks wrong'],
   audit: ['Every change writes an audit record', 'Each record is hash-chained to the previous one', 'Verify the chain at any time'],
   connections: ['Pick a provider', 'Test the credentials with a read-only call', 'Save with a two-factor session', 'Re-test whenever a connection needs attention'],

@@ -110,7 +110,7 @@ export function ControlPlane({ section }: { section: string }) {
             {current.custom === 'approvals' ? <Approvals initialId={params.get('id')} /> : null}
             {current.custom === 'governance' ? <Governance /> : null}
             {current.custom === 'audit' ? <Audit /> : null}
-            {current.custom === 'settings' ? <Settings me={me} onTenant={switchTenant} /> : null}
+            {current.custom === 'settings' ? <Settings me={me} onTenant={switchTenant} onChanged={() => void boot()} /> : null}
             {current.custom === 'assets' ? <AssetUpload /> : null}
             {current.custom === 'connections' ? <Connections me={me} /> : null}
             {current.resources.map((r) => (

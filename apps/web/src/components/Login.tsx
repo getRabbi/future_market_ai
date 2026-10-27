@@ -13,6 +13,7 @@ export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
+  const [trustDevice, setTrustDevice] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -31,7 +32,8 @@ export function Login() {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const r = await authClient.twoFactor.verifyTotp({ code });
+    // Better Auth keeps a server-revocable trust record for 30 days, renewed on each sign-in.
+    const r = await authClient.twoFactor.verifyTotp({ code, trustDevice });
     setBusy(false);
     if (r.error) return setError(r.error.message ?? 'Invalid code');
     window.location.href = nextUrl();
@@ -72,6 +74,10 @@ export function Login() {
             <label htmlFor="code">Authentication code</label>
             <input id="code" inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" required value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} />
           </div>
+          <label className="row small" style={{ fontWeight: 400 }}>
+            <input type="checkbox" style={{ width: 'auto' }} checked={trustDevice} onChange={(e) => setTrustDevice(e.target.checked)} />
+            Remember this device for 30 days (untick on a shared computer)
+          </label>
           {error ? (
             <div className="notice error" role="alert">
               {error}

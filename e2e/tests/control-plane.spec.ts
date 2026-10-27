@@ -151,20 +151,30 @@ test('two-factor enrolment, then sign-in requires the authenticator code', async
   await expect(page).toHaveURL(/\/app\/$/);
   await page.goto('/app/settings');
   await page.getByLabel('Confirm your password').fill(state.password);
-  await page.getByRole('button', { name: 'Start enrolment' }).click();
+  await page.getByRole('button', { name: 'Turn on two-factor' }).click();
+  await expect(page.getByRole('img', { name: 'QR code for your authenticator app' })).toBeVisible();
+  await page.getByText("Can't scan? Enter a setup key instead").click();
   const key = page.locator('code.mono').first();
   await expect(key).toBeVisible();
   state.totpSecret = (await key.innerText()).replace(/\s+/g, '');
   expect(state.totpSecret).toMatch(/^[A-Z2-7]{16,}$/);
   await page.locator('#code').fill(await nextCode());
   await page.getByRole('button', { name: 'Verify and enable' }).click();
-  await expect(page.getByText('Two-factor authentication is enabled.')).toBeVisible();
+  await expect(page.getByText('Two-factor is on.')).toBeVisible();
+  // The same session counts as two-factor straight away; no re-login needed.
+  await expect(page.locator('section', { hasText: 'Two-factor authentication (TOTP)' }).getByText('active')).toBeVisible();
 
   await signOut(page);
   await signIn(page, OWNER.email, state.password, { totp: true });
   await expect(page).toHaveURL(/\/app\/$/);
   await page.goto('/app/settings');
   await expect(page.locator('section', { hasText: 'Two-factor authentication (TOTP)' }).getByText('active')).toBeVisible();
+
+  // "Remember this device" is ticked by default: the next sign-in in this browser skips the code
+  // (other tests use fresh browsers and still have to enter it).
+  await signOut(page);
+  await signIn(page, OWNER.email, state.password);
+  await expect(page).toHaveURL(/\/app\/$/);
 });
 
 test('with a two-factor session the owner engages and releases a kill switch, and the audit chain verifies', async ({ page }) => {

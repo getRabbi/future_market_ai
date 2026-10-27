@@ -9,7 +9,7 @@ export function Badge({ value }: { value: unknown }) {
 export function ErrorNotice({ error }: { error: unknown }) {
   if (!error) return null;
   const e = error as ApiError;
-  const hint = e.code === 'MFA_REQUIRED' || /multi-factor/i.test(e.message ?? '') ? 'This action needs a two-factor session. Enrol TOTP under Account & security, sign out and sign back in.' : e.status === 401 ? 'Your session has ended. Sign in again.' : e.status === 403 ? 'Your role does not allow this action.' : null;
+  const hint = e.code === 'MFA_REQUIRED' || /multi-factor/i.test(e.message ?? '') ? 'This action needs two-factor sign-in. Turn it on under Account & security.' : e.status === 401 ? 'Your session has ended. Sign in again.' : e.status === 403 ? 'Your role does not allow this action.' : null;
   return (
     <div className="notice error" role="alert">
       <strong>{e.message ?? String(error)}</strong>

@@ -75,7 +75,7 @@ export function Connections({ me }: { me: Me }) {
         {!isAdmin ? <div className="notice warn">Only owners and admins can connect accounts.</div> : null}
         {isAdmin && !me.mfaVerified ? (
           <div className="notice warn">
-            You can test credentials now. Saving them needs two-factor sign-in: enrol an authenticator under <a href="/app/settings">Account &amp; security</a>, then sign out and back in.
+            You can test credentials now. Saving them needs two-factor sign-in: turn it on under <a href="/app/settings">Account &amp; security</a> by scanning a QR code with an authenticator app.
           </div>
         ) : null}
         <div className="grid">
