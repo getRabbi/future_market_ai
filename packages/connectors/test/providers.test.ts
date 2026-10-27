@@ -1,5 +1,6 @@
 import { createPublicKey, verify as cryptoVerify, generateKeyPairSync } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
+import { hmacSha256Hex } from '@futuregrow/observability';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { appStoreConnectJwt, EXECUTORS, fetchSalesReport, READ_CONNECTORS } from '../src/index.js';
 import { clearGoogleTokenCache } from '../src/providers/google.js';
@@ -123,6 +124,67 @@ describe('Meta Graph API', () => {
     expect(camps[0]).toMatchObject({ externalCampaignId: '1', dailyBudgetMicros: 25_000_000, currency: 'USD' });
     const spend = await READ_CONNECTORS.meta!.fetchSpend!(c, '2026-10-18', '2026-10-18');
     expect(spend[0]).toMatchObject({ costMicros: 24_170_000, conversions: 2, conversionValueMicros: 80_000_000 });
+  });
+
+  describe('separate Page and ads tokens', () => {
+    const both = { provider: 'meta' as const, accessToken: 'PAGE_TOKEN', adsAccessToken: 'ADS_TOKEN', appSecret: 'APP_SECRET' };
+    const pageMe = () => {
+      server.on('GET', '/v26.0/me', { json: { id: '123', name: 'Shop' } });
+      server.on('GET', '/v26.0/me/permissions', { status: 400, json: { error: { code: 100, message: 'Tried accessing nonexisting field (permissions) on node type (Page)' } } });
+    };
+
+    it('sends ad account calls with the ads token and Page calls with the Page token, each with its own proof', async () => {
+      let status = 'PAUSED';
+      server.on('GET', '/v26.0/987', () => ({ json: { id: '987', status } }));
+      server.on('POST', '/v26.0/987', (req) => {
+        status = req.form!.get('status')!;
+        return { json: { success: true } };
+      });
+      server.on('POST', '/v26.0/123/feed', { json: { id: '123_1' } });
+      const c = makeCtx(server, both);
+      await exec('ads.meta.set_campaign_status').execute(c, { campaignId: '987', status: 'ACTIVE', previousStatus: 'PAUSED' }, meta);
+      await exec('social.facebook.publish_post').execute(c, { pageId: '123', message: 'Hi' }, meta);
+
+      for (const r of [...server.find('GET', '/v26.0/987'), ...server.find('POST', '/v26.0/987')]) {
+        expect(r.headers.authorization).toBe('Bearer ADS_TOKEN');
+        expect(r.query.get('appsecret_proof')).toBe(hmacSha256Hex('APP_SECRET', 'ADS_TOKEN'));
+      }
+      const post = server.find('POST', '/v26.0/123/feed')[0]!;
+      expect(post.headers.authorization).toBe('Bearer PAGE_TOKEN');
+      expect(post.query.get('appsecret_proof')).toBe(hmacSha256Hex('APP_SECRET', 'PAGE_TOKEN'));
+    });
+
+    it('accepts an ad account ID written with the act_ prefix', async () => {
+      server.on('GET', '/v26.0/act_555', { json: { currency: 'USD' } });
+      server.on('GET', '/v26.0/act_555/campaigns', { json: { data: [] } });
+      const c = makeCtx(server, both, { externalAccountId: '123', metadata: { adAccountId: 'act_555' } });
+      expect(await READ_CONNECTORS.meta!.listCampaigns!(c)).toEqual([]);
+      expect(server.find('GET', '/v26.0/act_555')[0]!.headers.authorization).toBe('Bearer ADS_TOKEN');
+    });
+
+    it('health check reads the ad account with the ads token', async () => {
+      pageMe();
+      server.on('GET', '/v26.0/act_555', { json: { id: 'act_555', currency: 'EUR' } });
+      const h = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, both, { externalAccountId: '123', metadata: { adAccountId: 'act_555' } }));
+      expect(h).toMatchObject({ healthy: true, status: 'healthy', grantedScopes: null, details: { id: '123', adAccount: 'act_555 (EUR)' } });
+    });
+
+    it('health check reports a Page token used for ads as degraded, with the reason', async () => {
+      pageMe();
+      server.on('GET', '/v26.0/act_555', { status: 400, json: { error: { code: 200, message: '(#200) Missing permission ads_read' } } });
+      const h = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN' }, { externalAccountId: '123', metadata: { adAccountId: '555' } }));
+      expect(h.healthy).toBe(false);
+      expect(h.status).toBe('degraded');
+      expect(String(h.details.error)).toContain('ads: (#200) Missing permission ads_read');
+      expect(String(h.details.error)).toContain('add an ads access token');
+    });
+
+    it('health check of a Page-only connection never touches an ad account', async () => {
+      pageMe();
+      const h = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN' }, { externalAccountId: '123' }));
+      expect(h).toMatchObject({ healthy: true, details: { id: '123' } });
+      expect(server.find('GET', /act_/)).toHaveLength(0);
+    });
   });
 });
 

@@ -10,20 +10,37 @@ function creds(ctx: ConnectorContext): MetaCreds {
   return ctx.credentials;
 }
 
-function graphUrl(ctx: ConnectorContext, path: string, query: Record<string, string> = {}): string {
+/**
+ * Page calls (posts, comments, Instagram) need a Page token; ad account calls need a user or
+ * system-user token, which a Page token cannot replace. `adsAccessToken` carries the latter.
+ */
+type TokenUse = 'page' | 'ads';
+
+function tokenFor(ctx: ConnectorContext, as: TokenUse): string {
+  const c = creds(ctx);
+  return as === 'ads' ? (c.adsAccessToken ?? c.accessToken) : c.accessToken;
+}
+
+/** The form suggests `act_123…`; older connections hold the bare number. */
+function adAccountPath(ctx: ConnectorContext): string {
+  return `act_${String(ctx.connection.metadata.adAccountId ?? ctx.connection.externalAccountId).replace(/^act_/, '')}`;
+}
+
+function graphUrl(ctx: ConnectorContext, path: string, query: Record<string, string>, token: string): string {
   const c = creds(ctx);
   const u = new URL(`${ctx.endpoints.metaGraph.replace(/\/$/, '')}/${ctx.versions.meta}/${path.replace(/^\//, '')}`);
   for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
-  if (c.appSecret) u.searchParams.set('appsecret_proof', hmacSha256Hex(c.appSecret, c.accessToken));
+  if (c.appSecret) u.searchParams.set('appsecret_proof', hmacSha256Hex(c.appSecret, token));
   return u.toString();
 }
 
-async function graph<T>(ctx: ConnectorContext, method: 'GET' | 'POST' | 'DELETE', path: string, opts: { query?: Record<string, string>; form?: Record<string, string> } = {}): Promise<HttpResponse<T>> {
+async function graph<T>(ctx: ConnectorContext, method: 'GET' | 'POST' | 'DELETE', path: string, opts: { query?: Record<string, string>; form?: Record<string, string>; as?: TokenUse } = {}): Promise<HttpResponse<T>> {
+  const token = tokenFor(ctx, opts.as ?? 'page');
   try {
     return await ctx.http.request<T>({
       method,
-      url: graphUrl(ctx, path, opts.query),
-      headers: { authorization: `Bearer ${creds(ctx).accessToken}` },
+      url: graphUrl(ctx, path, opts.query ?? {}, token),
+      headers: { authorization: `Bearer ${token}` },
       ...(opts.form ? { form: opts.form } : {}),
       idempotent: method === 'GET',
     });
@@ -181,7 +198,7 @@ interface MetaCampaign {
 }
 
 async function readCampaign(ctx: ConnectorContext, campaignId: string): Promise<MetaCampaign> {
-  const res = await graph<MetaCampaign>(ctx, 'GET', campaignId, { query: { fields: 'id,name,daily_budget,status,effective_status,objective' } });
+  const res = await graph<MetaCampaign>(ctx, 'GET', campaignId, { as: 'ads', query: { fields: 'id,name,daily_budget,status,effective_status,objective' } });
   return res.data;
 }
 
@@ -201,6 +218,7 @@ export const metaUpdateCampaignBudget: ActionExecutor<{ campaignId: string; newD
       });
     }
     const res = await graph<{ success: boolean }>(ctx, 'POST', p.campaignId, {
+      as: 'ads',
       form: { daily_budget: String(microsToMinor(p.newDailyBudget.amountMicros, offset)) },
     });
     if (res.data?.success !== true) throw new ProviderHttpError('meta did not confirm budget update', { status: res.status, phase: 'ambiguous', body: res.data });
@@ -214,6 +232,7 @@ export const metaUpdateCampaignBudget: ActionExecutor<{ campaignId: string; newD
   async rollback(ctx, p, receipt) {
     const offset = metaMinorUnitOffset(p.previousDailyBudget.currency);
     const res = await graph<{ success: boolean }>(ctx, 'POST', p.campaignId, {
+      as: 'ads',
       form: { daily_budget: String(microsToMinor(p.previousDailyBudget.amountMicros, offset)) },
     });
     return { receipt: receiptOf(ctx, res, receipt.providerObjectId), beforeState: null, rawResponse: res.data };
@@ -233,7 +252,7 @@ export const metaSetCampaignStatus: ActionExecutor<{ campaignId: string; status:
     if (before.status !== p.previousStatus) {
       throw new ProviderHttpError(`precondition failed: status is ${before.status}, expected ${p.previousStatus}`, { status: null, phase: 'rejected', body: { before } });
     }
-    const res = await graph<{ success: boolean }>(ctx, 'POST', p.campaignId, { form: { status: p.status } });
+    const res = await graph<{ success: boolean }>(ctx, 'POST', p.campaignId, { as: 'ads', form: { status: p.status } });
     if (res.data?.success !== true) throw new ProviderHttpError('meta did not confirm status update', { status: res.status, phase: 'ambiguous', body: res.data });
     return { receipt: receiptOf(ctx, res, p.campaignId), beforeState: { ...before }, rawResponse: res.data };
   },
@@ -242,7 +261,7 @@ export const metaSetCampaignStatus: ActionExecutor<{ campaignId: string; status:
     return compareProof('read_after_write', { status: p.status }, { status: c.status, effective_status: c.effective_status }, ctx.now());
   },
   async rollback(ctx, p, receipt) {
-    const res = await graph<{ success: boolean }>(ctx, 'POST', p.campaignId, { form: { status: p.previousStatus } });
+    const res = await graph<{ success: boolean }>(ctx, 'POST', p.campaignId, { as: 'ads', form: { status: p.previousStatus } });
     return { receipt: receiptOf(ctx, res, receipt.providerObjectId), beforeState: null, rawResponse: res.data };
   },
   async verifyRollback(ctx, p) {
@@ -265,22 +284,35 @@ export const metaRead: ReadConnector = {
       } catch {
         scopes = null; // page tokens cannot list permissions; scope state stays as recorded
       }
-      return { healthy: true, status: 'healthy', grantedScopes: scopes, details: { id: me.data.id } };
+      const details: Record<string, unknown> = { id: me.data.id };
+      if (creds(ctx).adsAccessToken || ctx.connection.metadata.adAccountId) {
+        // Read the ad account now, so a token without ad access shows here and not at the first budget change.
+        try {
+          const acct = await graph<{ id: string; currency: string }>(ctx, 'GET', adAccountPath(ctx), { as: 'ads', query: { fields: 'id,currency' } });
+          details.adAccount = `${acct.data.id} (${acct.data.currency})`;
+        } catch (err) {
+          const e = err as ProviderHttpError;
+          const why = (e.body as { error?: { message?: string } } | undefined)?.error?.message ?? e.message;
+          const hint = creds(ctx).adsAccessToken ? '' : ' (a Page token cannot read ad accounts; add an ads access token)';
+          return { healthy: false, status: 'degraded', grantedScopes: scopes, details: { ...details, error: `ads: ${why}${hint}` } };
+        }
+      }
+      return { healthy: true, status: 'healthy', grantedScopes: scopes, details };
     } catch (err) {
       const e = err as ProviderHttpError;
       return { healthy: false, status: e.isAuthError ? 'failing' : 'degraded', grantedScopes: null, details: { error: e.message } };
     }
   },
   async listCampaigns(ctx): Promise<CampaignSnapshot[]> {
-    const account = String(ctx.connection.metadata.adAccountId ?? ctx.connection.externalAccountId);
-    const acct = await graph<{ currency: string }>(ctx, 'GET', `act_${account}`, { query: { fields: 'currency' } });
+    const account = adAccountPath(ctx);
+    const acct = await graph<{ currency: string }>(ctx, 'GET', account, { as: 'ads', query: { fields: 'currency' } });
     const offset = metaMinorUnitOffset(acct.data.currency);
     const out: CampaignSnapshot[] = [];
     let next: string | null = null;
-    let path = `act_${account}/campaigns`;
+    let path = `${account}/campaigns`;
     let query: Record<string, string> = { fields: 'id,name,status,daily_budget,objective', limit: '200' };
     for (let page = 0; page < 50; page++) {
-      const res = await graph<{ data: MetaCampaign[]; paging?: { cursors?: { after?: string }; next?: string } }>(ctx, 'GET', path, { query });
+      const res = await graph<{ data: MetaCampaign[]; paging?: { cursors?: { after?: string }; next?: string } }>(ctx, 'GET', path, { as: 'ads', query });
       for (const c of res.data.data) {
         out.push({
           externalCampaignId: c.id,
@@ -295,15 +327,16 @@ export const metaRead: ReadConnector = {
       }
       next = res.data.paging?.next ? (res.data.paging.cursors?.after ?? null) : null;
       if (!next) break;
-      path = `act_${account}/campaigns`;
+      path = `${account}/campaigns`;
       query = { ...query, after: next };
     }
     return out;
   },
   async fetchSpend(ctx, from, to): Promise<SpendRow[]> {
-    const account = String(ctx.connection.metadata.adAccountId ?? ctx.connection.externalAccountId);
-    const acct = await graph<{ currency: string }>(ctx, 'GET', `act_${account}`, { query: { fields: 'currency' } });
-    const res = await graph<{ data: { campaign_id: string; date_start: string; spend: string; impressions: string; clicks: string; actions?: { action_type: string; value: string }[]; action_values?: { action_type: string; value: string }[] }[] }>(ctx, 'GET', `act_${account}/insights`, {
+    const account = adAccountPath(ctx);
+    const acct = await graph<{ currency: string }>(ctx, 'GET', account, { as: 'ads', query: { fields: 'currency' } });
+    const res = await graph<{ data: { campaign_id: string; date_start: string; spend: string; impressions: string; clicks: string; actions?: { action_type: string; value: string }[]; action_values?: { action_type: string; value: string }[] }[] }>(ctx, 'GET', `${account}/insights`, {
+      as: 'ads',
       query: {
         level: 'campaign',
         time_increment: '1',

@@ -32,9 +32,10 @@ export const PROVIDER_FORMS: ProviderForm[] = [
     docsUrl: 'https://developers.facebook.com/docs/facebook-login/guides/access-tokens',
     account: { label: 'Facebook Page ID', placeholder: '1234567890', help: 'Page settings → About → Page ID.', pattern: /^\d{5,20}$/, patternHint: 'digits only' },
     fields: [
-      { key: 'accessToken', label: 'Access token', secret: true, placeholder: 'EAAG…', help: 'A long-lived Page token, or a system-user token from Business Settings → System users.' },
+      { key: 'accessToken', label: 'Page access token', secret: true, placeholder: 'EAAG…', help: 'For posts, comment replies and Instagram. With a system-user token, GET /{page-id}?fields=access_token returns a Page token that does not expire.' },
       { key: 'appSecret', label: 'App secret', secret: true, optional: true, help: 'Adds appsecret_proof to every call (recommended).' },
       { key: 'adAccountId', label: 'Ad account ID', optional: true, placeholder: 'act_1234567890', target: 'metadata', help: 'Only for ads: Business Settings → Ad accounts.' },
+      { key: 'adsAccessToken', label: 'Ads access token', secret: true, optional: true, placeholder: 'EAAG…', help: 'Only for ads: a system-user token with ads_read and ads_management (Business Settings → System users). A Page token cannot read ad accounts.' },
     ],
   },
   {
