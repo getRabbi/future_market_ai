@@ -102,3 +102,26 @@ Resolved since the first report: browser click-through (B-017, Playwright E2E in
 * `npm audit`: 4 moderate findings, all in `drizzle-kit`'s development-only dependency on `esbuild <= 0.24.2` (dev-server CORS issue). Not present in any runtime bundle or image.
 * Biome reports warnings only (mostly `noExplicitAny` in tests and optional-chain suggestions); zero errors.
 * The Remotion compositor logs "Executable file detection not yet supported on win32" on Windows; renders succeed.
+
+## 6. Live verification (2026-10-27, commits `6d98d39` and `266dd88`)
+
+| Check | Result |
+|---|---|
+| CI on both commits (typecheck, lint, docs, real-PG tests, pytest, render, builds, SBOM, E2E, four images) | **pass** |
+| Northflank token; api, worker, analytics-job on the new commit | **pass** (deployed SHA `266dd88`) |
+| PostgreSQL TLS before and after restart | **pass** — api and worker log `verify-full`, public CA, TLSv1.3; analytics job TLSv1.3 |
+| `/healthz`, `/readyz`, `/statusz` | **pass** — all components `ok` |
+| Live smoke (`.tools/smoke/live-smoke.ts run`, FG Smoke Test org, TOTP users) | **23 / 23** — MFA flows, 58 list endpoints, approval with separation of duties → worker → VERIFIED, R2 upload, audit chain |
+| Connections smoke (`… connections`) | **5 / 5** — Meta webhook secret reported configured |
+| Backups (production `backup_runs`, read-only) | **pass** — 7 daily backups and 7 verifications, all succeeded; next due ~19:00 UTC |
+| Model failover | **pass** — OpenRouter (Opus) answered 402, the gateway served the call from Groq; spend $0.0007 recorded against the tenant's $5 limit |
+| Sign-in client address | **pass** — new sessions record the client address; no "could not determine a client IP" warning since the deploy |
+| Meta Page token (`debug_token`, Page info, feed read) | **pass** — type PAGE, never expires (data access until 2027-01-25), Page *EPS-topik-Bangla*, required scopes granted |
+| Meta ads token | **pass with caveat** — reads ad account `act_6269640959734898` (BDT, nothing spent), `ads_read` + `ads_management`; a USER token, not a System User token |
+| Meta app secret | **pass** — app access token accepted; correct `appsecret_proof` accepted, a wrong one refused |
+| Meta webhook | **pass** — app subscribed to Page `feed` (Meta's verification handshake succeeded), Page subscribed to the app; a delivery signed with the app secret → 200 and an interaction in the Smoke org's inbox; wrong signature → 401 |
+| Connection health in FUTUREGROW | **pass** — healthy: Page token PAGE/never, feed webhook true, ad account readable, ads token USER |
+| Real Facebook test post | **prepared, not published** — action `248fcf33-2b87-4a42-936d-536a490e0b12` at `APPROVAL_REQUIRED` (operational + legal approval, distinct approver) |
+| Instagram | **blocked** — no Instagram professional account linked to the Page |
+| Comments from real users | **blocked** — app in Development mode (App Review, B-005) |
+| Uptime Worker | **blocked** — no `ALERT_WEBHOOK_URL`; Cloudflare token refused by the Workers KV API |
