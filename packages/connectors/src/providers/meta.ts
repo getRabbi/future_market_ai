@@ -278,6 +278,8 @@ interface TokenInfo {
   is_valid?: boolean;
   /** Unix seconds; 0 = never expires. */
   expires_at?: number;
+  /** Unix seconds after which the token can no longer read data until the user authorizes again. */
+  data_access_expires_at?: number;
   scopes?: string[];
 }
 
@@ -302,13 +304,14 @@ function tokenWarnings(info: TokenInfo | null, label: string, needed: Record<str
   const out: string[] = [];
   const missing = Object.keys(needed).filter((s) => info.scopes && !info.scopes.includes(s));
   if (missing.length) out.push(`${label} lacks ${missing.map((s) => `${s} (${needed[s]})`).join(', ')}`);
-  if (info.expires_at && info.expires_at * 1000 - now.getTime() < EXPIRY_WARNING_DAYS * 86_400_000) {
-    out.push(`${label} expires ${new Date(info.expires_at * 1000).toISOString()}; replace it with a long-lived token`);
-  }
+  const soon = (t: number | undefined) => Boolean(t) && t! * 1000 - now.getTime() < EXPIRY_WARNING_DAYS * 86_400_000;
+  if (soon(info.expires_at)) out.push(`${label} expires ${new Date(info.expires_at! * 1000).toISOString()}; replace it with a long-lived token`);
+  else if (soon(info.data_access_expires_at)) out.push(`${label} loses data access ${new Date(info.data_access_expires_at! * 1000).toISOString()}; the user must authorize the app again (system-user tokens do not lapse)`);
   return out;
 }
 
 const expiry = (info: TokenInfo | null) => (info?.expires_at === undefined ? undefined : info.expires_at === 0 ? 'never' : new Date(info.expires_at * 1000).toISOString());
+const dataAccess = (info: TokenInfo | null) => (info?.data_access_expires_at ? new Date(info.data_access_expires_at * 1000).toISOString() : undefined);
 
 export const metaRead: ReadConnector = {
   provider: 'meta',
@@ -328,6 +331,7 @@ export const metaRead: ReadConnector = {
       const details: Record<string, unknown> = { id: me.data.id };
       if (page?.type) details.tokenType = page.type;
       if (expiry(page)) details.tokenExpiresAt = expiry(page);
+      if (dataAccess(page)) details.tokenDataAccessUntil = dataAccess(page);
       const warnings: string[] = [];
       if (page?.type === 'PAGE' && me.data.id !== ctx.connection.externalAccountId) {
         // Posts would go to (or be refused for) a different Page than the one this connection names.
@@ -359,6 +363,7 @@ export const metaRead: ReadConnector = {
           const ads = await inspectToken(ctx, 'ads');
           if (ads?.type) details.adsTokenType = ads.type;
           if (expiry(ads)) details.adsTokenExpiresAt = expiry(ads);
+          if (dataAccess(ads)) details.adsTokenDataAccessUntil = dataAccess(ads);
           warnings.push(...tokenWarnings(ads, 'ads token', ADS_SCOPES, ctx.now()));
         }
       }

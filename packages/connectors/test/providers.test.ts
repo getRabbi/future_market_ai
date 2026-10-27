@@ -220,6 +220,13 @@ describe('Meta Graph API', () => {
       server.on('GET', '/v26.0/123/subscribed_apps', { json: { data: [] } });
       const page = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN' }, { externalAccountId: '123' }));
       expect(page).toMatchObject({ status: 'degraded', details: { tokenType: 'PAGE', tokenExpiresAt: '2027-01-01T00:00:00.000Z', feedWebhook: false, warnings: ['Page token lacks pages_manage_engagement (comment replies)'] } });
+
+      server.reset();
+      server.on('GET', '/v26.0/me', { json: { id: '123', name: 'Shop' } });
+      tokens({ PAGE_TOKEN: { type: 'PAGE', app_id: '777', is_valid: true, expires_at: 0, data_access_expires_at: at('2026-10-22T00:00:00Z'), scopes: PAGE_SCOPES } });
+      server.on('GET', '/v26.0/123/subscribed_apps', { json: { data: [{ id: '777', subscribed_fields: ['feed'] }] } });
+      const lapsing = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN' }, { externalAccountId: '123' }));
+      expect(lapsing).toMatchObject({ status: 'degraded', details: { tokenExpiresAt: 'never', tokenDataAccessUntil: '2026-10-22T00:00:00.000Z', warnings: ['Page token loses data access 2026-10-22T00:00:00.000Z; the user must authorize the app again (system-user tokens do not lapse)'] } });
     });
 
     it('fails a Page token that belongs to a different Page than the connection', async () => {
