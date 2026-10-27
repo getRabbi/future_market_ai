@@ -1,6 +1,6 @@
 import { verifyMetaSignature, verifyShopifyHmac, verifySvixSignature, verifyTikTokSignature } from '@futuregrow/connectors';
 import { webhooks } from '@futuregrow/core';
-import { safeEqual } from '@futuregrow/observability';
+import { safeEqual, sha256Hex } from '@futuregrow/observability';
 import type { Env } from '@futuregrow/runtime';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ApiContext } from '../http.js';
@@ -20,8 +20,8 @@ const h = (req: FastifyRequest, name: string) => {
  * than accepting unauthenticated data.
  */
 export function registerWebhookRoutes(app: FastifyInstance, ctx: ApiContext, env: Env): void {
-  const accept = async (req: FastifyRequest, input: Omit<webhooks.InboxInput, 'headers' | 'rawBody' | 'payload'>) => {
-    const stored = await webhooks.ingestWebhook(ctx.deps.db, { ...input, headers: headerMap(req), rawBody: req.rawBody ?? '', payload: req.body ?? null });
+  const accept = async (req: FastifyRequest, input: Omit<webhooks.InboxInput, 'headers' | 'rawBody' | 'payload'> & { payload?: unknown }) => {
+    const stored = await webhooks.ingestWebhook(ctx.deps.db, { ...input, headers: headerMap(req), rawBody: req.rawBody ?? '', payload: input.payload ?? req.body ?? null });
     if (!stored.duplicate && input.signatureValid) {
       // If enqueueing fails, the inbox sweep picks the delivery up later.
       await ctx.deps.jobs.add('process_webhook', { inboxId: stored.id }, { jobKey: `webhook:${stored.id}` }).catch(() => undefined);
@@ -41,8 +41,21 @@ export function registerWebhookRoutes(app: FastifyInstance, ctx: ApiContext, env
     if (!env.META_APP_SECRET) return reply.status(503).send({ error: { code: 'NOT_CONFIGURED', message: 'META_APP_SECRET not set (B-005)' } });
     const valid = verifyMetaSignature(req.rawBody ?? '', h(req, 'x-hub-signature-256'), env.META_APP_SECRET);
     const body = req.body as { object?: string; entry?: { id?: string }[] } | null;
-    const stored = await accept(req, { provider: 'meta', providerEventId: null, topic: body?.object ?? null, signatureValid: valid, accountRef: body?.entry?.[0]?.id ?? null });
-    return reply.status(valid ? 200 : 401).send({ received: valid, duplicate: stored.duplicate });
+    const entries = Array.isArray(body?.entry) ? body.entry : [];
+    const pages = [...new Set(entries.map((e) => e?.id))];
+    if (!valid || pages.length <= 1) {
+      const stored = await accept(req, { provider: 'meta', providerEventId: null, topic: body?.object ?? null, signatureValid: valid, accountRef: pages[0] ?? null });
+      return reply.status(valid ? 200 : 401).send({ received: valid, duplicate: stored.duplicate });
+    }
+    // Meta batches entries for several Pages into one delivery; each Page can belong to another
+    // tenant, so each Page's entries are stored and resolved on their own.
+    const bodyHash = sha256Hex(req.rawBody ?? '');
+    let duplicate = true;
+    for (const page of pages) {
+      const stored = await accept(req, { provider: 'meta', providerEventId: `sha256:${bodyHash}:${page ?? 'none'}`, topic: body?.object ?? null, signatureValid: true, accountRef: page ?? null, payload: { ...body, entry: entries.filter((e) => e?.id === page) } });
+      duplicate &&= stored.duplicate;
+    }
+    return reply.status(200).send({ received: true, duplicate });
   });
 
   app.post('/webhooks/shopify', { config: { public: true } }, async (req, reply) => {

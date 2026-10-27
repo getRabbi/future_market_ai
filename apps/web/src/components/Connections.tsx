@@ -171,7 +171,14 @@ function HealthResult({ health, required }: { health: Health; required: string[]
     <div className={`notice ${health.healthy ? 'ok' : health.status === 'degraded' ? 'warn' : 'error'}`} role="status" style={{ marginTop: '0.75rem' }}>
       <strong>{health.healthy ? 'Connection works.' : health.status === 'degraded' ? 'The provider answered with a problem.' : 'The provider rejected these credentials.'}</strong>
       {err ? <div className="small">{err}</div> : null}
-      {health.healthy && Object.keys(health.details ?? {}).length ? <div className="small muted">Account: {Object.values(health.details).map(String).join(', ')}</div> : null}
+      {health.healthy && Object.keys(health.details ?? {}).length ? (
+        <div className="small muted">
+          Account:{' '}
+          {Object.entries(health.details)
+            .map(([k, v]) => `${k} ${String(v)}`)
+            .join(', ')}
+        </div>
+      ) : null}
       {health.grantedScopes ? <div className="small">Granted permissions: {health.grantedScopes.length ? health.grantedScopes.join(', ') : 'none reported'}</div> : null}
       {missing.length ? <div className="small">Missing for full use: {missing.join(', ')}</div> : null}
     </div>
@@ -182,7 +189,10 @@ function ConnectForm({ p, connection, requiredScopes, canSave, onSaved }: { p: P
   const rotating = Boolean(connection);
   const [account, setAccount] = useState(rotating ? String(connection!.externalAccountId) : '');
   const [displayName, setDisplayName] = useState(rotating ? String(connection!.displayName) : '');
-  const [values, setValues] = useState<Record<string, string>>({});
+  // Metadata (e.g. an ad account ID) stays editable when credentials are replaced, so ads can be added to a Page-only connection.
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    rotating ? Object.fromEntries(p.fields.filter((f) => f.target === 'metadata' && connection!.metadata && typeof (connection!.metadata as Record<string, unknown>)[f.key] === 'string').map((f) => [f.key, (connection!.metadata as Record<string, string>)[f.key]!])) : {},
+  );
   const [scopes, setScopes] = useState<string[]>(rotating && Array.isArray(connection!.grantedScopes) ? (connection!.grantedScopes as string[]) : requiredScopes);
   const [busy, setBusy] = useState<'test' | 'save' | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
@@ -198,7 +208,7 @@ function ConnectForm({ p, connection, requiredScopes, canSave, onSaved }: { p: P
     const metadata: Record<string, string> = {};
     for (const f of p.fields) if (field(f.key)) (f.target === 'metadata' ? metadata : credentials)[f.key] = field(f.key);
     if (p.account.alsoCredential) credentials[p.account.alsoCredential] = account.trim();
-    return { provider: p.provider, externalAccountId: account.trim(), metadata: rotating ? ((connection!.metadata as Record<string, unknown>) ?? {}) : metadata, credentials };
+    return { provider: p.provider, externalAccountId: account.trim(), metadata: rotating ? { ...((connection!.metadata as Record<string, unknown>) ?? {}), ...metadata } : metadata, credentials };
   };
 
   const test = async () => {
@@ -219,7 +229,7 @@ function ConnectForm({ p, connection, requiredScopes, canSave, onSaved }: { p: P
     try {
       const b = body();
       const id = rotating ? String(connection!.id) : (await api<Row>('POST', '/v1/connections', { ...b, displayName: displayName.trim() || `${p.name} ${b.externalAccountId}`, grantedScopes: scopes })).id;
-      if (rotating) await api('POST', `/v1/connections/${id}/credentials`, { credentials: b.credentials });
+      if (rotating) await api('POST', `/v1/connections/${id}/credentials`, { credentials: b.credentials, metadata: b.metadata });
       const r = await api<{ result: Health }>('POST', `/v1/connections/${id}/health-check`);
       setHealth(r.result);
       setValues({});
@@ -270,22 +280,20 @@ function ConnectForm({ p, connection, requiredScopes, canSave, onSaved }: { p: P
           </div>
         </>
       ) : null}
-      {p.fields
-        .filter((f) => !rotating || f.target !== 'metadata')
-        .map((f) => (
-          <div className="field" key={f.key}>
-            <label htmlFor={`c-${f.key}`}>
-              {f.label}
-              {f.optional ? <span className="muted small"> (optional)</span> : null}
-            </label>
-            {f.multiline ? (
-              <textarea id={`c-${f.key}`} rows={5} spellCheck={false} value={values[f.key] ?? ''} placeholder={f.placeholder} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} />
-            ) : (
-              <input id={`c-${f.key}`} type={f.secret ? 'password' : 'text'} autoComplete={f.secret ? 'new-password' : 'off'} spellCheck={false} value={values[f.key] ?? ''} placeholder={f.placeholder} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} />
-            )}
-            {f.help ? <span className="small muted">{f.help}</span> : null}
-          </div>
-        ))}
+      {p.fields.map((f) => (
+        <div className="field" key={f.key}>
+          <label htmlFor={`c-${f.key}`}>
+            {f.label}
+            {f.optional ? <span className="muted small"> (optional)</span> : null}
+          </label>
+          {f.multiline ? (
+            <textarea id={`c-${f.key}`} rows={5} spellCheck={false} value={values[f.key] ?? ''} placeholder={f.placeholder} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} />
+          ) : (
+            <input id={`c-${f.key}`} type={f.secret ? 'password' : 'text'} autoComplete={f.secret ? 'new-password' : 'off'} spellCheck={false} value={values[f.key] ?? ''} placeholder={f.placeholder} onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} />
+          )}
+          {f.help ? <span className="small muted">{f.help}</span> : null}
+        </div>
+      ))}
       {!rotating && requiredScopes.length ? (
         <fieldset className="field">
           <legend>Permissions granted to this token</legend>

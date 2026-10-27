@@ -32,6 +32,10 @@ export default async function setup(project: TestProject) {
       persistent: true,
       // Production Postgres is UTF-8; Windows initdb would otherwise default to WIN1252.
       initdbFlags: ['--encoding=UTF8', '--locale=C'],
+      // Throwaway cluster: without fsync, the checkpoint each DROP DATABASE waits for no longer
+      // queues behind Windows data-file syncs (measured 87-107 s per drop under parallel load,
+      // past the 120 s hook timeout at times). Durability is irrelevant here; production is unaffected.
+      postgresFlags: ['-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off'],
       onLog: () => {},
       onError: () => {},
     });

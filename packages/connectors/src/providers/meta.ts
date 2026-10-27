@@ -272,19 +272,78 @@ export const metaSetCampaignStatus: ActionExecutor<{ campaignId: string; status:
 
 /* --------------------------- Read side --------------------------- */
 
+interface TokenInfo {
+  type?: string;
+  app_id?: string;
+  is_valid?: boolean;
+  /** Unix seconds; 0 = never expires. */
+  expires_at?: number;
+  scopes?: string[];
+}
+
+/** debug_token on the token itself: type, expiry and scopes, also for Page tokens (which cannot list me/permissions). */
+async function inspectToken(ctx: ConnectorContext, as: TokenUse): Promise<TokenInfo | null> {
+  try {
+    const res = await graph<{ data?: TokenInfo }>(ctx, 'GET', 'debug_token', { as, query: { input_token: tokenFor(ctx, as) } });
+    return res.data?.data ?? null;
+  } catch {
+    return null; // advisory only: the reads decide health
+  }
+}
+
+/** Scopes each feature needs; a missing one degrades the connection with the feature named. */
+const PAGE_SCOPES: Record<string, string> = { pages_manage_posts: 'posts', pages_read_engagement: 'post verification', pages_manage_engagement: 'comment replies', pages_read_user_content: 'comment reading' };
+const ADS_SCOPES: Record<string, string> = { ads_read: 'campaign and spend sync', ads_management: 'budget and status changes' };
+/** Tokens closer than this to expiry are reported, so a short-lived token never silently breaks posting. */
+const EXPIRY_WARNING_DAYS = 7;
+
+function tokenWarnings(info: TokenInfo | null, label: string, needed: Record<string, string>, now: Date): string[] {
+  if (!info) return [];
+  const out: string[] = [];
+  const missing = Object.keys(needed).filter((s) => info.scopes && !info.scopes.includes(s));
+  if (missing.length) out.push(`${label} lacks ${missing.map((s) => `${s} (${needed[s]})`).join(', ')}`);
+  if (info.expires_at && info.expires_at * 1000 - now.getTime() < EXPIRY_WARNING_DAYS * 86_400_000) {
+    out.push(`${label} expires ${new Date(info.expires_at * 1000).toISOString()}; replace it with a long-lived token`);
+  }
+  return out;
+}
+
+const expiry = (info: TokenInfo | null) => (info?.expires_at === undefined ? undefined : info.expires_at === 0 ? 'never' : new Date(info.expires_at * 1000).toISOString());
+
 export const metaRead: ReadConnector = {
   provider: 'meta',
   async healthCheck(ctx): Promise<HealthResult> {
     try {
       const me = await graph<{ id: string; name?: string }>(ctx, 'GET', 'me', { query: { fields: 'id,name' } });
-      let scopes: string[] | null = null;
-      try {
-        const perms = await graph<{ data: { permission: string; status: string }[] }>(ctx, 'GET', 'me/permissions');
-        scopes = perms.data.data.filter((x) => x.status === 'granted').map((x) => x.permission);
-      } catch {
-        scopes = null; // page tokens cannot list permissions; scope state stays as recorded
+      const page = await inspectToken(ctx, 'page');
+      let scopes: string[] | null = page?.scopes ?? null;
+      if (!scopes) {
+        try {
+          const perms = await graph<{ data: { permission: string; status: string }[] }>(ctx, 'GET', 'me/permissions');
+          scopes = perms.data.data.filter((x) => x.status === 'granted').map((x) => x.permission);
+        } catch {
+          scopes = null; // page tokens cannot list permissions; scope state stays as recorded
+        }
       }
       const details: Record<string, unknown> = { id: me.data.id };
+      if (page?.type) details.tokenType = page.type;
+      if (expiry(page)) details.tokenExpiresAt = expiry(page);
+      const warnings: string[] = [];
+      if (page?.type === 'PAGE' && me.data.id !== ctx.connection.externalAccountId) {
+        // Posts would go to (or be refused for) a different Page than the one this connection names.
+        return { healthy: false, status: 'failing', grantedScopes: scopes, details: { ...details, error: `the Page token belongs to Page ${me.data.id} (${me.data.name ?? 'unnamed'}), not ${ctx.connection.externalAccountId}` } };
+      }
+      if (page?.type && page.type !== 'PAGE') warnings.push(`the Page access token is a ${page.type} token; posts and replies need a Page token (GET /{page-id}?fields=access_token)`);
+      warnings.push(...tokenWarnings(page, 'Page token', page?.type === 'PAGE' ? PAGE_SCOPES : {}, ctx.now()));
+      if (page?.type === 'PAGE' && page.app_id) {
+        // Comment webhooks arrive only while the Page is subscribed to this app's feed field.
+        try {
+          const subs = await graph<{ data: { id: string; subscribed_fields?: string[] }[] }>(ctx, 'GET', `${me.data.id}/subscribed_apps`);
+          details.feedWebhook = subs.data.data.some((a) => a.id === page.app_id && (a.subscribed_fields ?? []).includes('feed'));
+        } catch {
+          /* needs pages_manage_metadata; informational only */
+        }
+      }
       if (creds(ctx).adsAccessToken || ctx.connection.metadata.adAccountId) {
         // Read the ad account now, so a token without ad access shows here and not at the first budget change.
         try {
@@ -296,7 +355,14 @@ export const metaRead: ReadConnector = {
           const hint = creds(ctx).adsAccessToken ? '' : ' (a Page token cannot read ad accounts; add an ads access token)';
           return { healthy: false, status: 'degraded', grantedScopes: scopes, details: { ...details, error: `ads: ${why}${hint}` } };
         }
+        if (creds(ctx).adsAccessToken && creds(ctx).adsAccessToken !== creds(ctx).accessToken) {
+          const ads = await inspectToken(ctx, 'ads');
+          if (ads?.type) details.adsTokenType = ads.type;
+          if (expiry(ads)) details.adsTokenExpiresAt = expiry(ads);
+          warnings.push(...tokenWarnings(ads, 'ads token', ADS_SCOPES, ctx.now()));
+        }
       }
+      if (warnings.length) return { healthy: false, status: 'degraded', grantedScopes: scopes, details: { ...details, warnings, error: warnings.join('; ') } };
       return { healthy: true, status: 'healthy', grantedScopes: scopes, details };
     } catch (err) {
       const e = err as ProviderHttpError;

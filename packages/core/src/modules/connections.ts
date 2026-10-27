@@ -68,15 +68,17 @@ export async function createConnection(deps: CoreDeps, tenantId: string, actor: 
   });
 }
 
-export async function rotateConnectionCredentials(deps: CoreDeps, tenantId: string, actor: Actor, id: string, raw: { credentials: Record<string, unknown>; credentialsExpireAt?: string | null }) {
+/** `metadata` (e.g. a Meta ad account ID added with an ads token) is merged into the stored metadata. */
+export async function rotateConnectionCredentials(deps: CoreDeps, tenantId: string, actor: Actor, id: string, raw: { credentials: Record<string, unknown>; credentialsExpireAt?: string | null; metadata?: Record<string, unknown> }) {
   requireRole(actor, ADMIN_ROLES, 'rotating connection credentials');
   requireMfa(actor, 'rotating connection credentials');
   return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
     const [c] = await tx.select().from(connections).where(eq(connections.id, id));
     if (!c) throw notFound('connection');
     await storeCredentials(tx, deps.config, tenantId, c.id, { ...raw.credentials, provider: c.provider } as ProviderCredentials, raw.credentialsExpireAt ? new Date(raw.credentialsExpireAt) : null);
-    const [u] = await tx.update(connections).set({ status: 'active', updatedAt: new Date() }).where(eq(connections.id, id)).returning();
-    await audit(tx, tenantId, actor, 'connector.connection.credentials_rotated', { type: 'connection', id }, {});
+    const metadata = raw.metadata ? { ...c.metadata, ...raw.metadata } : c.metadata;
+    const [u] = await tx.update(connections).set({ status: 'active', metadata, updatedAt: new Date() }).where(eq(connections.id, id)).returning();
+    await audit(tx, tenantId, actor, 'connector.connection.credentials_rotated', { type: 'connection', id }, raw.metadata ? { metadataKeys: Object.keys(raw.metadata) } : {});
     return connectionView(u!);
   });
 }

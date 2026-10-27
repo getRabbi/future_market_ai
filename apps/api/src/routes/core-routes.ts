@@ -129,6 +129,10 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
       return { ok: true };
     },
   );
+  r.post('/v1/platform/models/revoke', { schema: { tags: ['platform'], body: z.object({ provider: z.string(), modelId: z.string() }) } }, async (req) => {
+    await governance.revokeModelApproval(deps.db, { userId: actorOf(req).id }, req.body);
+    return { ok: true };
+  });
   r.post(
     '/v1/platform/jurisdiction-rules',
     {
@@ -152,7 +156,7 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
   /* ---------------- connections ---------------- */
   r.get('/v1/connections', { schema: { tags: ['connections'] } }, async (req) => tenantTx(ctx, req, (tx) => connectionsModule.listConnections(tx)));
   r.post('/v1/connections', { schema: { tags: ['connections'], body: z.record(z.string(), z.unknown()) } }, async (req, reply) => reply.status(201).send(await connectionsModule.createConnection(deps, tenantOf(req), actorOf(req), req.body)));
-  r.post('/v1/connections/:id/credentials', { schema: { tags: ['connections'], params: Id, body: z.object({ credentials: z.record(z.string(), z.unknown()), credentialsExpireAt: z.string().datetime({ offset: true }).nullable().optional() }) } }, async (req) =>
+  r.post('/v1/connections/:id/credentials', { schema: { tags: ['connections'], params: Id, body: z.object({ credentials: z.record(z.string(), z.unknown()), credentialsExpireAt: z.string().datetime({ offset: true }).nullable().optional(), metadata: z.record(z.string(), z.unknown()).optional() }) } }, async (req) =>
     connectionsModule.rotateConnectionCredentials(deps, tenantOf(req), actorOf(req), req.params.id, req.body),
   );
   r.post('/v1/connections/:id/status', { schema: { tags: ['connections'], params: Id, body: z.object({ status: z.enum(['active', 'disabled', 'read_only', 'revoked']) }) } }, async (req) =>

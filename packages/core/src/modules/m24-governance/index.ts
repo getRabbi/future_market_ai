@@ -301,6 +301,25 @@ export async function approveModel(db: Db, actor: { userId: string }, input: { p
   });
 }
 
+/**
+ * Withdraws production approval: the gateway stops calling the model within the registry cache
+ * window (60 s), and a later approval must be given again explicitly. Topping up a provider
+ * account therefore never re-enables a revoked model.
+ */
+export async function revokeModelApproval(db: Db, actor: { userId: string }, input: { provider: string; modelId: string }): Promise<void> {
+  await withSystem(db, `user:${actor.userId}`, async (tx) => {
+    const [u] = await tx.select().from(authUser).where(eq(authUser.id, actor.userId));
+    if (!u?.isPlatformAdmin) throw forbidden('revoking a model approval requires a platform administrator');
+    if (!u.twoFactorEnabled) throw forbidden('revoking a model approval requires an MFA-enabled account');
+    const updated = await tx
+      .update(modelRegistry)
+      .set({ approvedForProduction: false, approvedBy: null, approvedAt: null })
+      .where(and(eq(modelRegistry.provider, input.provider), eq(modelRegistry.modelId, input.modelId)))
+      .returning({ id: modelRegistry.id });
+    if (!updated.length) throw notFound('model');
+  });
+}
+
 export async function listModels(db: DbOrTx) {
   return db.select().from(modelRegistry).orderBy(modelRegistry.provider, modelRegistry.modelId);
 }

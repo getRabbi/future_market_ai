@@ -130,7 +130,7 @@ describe('M16 organic social', () => {
   });
 
   it('ingests page comments once, hashes authors, escalates abuse, and drafts grounded replies', async () => {
-    const payload = (id: string, message: string) => ({ object: 'page', entry: [{ id: '123', changes: [{ field: 'feed', value: { item: 'comment', verb: 'add', comment_id: id, post_id: '123_42', message, from: { id: 'fan-7' }, created_time: 1_790_000_000 } }] }] });
+    const payload = (id: string, message: string, from = 'fan-7') => ({ object: 'page', entry: [{ id: '123', changes: [{ field: 'feed', value: { item: 'comment', verb: 'add', comment_id: id, post_id: '123_42', message, from: { id: from }, created_time: 1_790_000_000 } }] }] });
     const deliver = async (p: unknown) => {
       const raw = JSON.stringify(p);
       const r = await ingestWebhook(h.t.handle.db, { provider: 'meta', providerEventId: null, topic: 'page', signatureValid: true, headers: {}, rawBody: raw, payload: p, accountRef: '123' });
@@ -139,6 +139,7 @@ describe('M16 organic social', () => {
     expect(await deliver(payload('c1', 'Does it import CSV files?'))).toBe('processed');
     expect(await deliver(payload('c1', 'Does it import CSV files?'))).toBe('duplicate');
     expect(await deliver(payload('c2', 'This is a scam, I will call my lawyer'))).toBe('processed');
+    expect(await deliver(payload('c9', 'Thanks for asking!', '123'))).toBe('ignored'); // the Page's own reply
     const rows = await tx((t) => t.select().from(socialInteractions));
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.authorHash.length === 64 && !r.authorHash.includes('fan-7'))).toBe(true);

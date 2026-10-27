@@ -14,7 +14,7 @@ import { apiLifecycle, checkApiLifecycle, DeprecationRecorder, effectiveSunset, 
 import { createConnection } from '../src/modules/connections.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
 import { proposeAction } from '../src/modules/m23-execution/gateway.js';
-import { approveModel, seedModelRegistry, setTenantPolicy, upsertJurisdictionRules } from '../src/modules/m24-governance/index.js';
+import { approveModel, revokeModelApproval, seedModelRegistry, setTenantPolicy, upsertJurisdictionRules } from '../src/modules/m24-governance/index.js';
 import type { Notifier } from '../src/ops.js';
 
 const server = new FixtureServer();
@@ -154,6 +154,20 @@ describe('provider failover through the core gateway', () => {
     expect((await think(h.tenantId)).status).toBe('completed');
     expect([a.calls, b.calls]).toEqual([0, 1]);
     await withSystem(db(), 'test', (tx) => tx.update(modelRegistry).set({ eolAt: null }).where(eq(modelRegistry.modelId, 'claude-opus-5-5')));
+  });
+
+  it('stops calling a model once its approval is revoked, even though its provider still answers', async () => {
+    await expect(revokeModelApproval(db(), { userId: h.users.operator.id }, { provider: 'anthropic', modelId: 'claude-opus-5-5' })).rejects.toThrow(/platform administrator/);
+    await revokeModelApproval(db(), { userId: h.users.owner.id }, { provider: 'anthropic', modelId: 'claude-opus-5-5' });
+    clearModelCache();
+    const a = new Scripted('anthropic', answer('claude-opus-5-5'));
+    const b = new Scripted('openai_compatible', answer('backup-model-1'));
+    h.deps.models = createModelGateway(h.deps, { anthropic: a, openai_compatible: b });
+    expect((await think(h.tenantId)).status).toBe('completed');
+    expect([a.calls, b.calls]).toEqual([0, 1]);
+    const [row] = await withSystem(db(), 'test', (tx) => tx.select().from(modelRegistry).where(eq(modelRegistry.modelId, 'claude-opus-5-5')));
+    expect(row).toMatchObject({ approvedForProduction: false, approvedBy: null, approvedAt: null });
+    await approveModel(db(), { userId: h.users.owner.id }, { provider: 'anthropic', modelId: 'claude-opus-5-5', trainingOnCustomerData: 'no', dataRetentionTerms: 'reviewed', inputUsdPerMtok: 4, outputUsdPerMtok: 20 });
   });
 
   it('abstains (never guesses) when no approved provider can answer', async () => {

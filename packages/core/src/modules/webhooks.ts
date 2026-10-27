@@ -1,6 +1,6 @@
 import { connections, type Db, type Tx, webhookInbox, withSystem, withTenant } from '@futuregrow/db';
 import { sha256Hex } from '@futuregrow/observability';
-import { and, eq, lt, sql } from 'drizzle-orm';
+import { and, eq, lt, notInArray, sql } from 'drizzle-orm';
 import { type CoreDeps, systemActor } from '../deps.js';
 import { record } from '../util.js';
 
@@ -30,10 +30,12 @@ export async function ingestWebhook(db: Db, input: InboxInput): Promise<{ id: st
     let tenantId: string | null = null;
     let connectionId: string | null = null;
     if (input.accountRef && input.signatureValid) {
+      // A disabled or revoked connection never claims a delivery, so an account moved to another
+      // tenant resolves to the one connection still in use.
       const rows = await tx
         .select({ id: connections.id, tenantId: connections.tenantId })
         .from(connections)
-        .where(and(eq(connections.provider, input.provider), eq(connections.externalAccountId, input.accountRef)));
+        .where(and(eq(connections.provider, input.provider), eq(connections.externalAccountId, input.accountRef), notInArray(connections.status, ['disabled', 'revoked'])));
       if (rows.length === 1) {
         tenantId = rows[0]!.tenantId;
         connectionId = rows[0]!.id;

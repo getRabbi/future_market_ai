@@ -198,7 +198,12 @@ export const REGISTRIES: Resource[] = [
     columns: ['severity', 'status', 'title', 'openedAt', 'resolvedAt'],
     rowActions: [{ label: 'Resolve', path: '/v1/governance/incidents/:id/resolve', prompt: { field: 'resolution', label: 'Resolution' }, when: { field: 'status', values: ['open'] } }],
   },
-  { title: 'Model registry', list: '/v1/governance/models', columns: ['provider', 'modelId', 'purposes', 'status', 'approvedForProduction', 'trainingOnCustomerData', 'inputUsdPerMtok', 'outputUsdPerMtok'], note: 'Platform admins approve models (POST /v1/platform/models/approve). Unapproved models are never called.' },
+  {
+    title: 'Model registry',
+    list: '/v1/governance/models',
+    columns: ['provider', 'modelId', 'purposes', 'status', 'approvedForProduction', 'trainingOnCustomerData', 'inputUsdPerMtok', 'outputUsdPerMtok'],
+    note: 'Platform admins approve models (POST /v1/platform/models/approve) and withdraw approval (POST /v1/platform/models/revoke). Unapproved models are never called, even when their provider account has credit.',
+  },
   {
     title: 'Artifact & licence registry',
     list: '/v1/governance/artifacts',

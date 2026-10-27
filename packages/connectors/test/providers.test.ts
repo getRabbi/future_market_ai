@@ -186,6 +186,50 @@ describe('Meta Graph API', () => {
       expect(server.find('GET', /act_/)).toHaveLength(0);
     });
   });
+
+  describe('token inspection (debug_token)', () => {
+    const PAGE_SCOPES = ['pages_show_list', 'pages_manage_posts', 'pages_read_engagement', 'pages_manage_engagement', 'pages_read_user_content', 'pages_manage_metadata'];
+    const tokens = (infos: Record<string, Record<string, unknown>>) => server.on('GET', '/v26.0/debug_token', (req) => ({ json: { data: infos[req.query.get('input_token')!] ?? { is_valid: false } } }));
+    const at = (iso: string) => Date.parse(iso) / 1000;
+
+    it('reports token types, expiry, scopes and the Page feed webhook; a long-lived Page and system-user token is healthy', async () => {
+      server.on('GET', '/v26.0/me', { json: { id: '123', name: 'Shop' } });
+      tokens({ PAGE_TOKEN: { type: 'PAGE', app_id: '777', is_valid: true, expires_at: 0, scopes: PAGE_SCOPES }, ADS_TOKEN: { type: 'SYSTEM_USER', app_id: '777', is_valid: true, expires_at: 0, scopes: ['ads_read', 'ads_management'] } });
+      server.on('GET', '/v26.0/123/subscribed_apps', { json: { data: [{ id: '777', name: 'App', subscribed_fields: ['feed'] }] } });
+      server.on('GET', '/v26.0/act_555', { json: { id: 'act_555', currency: 'BDT' } });
+      const both = { provider: 'meta' as const, accessToken: 'PAGE_TOKEN', adsAccessToken: 'ADS_TOKEN', appSecret: 'APP_SECRET' };
+      const h = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, both, { externalAccountId: '123', metadata: { adAccountId: 'act_555' } }));
+      expect(h).toMatchObject({ healthy: true, status: 'healthy', grantedScopes: PAGE_SCOPES, details: { id: '123', tokenType: 'PAGE', tokenExpiresAt: 'never', feedWebhook: true, adAccount: 'act_555 (BDT)', adsTokenType: 'SYSTEM_USER', adsTokenExpiresAt: 'never' } });
+      const adsDebug = server.find('GET', '/v26.0/debug_token').find((r) => r.query.get('input_token') === 'ADS_TOKEN')!;
+      expect(adsDebug.headers.authorization).toBe('Bearer ADS_TOKEN');
+      expect(adsDebug.query.get('appsecret_proof')).toBe(hmacSha256Hex('APP_SECRET', 'ADS_TOKEN'));
+      expect(server.find('GET', '/v26.0/me/permissions')).toHaveLength(0);
+    });
+
+    it('degrades a short-lived user token used as the Page token, and a Page token without reply scope or webhook', async () => {
+      server.on('GET', '/v26.0/me', { json: { id: '999', name: 'A person' } });
+      server.on('GET', '/v26.0/me/permissions', { json: { data: [{ permission: 'pages_manage_posts', status: 'granted' }] } });
+      tokens({ USER_TOKEN: { type: 'USER', app_id: '777', is_valid: true, expires_at: at('2026-10-19T13:00:00Z'), scopes: ['pages_manage_posts'] } });
+      const user = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, { provider: 'meta', accessToken: 'USER_TOKEN' }, { externalAccountId: '123' }));
+      expect(user).toMatchObject({ healthy: false, status: 'degraded', details: { tokenType: 'USER', tokenExpiresAt: '2026-10-19T13:00:00.000Z' } });
+      expect(user.details.warnings).toEqual(['the Page access token is a USER token; posts and replies need a Page token (GET /{page-id}?fields=access_token)', 'Page token expires 2026-10-19T13:00:00.000Z; replace it with a long-lived token']);
+
+      server.reset();
+      server.on('GET', '/v26.0/me', { json: { id: '123', name: 'Shop' } });
+      tokens({ PAGE_TOKEN: { type: 'PAGE', app_id: '777', is_valid: true, expires_at: at('2027-01-01T00:00:00Z'), scopes: PAGE_SCOPES.filter((s) => s !== 'pages_manage_engagement') } });
+      server.on('GET', '/v26.0/123/subscribed_apps', { json: { data: [] } });
+      const page = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN' }, { externalAccountId: '123' }));
+      expect(page).toMatchObject({ status: 'degraded', details: { tokenType: 'PAGE', tokenExpiresAt: '2027-01-01T00:00:00.000Z', feedWebhook: false, warnings: ['Page token lacks pages_manage_engagement (comment replies)'] } });
+    });
+
+    it('fails a Page token that belongs to a different Page than the connection', async () => {
+      server.on('GET', '/v26.0/me', { json: { id: '456', name: 'Other page' } });
+      tokens({ PAGE_TOKEN: { type: 'PAGE', app_id: '777', is_valid: true, expires_at: 0, scopes: PAGE_SCOPES } });
+      const h = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN' }, { externalAccountId: '123' }));
+      expect(h).toMatchObject({ healthy: false, status: 'failing' });
+      expect(String(h.details.error)).toBe('the Page token belongs to Page 456 (Other page), not 123');
+    });
+  });
 });
 
 describe('Google Ads API', () => {

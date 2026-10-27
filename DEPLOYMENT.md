@@ -62,6 +62,8 @@ npx wrangler pages secret put API_ORIGIN --project-name futuregrow-web   # https
 
 Add the Pages origin to the api's `APP_ORIGINS` (CORS and Better Auth trusted origins) and redeploy the api.
 
+Client addresses: the proxy forwards `CF-Connecting-IP` as `X-Forwarded-For`, and the Northflank ingress appends the address it saw (a Cloudflare egress address). Better Auth walks that header from the right past the private and Cloudflare ranges in `TRUSTED_PROXIES` (`apps/api/src/auth.ts`) to the client, so sign-in rate limits are per client and a direct caller of the API origin cannot choose its address. Refresh the list from https://www.cloudflare.com/ips/ when Cloudflare changes it.
+
 ## 5. First owner and platform admin
 
 1. Temporarily set `FG_ALLOW_SIGNUP=true` on the api and create the first account (the control plane has no public sign-up form):
@@ -76,13 +78,19 @@ Add the Pages origin to the api's `APP_ORIGINS` (CORS and Better Auth trusted or
 
 ## 6. Governance setup before any automation
 
-1. **Models (B-003):** set at least one provider key — `ANTHROPIC_API_KEY`, or the hosted OpenAI-compatible providers `OPENROUTER_API_KEY` (Claude Opus 5.5 via OpenRouter, restricted to upstreams that do not collect data), `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`. The api seeds their models unapproved; a platform admin approves each with `POST /v1/platform/models/approve` once the vendor terms are reviewed (models that may train on customer data cannot be approved, so Gemini only on a paid project). The gateway prefers Opus (direct, then OpenRouter) and fails over in the order OpenAI, Gemini, Groq. Without an approved model every agent stage abstains.
+1. **Models (B-003):** set at least one provider key — `ANTHROPIC_API_KEY`, or the hosted OpenAI-compatible providers `OPENROUTER_API_KEY` (Claude Opus 5.5 via OpenRouter, restricted to upstreams that do not collect data), `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`. The api seeds their models unapproved; a platform admin approves each with `POST /v1/platform/models/approve` once the vendor terms are reviewed (models that may train on customer data cannot be approved, so Gemini only on a paid project) and withdraws an approval with `POST /v1/platform/models/revoke` (`{ "provider", "modelId" }`; effective within 60 s). Approval is the only switch: adding credit to a provider account never enables a model by itself, so approve a paid model only when its spend is wanted. The gateway prefers Opus (direct, then OpenRouter) and fails over in the order OpenAI, Gemini, Groq among approved models. Without an approved model every agent stage abstains.
 2. **Jurisdictions (B-013):** legal publishes rule packs (`POST /v1/platform/jurisdiction-rules`) and the tenant lists them in `approvedJurisdictions`; otherwise every public/messaging/spend action needs legal approval.
 3. **Autonomy policy:** Governance → Autonomy policy. Leave categories unconfigured (always approval) until you deliberately pre-authorize limits.
 4. **Sender identity** (CAN-SPAM postal address) before any commercial email (B-008).
 5. **Remotion licence attestation** before renders (B-014).
 6. **Connections:** Control → **Connections**: pick the provider, fill its form (each field says where to find the value), **Test credentials** (a read-only call; nothing is stored), then **Save connection** (owner/admin with a two-factor session). Saved accounts have **Test connection**, **Update credentials** and **Disable**. Use least-privilege scopes. The same screen lists the webhook URLs below and whether each signing secret is set. Register webhooks:
-   * Meta: `https://api.<domain>/webhooks/meta` (verify token = `META_WEBHOOK_VERIFY_TOKEN`, app secret = `META_APP_SECRET`)
+   * Meta: `https://api.<domain>/webhooks/meta` (verify token = `META_WEBHOOK_VERIFY_TOKEN`, app secret = `META_APP_SECRET`). Only the api needs these: in the beta `META_APP_SECRET` lives in the secret group `futuregrow-webhooks`, restricted to the `api` service. Steps:
+     1. **Tokens.** The Page token must be long-lived: exchange the short-lived user token (`GET /oauth/access_token?grant_type=fb_exchange_token&client_id=<app-id>&client_secret=<app-secret>&fb_exchange_token=<token>`, about 60 days), then `GET /<page-id>?fields=access_token` with it returns a Page token that does not expire. For ads use a System User token (Business Settings → System users) with `ads_read` and `ads_management`; a user token works but expires with the user session. **Test connection** shows each token's type and expiry and turns the connection *degraded* when a token is not a Page token, lacks a needed scope or expires within 7 days, and *failing* when the Page token belongs to another Page.
+     2. **App subscription** (once per app, app access token `<app-id>|<app-secret>`): `POST /<app-id>/subscriptions` with `object=page`, `fields=feed`, `callback_url=https://api.<domain>/webhooks/meta`, `verify_token=<META_WEBHOOK_VERIFY_TOKEN>`; Meta calls the GET handshake immediately.
+     3. **Page subscription** (per Page, Page token, `pages_manage_metadata`): `POST /<page-id>/subscribed_apps?subscribed_fields=feed`. **Test connection** then shows `feedWebhook true`.
+     4. While the Meta app is in Development mode, Meta sends notifications only for people with a role on the app; real customer comments need the app in Live mode (App Review for the Page permissions, B-005).
+
+     Deliveries are verified over the raw body (`X-Hub-Signature-256`); a delivery that batches several Pages is stored per Page so each resolves to its own tenant, disabled or revoked connections never claim a delivery, and the Page's own comments (including replies sent through FUTUREGROW) are not recorded as interactions.
    * Shopify: `https://api.<domain>/webhooks/shopify` (topics `orders/create`, `orders/paid`, `refunds/create`)
    * Resend: `https://api.<domain>/webhooks/resend` (svix secret = `RESEND_WEBHOOK_SECRET`)
    * TikTok: `https://api.<domain>/webhooks/tiktok`
@@ -106,7 +114,7 @@ Then in the control plane: Audit trail → **Verify chain now** (valid), Evidenc
 
 1. **Operator alerts:** set `ALERT_WEBHOOK_URL` (https; a Slack or Discord incoming webhook, or any endpoint accepting JSON) in the runtime secret group so both `api` and `worker` get it; optional `ALERT_ENVIRONMENT` labels the messages. Unset, alerts are only logged. The worker's `ops_monitor` cron (every 5 min) reports component problems, critical tenant alerts, sev1/sev2 incidents and Graphile jobs that exhausted their retries; the api reports 5xx responses and crashes.
 2. **Component status:** `GET /statusz` (public, coarse, cached 30 s) returns 503 when the database, worker, backups or job queues are stale or failing.
-3. **External uptime probe (owner, Cloudflare Workers free plan):** `infra/cloudflare/uptime-worker` runs on a 5-minute cron outside Northflank, probes the web app, the Pages→API proxy, `/healthz` and `/statusz`, and alerts after 2 consecutive failures. It has no route and no workers.dev URL, and writes its one KV key only when a check changes state.
+3. **External uptime probe (owner, Cloudflare Workers free plan):** `infra/cloudflare/uptime-worker` runs on a 5-minute cron outside Northflank, probes the web app, the Pages→API proxy, `/healthz` and `/statusz`, and alerts after 2 consecutive failures. It has no route and no workers.dev URL, and writes its one KV key only when a check changes state. Deploying it needs a Cloudflare API token with *Workers Scripts: Edit* and *Workers KV Storage: Edit* on the account (the beta's Pages/R2 token is refused by the KV API) and the alert webhook URL.
    ```sh
    cd infra/cloudflare/uptime-worker
    npx wrangler@4.147.0 kv namespace create futuregrow-uptime-state   # paste the id into wrangler.toml

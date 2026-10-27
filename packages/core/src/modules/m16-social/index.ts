@@ -282,6 +282,7 @@ registerWebhookHandler('meta', async ({ deps, tenantId, connectionId, payload })
       for (const c of e.changes ?? []) {
         const v = c.value;
         if (c.field !== 'feed' || v.item !== 'comment' || v.verb !== 'add' || !v.comment_id || !v.message) continue;
+        if (v.from?.id === e.id) continue; // the Page's own comments, including replies sent through M23
         const r = await recordInteraction(tx, deps, tenantId, {
           connectionId,
           platform: 'facebook',

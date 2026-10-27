@@ -1,24 +1,30 @@
 # FUTUREGROW AI — Test report
 
-Date: 2026-10-21 · Commit: see `git log -1` · Environment: Windows 11 (8 GB RAM), Node 24.22.0, npm 12.2, Python 3.13.16, embedded PostgreSQL 17.10 (UTF-8 cluster), Playwright 1.63.0 Chromium.
+Date: 2026-10-27 · Commit: see `git log -1` · Environment: Windows 11 (8 GB RAM), Node 24.22.0, npm 12.2, Python 3.13.16, embedded PostgreSQL 17.10 (UTF-8 cluster), Playwright 1.63.0 Chromium.
 
 ## 1. Results
 
-Verification on commit `12cdbe1` (FG-P2-001 and beta hardening; all commands run in sequence):
+Verification of the 2026-10-27 release (Meta live integration, model approval withdrawal, sign-in client address, lint scope; on top of `cfa88ff`; all commands run in sequence):
 
 | Check | Command | Result |
 |---|---|---|
 | Typecheck (strict TS, all packages, apps, jobs, tests) | `npm run typecheck` | **pass** |
-| Lint (Biome; errors fail) | `npm run lint` | **pass** — 0 errors, 67 warnings |
+| Lint (Biome; errors fail) | `npm run lint` | **pass** — 0 errors, 70 warnings (233 files; generated `graphify-out/` excluded, its 88 JSON errors were the only errors) |
 | Generated docs current | `npm run docs -- --check` | **pass** |
-| TypeScript tests (real PostgreSQL 17, fixture servers, real renders) | `npx vitest run` | **272 / 272 passed**, 33 files, 0 skipped, 457 s. Two files (`db`, `migrate-lock`) reported an `afterAll` timeout in `DROP DATABASE … WITH (FORCE)` while the machine was short of memory; re-run alone both passed 15 / 15 in 40 s |
-| Python engine, backup and TLS tests | `npm run test:py` | **36 / 36 passed**, 418 s |
+| TypeScript tests (real PostgreSQL 17, fixture servers, real renders) | `npx vitest run` | **297 / 297 passed**, 35 files, 0 skipped, 178 s (see §1.1 for the timeouts found and fixed) |
+| Python engine, backup and TLS tests | `npm run test:py` | **36 / 36 passed**, 351 s |
 | Production bundles | `node scripts/build.mjs all` | **pass** — api (main, migrate, probe, reencrypt-credentials), worker, media |
 | Web control plane | `npm run build -w @futuregrow/web` | **pass** — 28 pages, `_headers` with 2 script + 1 style hashes |
-| SBOM + licence policy | `npm run sbom` | **pass** — 439 npm + 4 Python + 2 image components; 0 violations; 6 weak-copyleft components listed for legal review; 21 Remotion components under the B-014 exception |
-| Browser E2E (Chromium, CSP enforced) | `npm run test:e2e` | **6 / 6 passed**, 2.1 min |
+| SBOM + licence policy | `npm run sbom` | **pass** — 440 npm + 4 Python + 2 image components; 0 violations; 6 weak-copyleft components listed for legal review; 21 Remotion components under the B-014 exception |
+| Browser E2E (Chromium, CSP enforced) | `npm run test:e2e` | **6 / 6 passed**, 2.2 min |
 
-The M10 baseline on commit `9e7b651` was 220 / 220 TypeScript and 30 / 30 Python tests.
+The previous report (commit `12cdbe1`) had 272 / 272 TypeScript tests; the M10 baseline on `9e7b651` was 220 / 220 TypeScript and 30 / 30 Python tests.
+
+### 1.1 Teardown timeouts (investigated and fixed)
+
+The first full run on 2026-10-27 passed every test but failed three files (`analytics-job`, `backup-job`, `channels-acquisition`) with "Hook timed out in 120000ms" in `afterAll`, the same symptom the 2026-10-21 report noted for `db` and `migrate-lock`. Instrumenting `test/helpers/db.ts` showed the pool closing in 0–1 ms and `DROP DATABASE … WITH (FORCE)` taking up to 107 s: each drop waits for an immediate checkpoint (`pg_stat_activity`: `IPC/CheckpointDone`, later drops `CheckpointStart`) while the checkpointer sits in `IO/DataFileSync`, i.e. Windows file syncs under the parallel test load, so concurrent drops queue past the hook timeout. The embedded test cluster now starts with `fsync=off`, `full_page_writes=off`, `synchronous_commit=off` (`test/global-setup.ts`; a throwaway cluster, production and CI's external database untouched). Same suite, same machine: the slowest drop went from 107 s to 4.4 s (24 drops: total 402 s → 50 s), the whole TypeScript run from 381–445 s to 162 s, and no hook timed out.
+
+With teardown fast, the next run overlapped the real Remotion render with the CPU-heavy Python tests, and Chrome Headless Shell missed Remotion's fixed 25 s start-up limit ("Timed out after 25000 ms while trying to connect to the browser"; the second render test failed only because the first job was retried). The renderer started a browser twice per render (composition selection, then rendering); it now opens one, shares it with both calls and retries a timed-out start once (`jobs/media/src/runner.ts`). Production already retries a failed render up to 3 times. Two further full runs: 297 / 297 in 162 s and 178 s.
 
 Tests per file (TypeScript):
 
@@ -81,12 +87,13 @@ Additional manual verification: the bundled api booted against PostgreSQL (`/hea
 
 | Gap | Reason | Mitigation / next step |
 |---|---|---|
-| Live provider APIs (Meta, Google Ads, TikTok, YouTube, Shopify, App Store Connect, Resend, Search Console, Chatwoot) | No credentials / app reviews (B-005…B-009) | Fixture contract tests; enable one provider at a time in the beta with approval-required policy |
-| Live model calls | No API key / vendor review (B-003) | Scripted providers through the real gateway; SDK request shape tested against a fixture |
+| Live provider APIs other than Meta (Google Ads, TikTok, YouTube, Shopify, App Store Connect, Resend, Search Console, Chatwoot) | No credentials / app reviews (B-006…B-009) | Fixture contract tests; enable one provider at a time in the beta with approval-required policy |
+| Meta publishing, comment delivery from real users | Publishing waits for the owner's approval; the app is in Development mode (B-005) | Read-only live checks pass (§6); a test post waits at approval |
+| Paid model calls | Owner keeps paid models off (B-003) | Groq (approved) verified live; scripted providers through the real gateway |
 | Container image builds locally | No Docker/Podman here (B-016) | Bundles booted locally; CI `images` job builds all four and Northflank builds them on every push |
 | pgvector path | Not available in the embedded build (B-004) | Exact-cosine fallback is the tested path |
 | Load and DR timing (P2) | Out of scope for the beta; RTO/RPO `[U]` | Restore drill procedure in RUNBOOK §9; model-provider failover is tested with scripted providers (`agent-kernel`) |
-| Uptime Worker on Cloudflare | Not deployed yet (needs `ALERT_WEBHOOK_URL` and the owner's approval) | Monitor logic tested with fake fetch and KV (`infra/cloudflare/uptime-worker/test`) |
+| Uptime Worker on Cloudflare | Not deployed: no `ALERT_WEBHOOK_URL`, and the Cloudflare token is refused by the Workers KV API | Monitor logic tested with fake fetch and KV (`infra/cloudflare/uptime-worker/test`) |
 
 Resolved since the first report: browser click-through (B-017, Playwright E2E in CI), CI execution (B-018) and the Northflank deployment (B-001).
 

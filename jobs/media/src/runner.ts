@@ -50,7 +50,7 @@ export class RemotionRenderer implements Renderer {
   }
 
   async render(args: { composition: string; props: Record<string, unknown>; inputs: RenderInput[]; jobId: string }): Promise<RenderedVideo> {
-    const { ensureBrowser, getVideoMetadata, renderMedia, selectComposition } = await import('@remotion/renderer');
+    const { ensureBrowser, getVideoMetadata, openBrowser, renderMedia, selectComposition } = await import('@remotion/renderer');
     await ensureBrowser();
     const serveUrl = await this.bundleOnce();
     const pub = path.join(serveUrl, 'public', args.jobId);
@@ -62,9 +62,17 @@ export class RemotionRenderer implements Renderer {
     }
     const inputProps = { ...args.props, media };
     // Remotion ids allow only [a-zA-Z0-9-]; internal names use underscores.
-    const composition = await selectComposition({ serveUrl, id: args.composition.replaceAll('_', '-'), inputProps });
     const outputLocation = path.join(os.tmpdir(), `fg-render-${args.jobId}.mp4`);
-    await renderMedia({ composition, serveUrl, codec: 'h264', outputLocation, inputProps, concurrency: Number(process.env.RENDER_CONCURRENCY ?? 1) });
+    // One browser for selecting the composition and rendering (Remotion would start one for each).
+    // Remotion's start-up limit is a fixed 25 s that a loaded machine can exceed; a start that timed
+    // out is retried once before the attempt counts as failed.
+    const browser = await openBrowser('chrome').catch((err: unknown) => (/Timed out after \d+ ms while trying to connect to the browser/.test(String(err)) ? openBrowser('chrome') : Promise.reject(err)));
+    try {
+      const composition = await selectComposition({ serveUrl, id: args.composition.replaceAll('_', '-'), inputProps, puppeteerInstance: browser });
+      await renderMedia({ composition, serveUrl, codec: 'h264', outputLocation, inputProps, concurrency: Number(process.env.RENDER_CONCURRENCY ?? 1), puppeteerInstance: browser });
+    } finally {
+      await browser.close({ silent: true }).catch(() => undefined);
+    }
     // getVideoMetadata is deprecated upstream in favour of Mediabunny; it remains functional in 4.0.x.
     const md = await getVideoMetadata(outputLocation);
     await fs.rm(pub, { recursive: true, force: true });
