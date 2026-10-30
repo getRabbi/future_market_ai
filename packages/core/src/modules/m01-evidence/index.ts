@@ -38,6 +38,10 @@ export async function registerSource(tx: Tx, tenantId: string, actor: Actor, raw
   return row;
 }
 
+export async function listSources(tx: DbOrTx) {
+  return tx.select().from(sources).orderBy(desc(sources.createdAt)).limit(500);
+}
+
 export async function reviewSource(tx: Tx, tenantId: string, actor: Actor, id: string, decision: 'approved' | 'blocked') {
   requireRole(actor, REVIEWER_ROLES, 'reviewing a source');
   const [row] = await tx

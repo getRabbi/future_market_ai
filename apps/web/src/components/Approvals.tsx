@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { api } from '../lib/api.js';
-import { formatValue, shortId } from '../lib/format.js';
-import { Badge, DataTable, Drawer, ErrorNotice, Json, useApi } from './ui.js';
+import { formatValue, shortId, statusLabel } from '../lib/format.js';
+import { ReadableRecord } from './Form.js';
+import { Badge, DataTable, Drawer, ErrorNotice, LoadingRows, useApi } from './ui.js';
 
 const TABS: { key: string; label: string; statuses: string[] }[] = [
   { key: 'review', label: 'Needs approval', statuses: ['APPROVAL_REQUIRED'] },
@@ -41,13 +42,13 @@ export function Approvals({ initialId }: { initialId?: string | null }) {
   const [open, setOpen] = useState<string | null>(initialId ?? null);
   return (
     <>
-      <div className="row" role="tablist" aria-label="Action status" style={{ marginBottom: '0.75rem' }}>
+      <div className="row tabs" role="tablist" aria-label="Action status">
         {TABS.map((t) => (
           <button key={t.key} type="button" role="tab" aria-selected={t.key === tab.key} className={t.key === tab.key ? 'primary' : undefined} onClick={() => setTab(t)}>
             {t.label}
           </button>
         ))}
-        <button type="button" onClick={() => void list.reload()}>
+        <button type="button" className="ghost" onClick={() => void list.reload()}>
           Refresh
         </button>
       </div>
@@ -57,6 +58,7 @@ export function Approvals({ initialId }: { initialId?: string | null }) {
           rows={(list.data ?? []).map((a) => ({ ...a, proposer: `${a.proposedBy.type}:${shortId(a.proposedBy.id)}`, outcome: a.policyDecision?.outcome ?? null }))}
           columns={['actionType', 'status', 'outcome', 'statusReason', 'proposer', 'createdAt']}
           onRowClick={(r) => setOpen(String(r.id))}
+          loading={list.loading}
           empty="No actions in this state."
         />
       </section>
@@ -143,7 +145,7 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
 
           <section>
             <h3>What will happen</h3>
-            <Json value={{ params: a.params, target: a.target, risk: a.risk, evidenceIds: a.evidenceIds }} />
+            <ReadableRecord value={{ params: a.params, target: a.target, risk: a.risk, evidenceIds: a.evidenceIds }} />
             <p className="small muted mono">action hash {a.actionHash}</p>
           </section>
 
@@ -198,7 +200,7 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
             {d.data.proofs.map((p) => (
               <div key={`${p.purpose}:${p.checkedAt}:${p.verdict}`} className="small">
                 <Badge value={p.verdict} /> {p.purpose} via {p.method} · {formatValue('checkedAt', p.checkedAt)} {p.notes ? `— ${p.notes}` : ''}
-                {Array.isArray(p.diff) && p.diff.length ? <Json value={p.diff} /> : null}
+                {Array.isArray(p.diff) && p.diff.length ? <ReadableRecord value={p.diff} depth={1} /> : null}
               </div>
             ))}
             {d.data.executions.length === 0 ? <p className="small muted">Not executed.</p> : null}
@@ -209,7 +211,7 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
             <ol className="timeline small">
               {d.data.transitions.map((t) => (
                 <li key={`${t.at}:${t.toStatus}`}>
-                  <strong>{t.toStatus}</strong>{' '}
+                  <strong>{statusLabel(t.toStatus)}</strong>{' '}
                   <span className="muted">
                     · {formatValue('at', t.at)} · {t.actor}
                   </span>
@@ -220,7 +222,7 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
           </section>
         </div>
       ) : (
-        <p className="muted">Loading…</p>
+        <LoadingRows />
       )}
     </Drawer>
   );

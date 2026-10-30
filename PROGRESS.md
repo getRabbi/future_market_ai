@@ -114,6 +114,17 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 
 **Test status (commit 12cdbe1):** 272/272 TS tests (33 files) + 36/36 Python tests + 6/6 browser E2E; typecheck, lint, docs drift, bundles, web build and SBOM policy pass. See TEST_REPORT.md.
 
+### Guided control plane (2026-10-30) — ☑
+- [x] Guided forms replace every raw-JSON create and action form in all 24 modules (`apps/web/src/lib/forms.ts`, `components/Form.tsx`): plain-language labels and options, required/optional marked, checks before sending, server validation issues shown next to the field, evidence and record pickers instead of typed IDs (no placeholder IDs anywhere), file loading and SHA-256 computed in the browser, an optional "Advanced: edit as JSON" view. The server still validates everything; no gate was relaxed.
+- [x] Stage 4 "Build your ground truth" (`components/GroundTruth.tsx`): six steps (evidence, documents, facts, claims, brand rules, check copy) with live status; a four-step document wizard that can record the document as evidence (its SHA-256 fingerprint); the evidence picker offers only admitted, current evidence and adds new evidence in place; claim Approve/Reject is hidden for the author; copy-check findings explained with how to fix them.
+- [x] Evidence: quarantined evidence is released with a form asking only for the missing answers; row actions use the evidence ID (they were sent without one before).
+- [x] Governance: guided autonomy-policy editor (who approves each kind of action, limits, AI spending limit, messaging caps; full JSON still available), friendlier kill switches, guided sender identity and asset-licence registration.
+- [x] Readable results everywhere: details and action results as labelled values (raw JSON under "Technical details"), statuses and IDs in plain words, empty and loading states, confirmation instead of a second button for destructive actions, one button per action, tables as cards on phones.
+- [x] Read-only routes for the new lists: `GET /v1/knowledge/brand-rules`, `GET /v1/knowledge/documents` (restricted documents only for their roles), `GET /v1/evidence/sources`.
+- [x] Fixed: claim and decision approval buttons waited for a status those records never have.
+
+**Test status:** 315/315 TS tests (37 files) + 8/8 browser E2E; typecheck and lint pass (0 errors). See TEST_REPORT.md §1.0.
+
 ## Completion summary
 
 All 24 modules are implemented and tested against real PostgreSQL with provider APIs exercised through fixture servers. Every P0 gate (FG-P0-001…008) and P1 item (FG-P1-001…006) is implemented and verified. FG-P2-001 (failover, AI spend limits, deprecation monitoring) is implemented and tested; the controlled beta is live. What remains is external: live credentials and app reviews, legal rule packs, vendor reviews and the payout provider — each listed with its unblock step in BLOCKERS.md. Deployment steps: DEPLOYMENT.md; operations: docs/RUNBOOK.md.

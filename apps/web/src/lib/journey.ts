@@ -49,8 +49,8 @@ export const STAGES: Stage[] = [
     tagline: 'Decide what may run on its own, within which limits, and what always needs a human.',
     sections: ['governance', 'audit'],
     tasks: [
-      { id: 'policy', title: 'Configure the autonomy policy', why: 'Until it is configured, every consequential action waits for human approval.', how: 'Autonomy policy → set "configured": true and your categories, then save.', section: 'governance', xp: 30, roles: ADMINS },
-      { id: 'aiLimit', title: 'Set a monthly AI spending limit', why: 'Agents abstain instead of overspending once the limit would be exceeded.', how: 'Autonomy policy → add "aiSpend": { "monthlyLimitUsd": 25 }.', section: 'governance', xp: 10, roles: ADMINS },
+      { id: 'policy', title: 'Configure the autonomy policy', why: 'Until it is configured, every consequential action waits for human approval.', how: 'Autonomy policy → choose who approves each kind of action, tick “Policy is on”, then Save policy.', section: 'governance', xp: 30, roles: ADMINS },
+      { id: 'aiLimit', title: 'Set a monthly AI spending limit', why: 'Agents abstain instead of overspending once the limit would be exceeded.', how: 'Autonomy policy → Limits → Monthly AI spending limit, then Save policy.', section: 'governance', xp: 10, roles: ADMINS },
     ],
   },
   {
@@ -69,9 +69,9 @@ export const STAGES: Stage[] = [
     tagline: 'Evidence, approved claims and consented customer data that every later step relies on.',
     sections: ['evidence', 'knowledge', 'customers'],
     tasks: [
-      { id: 'evidence', title: 'Admit your first evidence', why: 'Ideas, claims and decisions must trace back to evidence with known rights and freshness.', how: 'Evidence ledger → Admit evidence.', section: 'evidence', xp: 20 },
-      { id: 'claim', title: 'Approve a product claim', why: 'Copy, briefs and templates may only state claims that were approved against evidence.', how: 'Claims → Propose claim, then Approve.', section: 'knowledge', xp: 20 },
-      { id: 'customerData', title: 'Start collecting first-party data', why: 'Audiences, journeys and forecasts are built on consented events from your own product.', how: 'Ingestion keys → Create key, then send events from your site or app.', section: 'customers', xp: 20 },
+      { id: 'evidence', title: 'Admit your first evidence', why: 'Ideas, claims and decisions must trace back to evidence with known rights and freshness.', how: 'Evidence → Add evidence: what it is, where it comes from and whether you may use it.', section: 'evidence', xp: 20 },
+      { id: 'claim', title: 'Approve a product claim', why: 'Copy, briefs and templates may only state claims that were approved against evidence.', how: 'Claims step → Propose a claim and pick its evidence; a colleague approves it.', section: 'knowledge', xp: 20 },
+      { id: 'customerData', title: 'Start collecting first-party data', why: 'Audiences, journeys and forecasts are built on consented events from your own product.', how: 'Collect customer data → Create a key, then send events from your site or app.', section: 'customers', xp: 20 },
     ],
   },
   {
@@ -80,10 +80,10 @@ export const STAGES: Stage[] = [
     tagline: 'Watch the market, measure what matters and turn evidence into ranked ideas and decisions.',
     sections: ['market', 'analytics', 'brain', 'audiences'],
     tasks: [
-      { id: 'competitor', title: 'Track a competitor', why: 'Lawful competitor observations feed the idea backlog and feature-gap analysis.', how: 'Competitors → Add competitor.', section: 'market', xp: 10 },
-      { id: 'series', title: 'Define a KPI metric series', why: 'Forecasts, experiments and decisions are measured against these series.', how: 'Metric series → Define series.', section: 'analytics', xp: 20 },
-      { id: 'idea', title: 'Generate growth ideas', why: 'The AI proposes evidence-backed ideas and abstains when the evidence is thin.', how: 'Ideas → Generate ideas (AI).', section: 'market', xp: 20 },
-      { id: 'decision', title: 'Turn an idea into a decision', why: 'Decisions carry expected value and uncertainty; accepting one proposes actions, it never runs them.', how: 'Decisions → Propose decision from a queued idea.', section: 'brain', xp: 30 },
+      { id: 'competitor', title: 'Track a competitor', why: 'Lawful competitor observations feed the idea backlog and feature-gap analysis.', how: 'Competitors → Add a competitor.', section: 'market', xp: 10 },
+      { id: 'series', title: 'Define a KPI metric series', why: 'Forecasts, experiments and decisions are measured against these series.', how: 'Metrics → Define a metric.', section: 'analytics', xp: 20 },
+      { id: 'idea', title: 'Generate growth ideas', why: 'The AI proposes evidence-backed ideas and abstains when the evidence is thin.', how: 'Ideas → Generate ideas with AI.', section: 'market', xp: 20 },
+      { id: 'decision', title: 'Turn an idea into a decision', why: 'Decisions carry expected value and uncertainty; accepting one proposes actions, it never runs them.', how: 'Decisions → Propose a decision from a queued idea.', section: 'brain', xp: 30 },
     ],
   },
   {
@@ -92,9 +92,9 @@ export const STAGES: Stage[] = [
     tagline: 'Produce rights-cleared creative and test it properly before scaling anything.',
     sections: ['creative', 'assets', 'offers', 'personas', 'experiments'],
     tasks: [
-      { id: 'brief', title: 'Generate a creative brief', why: 'Briefs map every message to an approved claim, so creative stays truthful.', how: 'Briefs → Generate brief (AI).', section: 'creative', xp: 20 },
+      { id: 'brief', title: 'Generate a creative brief', why: 'Briefs map every message to an approved claim, so creative stays truthful.', how: 'Briefs → Draft a brief with AI.', section: 'creative', xp: 20 },
       { id: 'asset', title: 'Upload source media', why: 'Only assets with a complete rights manifest become publish-eligible.', how: 'Upload source media → choose a file → Upload.', section: 'assets', xp: 10 },
-      { id: 'experiment', title: 'Design an experiment', why: 'Pre-registered experiments with SRM checks tell you what actually worked.', how: 'Experiments → Create experiment.', section: 'experiments', xp: 30 },
+      { id: 'experiment', title: 'Design an experiment', why: 'Pre-registered experiments with SRM checks tell you what actually worked.', how: 'Experiments → Design an experiment.', section: 'experiments', xp: 30 },
     ],
   },
   {
@@ -103,7 +103,7 @@ export const STAGES: Stage[] = [
     tagline: 'Publish through the channels, approve the exact action, and count it only once it is verified.',
     sections: ['social', 'ads', 'lifecycle', 'discovery', 'app', 'conversations', 'creators'],
     tasks: [
-      { id: 'launch', title: 'Schedule a post or a journey', why: 'Channel work is proposed as an action and published only through the approval flow.', how: 'Posts → Schedule post, or Lifecycle → New journey.', section: 'social', xp: 30 },
+      { id: 'launch', title: 'Schedule a post or a journey', why: 'Channel work is proposed as an action and published only through the approval flow.', how: 'Posts → Schedule a post, or Lifecycle messaging → New journey.', section: 'social', xp: 30 },
       { id: 'verified', title: 'Get your first VERIFIED action', why: 'Success means an independent read-back confirmed the result, never just a 200 response.', how: 'Actions & approvals → a different person approves the exact action.', section: 'approvals', xp: 50 },
     ],
   },
@@ -200,11 +200,11 @@ export function neighbours(slug: string): { prev: string | null; next: string | 
 export const SECTION_FLOWS: Record<string, string[]> = {
   approvals: ['An agent or a person proposes an action', 'Policy checks evidence, limits and kill switches', 'A different person approves the exact action hash', 'It runs through the official API', 'An independent read-back marks it VERIFIED'],
   settings: ['Turn on two-factor sign-in', 'Scan the QR code and enter the code from your app', 'Change the starter password', 'Invite teammates with the right roles'],
-  governance: ['Configure the autonomy policy', 'Set an AI spending limit', 'Save the sender identity for email', 'Engage a kill switch the moment anything looks wrong'],
+  governance: ['Choose who approves each kind of action', 'Set an AI spending limit', 'Save the sender identity for email', 'Engage a kill switch the moment anything looks wrong'],
   audit: ['Every change writes an audit record', 'Each record is hash-chained to the previous one', 'Verify the chain at any time'],
   connections: ['Pick a provider', 'Test the credentials with a read-only call', 'Save with a two-factor session', 'Re-test whenever a connection needs attention'],
-  evidence: ['Register a source', 'Admit evidence with its rights and freshness', 'Release or reject anything quarantined', 'Admitted evidence powers claims and decisions'],
-  knowledge: ['Admit evidence first', 'Propose claims linked to that evidence', 'Approve claims and add brand rules', 'Lint copy before it ships'],
+  evidence: ['Add evidence: what it is, its source and whether you may use it', 'Anything uncertain waits for review', 'A reviewer releases or rejects it', 'Ready evidence backs claims, facts and decisions'],
+  knowledge: ['Add evidence', 'Index documents and record facts (optional)', 'Propose claims; a colleague approves them', 'Add brand rules, then check copy before it ships'],
   customers: ['Create an ingestion key', 'Events build consent-aware profiles', 'Record consent and suppressions', 'Answer data-subject requests before they are due'],
   market: ['Add competitors and lawful sources', 'Trends and observations arrive', 'Generate ideas (AI)', 'Queue the strongest ideas for testing'],
   analytics: ['Define a metric series', 'Points arrive from admitted evidence', 'Queue a forecast or media-mix job', 'Read the intervals and backtests'],
@@ -220,7 +220,7 @@ export const SECTION_FLOWS: Record<string, string[]> = {
   lifecycle: ['Save the sender identity in Governance', 'Create and approve templates', 'Build a journey on a trigger event', 'Activate it and watch delivery'],
   discovery: ['Audit your site', 'Review query opportunities', 'Validate and draft store listings', 'Approve, then push'],
   app: ['Send install events', 'Sync App Store reports', 'Compare cohorts by attribution method'],
-  conversations: ['Index public help documents', 'Create a chat widget', 'The assistant answers with citations', 'Hand-offs come to your team'],
+  conversations: ['Index public help documents in Knowledge', 'Create a chat widget', 'The assistant answers with sources', 'Hand-offs come to your team'],
   creators: ['Add a creator', 'Record the signed contract', 'Create referral links', 'Review submissions and fraud flags'],
 };
 

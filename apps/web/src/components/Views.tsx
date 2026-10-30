@@ -3,9 +3,10 @@ import { encode } from 'uqr';
 import { api, type Me, uploadBinary } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
 import { ChangePassword } from './ChangePassword.js';
+import { Notice } from './Form.js';
 import { JourneyHero, Pipeline, RankLadder, Roadmap } from './Journey.js';
 import { Members } from './Members.js';
-import { Badge, DataTable, ErrorNotice, Json, useApi } from './ui.js';
+import { Badge, DataTable, ErrorNotice, useApi } from './ui.js';
 
 /* ------------------------------------------------------------------ */
 /* Audit                                                               */
@@ -293,7 +294,7 @@ export function AssetUpload() {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [contains, setContains] = useState({ music: false, voice: false, likeness: false, aiGenerated: false });
-  const [result, setResult] = useState<unknown>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const kind = file?.type.startsWith('video/') ? 'video' : file?.type.startsWith('audio/') ? 'audio' : 'image';
@@ -302,7 +303,7 @@ export function AssetUpload() {
     setBusy(true);
     setError(null);
     try {
-      setResult(await uploadBinary('/v1/assets/upload', file, { kind, title: title || file.name, contains }));
+      setResult(await uploadBinary<Record<string, unknown>>('/v1/assets/upload', file, { kind, title: title || file.name, contains }));
     } catch (err) {
       setError(err);
     } finally {
@@ -312,7 +313,7 @@ export function AssetUpload() {
   return (
     <section className="card">
       <h2>Upload source media</h2>
-      <p className="small muted">Uploads are hashed and QA-checked. An asset becomes publish-eligible only after a rights manifest covers every component.</p>
+      <p className="small muted">Images, video or audio you own or licensed. It can be posted once the rights for every part of it are recorded.</p>
       <div className="row" style={{ alignItems: 'end' }}>
         <div className="field">
           <label htmlFor="asset-file">File</label>
@@ -333,12 +334,12 @@ export function AssetUpload() {
         {(['music', 'voice', 'likeness', 'aiGenerated'] as const).map((k) => (
           <label key={k} className="row small" style={{ fontWeight: 400 }}>
             <input type="checkbox" style={{ width: 'auto' }} checked={contains[k]} onChange={(e) => setContains({ ...contains, [k]: e.target.checked })} />
-            {k === 'aiGenerated' ? 'AI-generated content' : k}
+            {k === 'aiGenerated' ? 'AI-generated content' : k === 'likeness' ? 'A real person’s face or likeness' : k === 'music' ? 'Music' : 'A voice'}
           </label>
         ))}
       </fieldset>
       <ErrorNotice error={error} />
-      {result ? <Json value={result} /> : null}
+      {result ? <Notice notice={{ tone: result.publishEligible ? 'ok' : 'warn', title: `“${String(result.title ?? title)}” uploaded.`, text: result.publishEligible ? 'It can be used in posts.' : 'Record the rights for every component (music, voice, likeness, AI content) before it can be posted.' }} /> : null}
     </section>
   );
 }

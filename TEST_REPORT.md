@@ -1,8 +1,30 @@
 # FUTUREGROW AI — Test report
 
-Date: 2026-10-27 · Commit: see `git log -1` · Environment: Windows 11 (8 GB RAM), Node 24.22.0, npm 12.2, Python 3.13.16, embedded PostgreSQL 17.10 (UTF-8 cluster), Playwright 1.63.0 Chromium.
+Date: 2026-10-30 · Commit: see `git log -1` · Environment: Windows 11 (8 GB RAM), Node 24.22.0, npm 12.2, Python 3.13.16, embedded PostgreSQL 17.10 (UTF-8 cluster), Playwright 1.63.0 Chromium.
 
 ## 1. Results
+
+### 1.0 Guided control plane (2026-10-30)
+
+Raw JSON forms replaced by guided forms across all 24 modules, the Stage 4 ground-truth workflow, a guided autonomy-policy editor, three read-only list routes (`GET /v1/knowledge/brand-rules`, `GET /v1/knowledge/documents`, `GET /v1/evidence/sources`). Checks run, in sequence:
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck | `npm run typecheck` | **pass** |
+| Lint | `npm run lint` | **pass** — 0 errors, 69 warnings (71 before the change) |
+| Generated docs current | `npm run docs -- --check` | **pass** |
+| TypeScript tests | `npm test` | **315 / 315 passed**, 37 files, 217 s |
+| Python engine, backup and TLS tests | `npm run test:py` | **36 / 36 passed**, 334 s |
+| Production bundles | `node scripts/build.mjs all` | **pass** — api, worker, media |
+| Web control plane | `npm run build -w @futuregrow/web` | **pass** — 28 pages, `_headers` with 2 script + 1 style hashes |
+| SBOM + licence policy | `npm run sbom` | **pass** — 0 violations |
+| Browser E2E (Chromium, CSP enforced) | `npm run test:e2e` | **8 / 8 passed**, 3.2 min |
+
+New tests: `apps/web/test/forms.test.ts` (form bodies, client checks, plain-language server errors, evidence readiness), `apps/web/test/ground-truth.test.ts` (the Stage 4 forms against the real API: quarantine and release, four-eyes claim approval, trusted evidence, restricted documents, tenant isolation of the new lists), a catalog check that every form is guided (no placeholder IDs; IDs come from pickers) and every picker list is a real route, and two E2E flows (Stage 4 end to end with a second approver; no sideways scrolling at 390 px).
+
+The tests found two existing bugs, now fixed: claim Approve/Reject waited for status `proposed` (claims start as `pending_review`), and decision Accept/Reject waited for `proposed` (decisions use `PROPOSED`), so those buttons never appeared.
+
+### 1.1 Previous release
 
 Verification of the 2026-10-27 release (Meta live integration, model approval withdrawal, sign-in client address, lint scope; on top of `cfa88ff`; all commands run in sequence):
 

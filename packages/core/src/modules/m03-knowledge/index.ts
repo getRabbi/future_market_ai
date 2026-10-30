@@ -470,6 +470,16 @@ export function screenRetrieved(chunks: RetrievedChunk[]): { kept: RetrievedChun
   return { kept, dropped };
 }
 
+export async function listBrandRules(tx: DbOrTx) {
+  return tx.select().from(brandRules).where(eq(brandRules.active, true)).orderBy(desc(brandRules.createdAt)).limit(500);
+}
+
+/** Indexed documents; restricted ones are listed only for the roles allowed to read them. */
+export async function listDocuments(tx: DbOrTx, roles: string[]) {
+  const rows = await tx.select().from(knowledgeDocuments).orderBy(desc(knowledgeDocuments.createdAt)).limit(500);
+  return rows.filter((d) => d.visibility !== 'restricted' || d.allowedRoles.some((r) => roles.includes(r)));
+}
+
 export async function listClaims(tx: DbOrTx, status?: string) {
   return tx
     .select()

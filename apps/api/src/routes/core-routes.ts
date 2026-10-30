@@ -182,6 +182,7 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
   });
 
   /* ---------------- evidence (M01) ---------------- */
+  r.get('/v1/evidence/sources', { schema: { tags: ['evidence'] } }, async (req) => tenantTx(ctx, req, (tx) => evidence.listSources(tx)));
   r.post('/v1/evidence/sources', { schema: { tags: ['evidence'], body: z.record(z.string(), z.unknown()) } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => evidence.registerSource(tx, tenantOf(req), actorOf(req), req.body))));
   r.post('/v1/evidence/sources/:id/review', { schema: { tags: ['evidence'], params: Id, body: z.object({ decision: z.enum(['approved', 'blocked']) }) } }, async (req) => tenantTx(ctx, req, (tx) => evidence.reviewSource(tx, tenantOf(req), actorOf(req), req.params.id, req.body.decision)));
   r.post('/v1/evidence', { schema: { tags: ['evidence'], body: z.record(z.string(), z.unknown()) } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => evidence.admitEvidence(tx, tenantOf(req), actorOf(req), req.body as never, { now: deps.clock.now() }))));

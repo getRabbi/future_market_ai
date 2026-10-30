@@ -1,24 +1,32 @@
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
-import { ApiError, api } from '../lib/api.js';
-import { formatValue, humanize, isStatusKey, tone } from '../lib/format.js';
+import { type ApiError, api } from '../lib/api.js';
+import { formatValue, humanize, isStatusKey, isUuid, statusLabel, tone } from '../lib/format.js';
+import { type Field, humanError } from '../lib/forms.js';
 
 export function Badge({ value }: { value: unknown }) {
-  return <span className={`badge ${tone(value)}`}>{String(value)}</span>;
+  return <span className={`badge ${tone(value)}`}>{statusLabel(value)}</span>;
 }
 
-export function ErrorNotice({ error }: { error: unknown }) {
+/** Errors in plain language: what went wrong, what to do, and field problems as a list. */
+export function ErrorNotice({ error, fields }: { error: unknown; fields?: Field[] }) {
   if (!error) return null;
+  const h = humanError(error, fields);
   const e = error as ApiError;
-  const hint = e.code === 'MFA_REQUIRED' || /multi-factor/i.test(e.message ?? '') ? 'This action needs two-factor sign-in. Turn it on under Account & security.' : e.status === 401 ? 'Your session has ended. Sign in again.' : e.status === 403 ? 'Your role does not allow this action.' : null;
   return (
     <div className="notice error" role="alert">
-      <strong>{e.message ?? String(error)}</strong>
-      {e.code ? <span className="muted small"> ({e.code})</span> : null}
-      {hint ? <div className="small">{hint}</div> : null}
-      {e.details ? (
+      <strong>{h.title}</strong>
+      {h.hint ? <div className="small">{h.hint}</div> : null}
+      {h.items.length ? (
+        <ul className="small tight">
+          {h.items.map((i) => (
+            <li key={i}>{i}</li>
+          ))}
+        </ul>
+      ) : null}
+      {e.code || e.details ? (
         <details className="small">
-          <summary>Details</summary>
-          <pre>{JSON.stringify(e.details, null, 2)}</pre>
+          <summary>Technical details</summary>
+          <pre>{JSON.stringify({ code: e.code ?? null, status: e.status ?? null, message: e.message, details: e.details ?? null }, null, 2)}</pre>
         </details>
       ) : null}
     </div>
@@ -54,11 +62,48 @@ export function pickRows(data: unknown, pick?: string): Record<string, unknown>[
   return [];
 }
 
-export function DataTable({ rows, columns, onRowClick, actions, empty = 'Nothing here yet.' }: { rows: Record<string, unknown>[]; columns?: string[]; onRowClick?: (r: Record<string, unknown>) => void; actions?: (r: Record<string, unknown>) => ReactNode; empty?: string }) {
-  if (rows.length === 0) return <p className="muted small">{empty}</p>;
+export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="empty-state">
+      <strong>{title}</strong>
+      {children ? <div className="small muted">{children}</div> : null}
+      {action ? <div className="row">{action}</div> : null}
+    </div>
+  );
+}
+
+export function LoadingRows({ label = 'Loading…' }: { label?: string }) {
+  return (
+    <div className="skeleton" role="status" aria-live="polite">
+      <span className="sr-only">{label}</span>
+      <div className="sk-line" />
+      <div className="sk-line" />
+      <div className="sk-line" />
+    </div>
+  );
+}
+
+export function DataTable({
+  rows,
+  columns,
+  labels,
+  onRowClick,
+  actions,
+  empty = 'Nothing here yet.',
+  loading = false,
+}: {
+  rows: Record<string, unknown>[];
+  columns?: string[];
+  labels?: Record<string, string>;
+  onRowClick?: (r: Record<string, unknown>) => void;
+  actions?: (r: Record<string, unknown>) => ReactNode;
+  empty?: ReactNode;
+  loading?: boolean;
+}) {
+  if (rows.length === 0) return loading ? <LoadingRows /> : typeof empty === 'string' ? <p className="muted small">{empty}</p> : empty;
   const keys = new Set(rows.flatMap((r) => Object.keys(r)));
   let cols = (columns ?? []).filter((c) => keys.has(c));
-  if (cols.length === 0) cols = [...keys].filter((k) => k !== 'tenantId').slice(0, 7);
+  if (cols.length === 0) cols = [...keys].filter((k) => k !== 'tenantId' && !isUuid(rows[0]?.[k])).slice(0, 7);
   return (
     <div className="table-wrap">
       <table>
@@ -66,7 +111,7 @@ export function DataTable({ rows, columns, onRowClick, actions, empty = 'Nothing
           <tr>
             {cols.map((c) => (
               <th key={c} scope="col">
-                {humanize(c)}
+                {labels?.[c] ?? humanize(c)}
               </th>
             ))}
             {actions ? <th scope="col">Actions</th> : null}
@@ -74,12 +119,36 @@ export function DataTable({ rows, columns, onRowClick, actions, empty = 'Nothing
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={String(r.id ?? i)} className={onRowClick ? 'clickable' : undefined} tabIndex={onRowClick ? 0 : undefined} onClick={onRowClick ? () => onRowClick(r) : undefined} onKeyDown={onRowClick ? (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onRowClick(r)) : undefined}>
+            <tr
+              key={String(r.id ?? r.evidenceId ?? i)}
+              className={onRowClick ? 'clickable' : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
+              title={onRowClick ? 'Open details' : undefined}
+              onClick={onRowClick ? () => onRowClick(r) : undefined}
+              onKeyDown={
+                onRowClick
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onRowClick(r);
+                      }
+                    }
+                  : undefined
+              }
+            >
               {cols.map((c) => (
-                <td key={c}>{isStatusKey(c) && r[c] !== null && r[c] !== undefined ? <Badge value={r[c]} /> : <span className="cell">{formatValue(c, r[c])}</span>}</td>
+                <td key={c} data-label={labels?.[c] ?? humanize(c)}>
+                  {isStatusKey(c) && r[c] !== null && r[c] !== undefined ? (
+                    <Badge value={r[c]} />
+                  ) : (
+                    <span className="cell" title={isUuid(r[c]) ? String(r[c]) : undefined}>
+                      {formatValue(c, r[c])}
+                    </span>
+                  )}
+                </td>
               ))}
               {actions ? (
-                <td onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                <td className="actions-cell" data-label="Actions" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                   <div className="row">{actions(r)}</div>
                 </td>
               ) : null}
@@ -87,53 +156,6 @@ export function DataTable({ rows, columns, onRowClick, actions, empty = 'Nothing
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-/** JSON body editor: parses on submit and shows the server's validation issues verbatim. */
-export function JsonForm({ initial, submitLabel, onSubmit, note }: { initial: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<unknown>; note?: string }) {
-  const [text, setText] = useState(() => JSON.stringify(initial, null, 2));
-  const [error, setError] = useState<unknown>(null);
-  const [result, setResult] = useState<unknown>(undefined);
-  const [busy, setBusy] = useState(false);
-  const submit = async () => {
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch (err) {
-      setError(new ApiError(`Invalid JSON: ${(err as Error).message}`, 0, 'CLIENT', null));
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      setResult(await onSubmit(body));
-    } catch (err) {
-      setError(err);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="stack">
-      {note ? <p className="small muted">{note}</p> : null}
-      <textarea aria-label="Request body (JSON)" value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
-      <div className="row">
-        <button type="button" className="primary" onClick={submit} disabled={busy}>
-          {busy ? 'Working…' : submitLabel}
-        </button>
-        <button type="button" onClick={() => setText(JSON.stringify(initial, null, 2))} disabled={busy}>
-          Reset
-        </button>
-      </div>
-      <ErrorNotice error={error} />
-      {result !== undefined ? (
-        <details open>
-          <summary className="small">Response</summary>
-          <pre>{JSON.stringify(result, null, 2)}</pre>
-        </details>
-      ) : null}
     </div>
   );
 }
@@ -148,7 +170,7 @@ export function Drawer({ title, onClose, children }: { title: string; onClose: (
     <>
       <button type="button" className="backdrop" aria-label="Close dialog" tabIndex={-1} onClick={onClose} />
       <aside className="drawer" role="dialog" aria-modal="true" aria-label={title}>
-        <header className="row" style={{ justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+        <header className="drawer-head">
           <h2>{title}</h2>
           <button type="button" onClick={onClose} aria-label="Close">
             Close
@@ -158,10 +180,6 @@ export function Drawer({ title, onClose, children }: { title: string; onClose: (
       </aside>
     </>
   );
-}
-
-export function Json({ value }: { value: unknown }) {
-  return <pre>{JSON.stringify(value, null, 2)}</pre>;
 }
 
 export function Logo({ size = 28 }: { size?: number }) {

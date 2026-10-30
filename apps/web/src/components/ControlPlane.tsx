@@ -6,6 +6,7 @@ import { STAGES, stageOf } from '../lib/journey.js';
 import { Approvals } from './Approvals.js';
 import { Connections } from './Connections.js';
 import { Governance } from './Governance.js';
+import { GroundTruth } from './GroundTruth.js';
 import { Icon, JourneyProvider, SectionPager, SidebarRank, StageBanner, sectionHref, sectionState, useJourney } from './Journey.js';
 import { ResourcePanel } from './ResourcePanel.js';
 import { ErrorNotice, Logo } from './ui.js';
@@ -78,15 +79,6 @@ export function ControlPlane({ section }: { section: string }) {
                 <div className="eyebrow">{stage ? `Stage ${stage.n} of ${STAGES.length} · ${stage.title}` : current.slug === 'overview' ? 'Your growth journey' : 'Today'}</div>
                 <h1>{current.title}</h1>
                 <p className="summary">{current.summary}</p>
-                {current.modules.length ? (
-                  <div className="row module-chips">
-                    {current.modules.map((m) => (
-                      <span key={m} className="chip">
-                        {m}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
               </div>
             </div>
             <div className="org-box">
@@ -113,9 +105,7 @@ export function ControlPlane({ section }: { section: string }) {
             {current.custom === 'settings' ? <Settings me={me} onTenant={switchTenant} onChanged={() => void boot()} /> : null}
             {current.custom === 'assets' ? <AssetUpload /> : null}
             {current.custom === 'connections' ? <Connections me={me} /> : null}
-            {current.resources.map((r) => (
-              <ResourcePanel key={r.title} resource={r} />
-            ))}
+            {current.custom === 'knowledge' ? <GroundTruth /> : current.resources.map((r) => <ResourcePanel key={r.title} resource={r} />)}
           </div>
           <SectionPager slug={current.slug} />
         </main>
@@ -158,7 +148,7 @@ function Sidebar({ current, open }: { current: string; open: boolean }) {
               const s = sectionBySlug(slug)!;
               const mark = sectionState(slug, j);
               return (
-                <a key={slug} href={sectionHref(slug)} aria-current={slug === current ? 'page' : undefined} title={s.modules.join(' ') || undefined}>
+                <a key={slug} href={sectionHref(slug)} aria-current={slug === current ? 'page' : undefined}>
                   <span>{s.title}</span>
                   {slug === 'approvals' && j?.pending ? (
                     <span className="count" title="Waiting for approval">
