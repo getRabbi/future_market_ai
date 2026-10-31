@@ -101,6 +101,7 @@ Envelope: `{ id, tenantId, eventType, version, aggregateType, aggregateId, actor
 | --- | --- |
 | `social.post.scheduled` | 1 |
 | `social.interaction.received` | 1 |
+| `social.insights.synced` | 1 |
 
 ## ads
 

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type ModelProvider, PROMPTS, type ProviderOutcome, type StructuredRequest } from '@futuregrow/agent-kernel';
 import { analytics, autopilot, brain, clearModelCache, connectionsModule, createModelGateway, evidence, execution, experimentsModule, governance, ideas, record, systemActor } from '@futuregrow/core';
-import { actionRequests, analyticsRequests, appStoreReports, forecastPoints, forecastRuns, goalCycles, goalTasks, growthDecisions, growthGoals, killSwitches, organization, outboxEvents, socialPosts, withSystem, withTenant } from '@futuregrow/db';
+import { actionRequests, analyticsRequests, appStoreReports, forecastPoints, forecastRuns, goalCycles, goalTasks, growthDecisions, growthGoals, killSwitches, metricSeries, organization, outboxEvents, socialPosts, withSystem, withTenant } from '@futuregrow/db';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { JobHelpers, Task } from 'graphile-worker';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -594,6 +594,52 @@ describe('Autopilot: abstention, missing data and replanning', () => {
     expect(second.output.ideaId).toBeTruthy();
     expect(second.output.ideaId).not.toBe(first.id);
   }, 180_000);
+});
+
+describe('Autopilot: a Facebook engagement goal measures real Page insights', () => {
+  it('maps the sentence to the Page engagement KPI, blocks with the integration gap while Meta returns nothing, then syncs the insights itself and forecasts from them', async () => {
+    const org = `org_${randomUUID().slice(0, 8)}`;
+    await h.t.handle.db.insert(organization).values({ id: org, name: 'Page Co', slug: org });
+    await tx((t) => autopilot.setAutopilotEnabled(t, org, { ...h.users.owner }, true), org);
+    await connectionsModule.createConnection(h.deps, org, h.users.owner, { provider: 'meta', externalAccountId: '777', displayName: 'Page Co', grantedScopes: ['pages_manage_posts', 'pages_read_engagement'], credentials: { accessToken: 'PAGE_777' } });
+    let answer: 'empty' | 'values' = 'empty';
+    server.on('GET', '/v26.0/777/insights', (req) => {
+      const metric = req.query.get('metric')!;
+      const values: { value: number; end_time: string }[] = [];
+      if (answer === 'values') for (let t = Date.parse(`${req.query.get('since')}T00:00:00Z`); t <= Date.parse(`${req.query.get('until')}T00:00:00Z`); t += DAY) values.push({ value: 20 + ((t / DAY) % 7), end_time: new Date(t).toISOString().replace('.000Z', '+0000') });
+      return { json: { data: [{ name: metric, period: 'day', values }] } };
+    });
+
+    const plan = autopilot.interpretGoal('Improve our organic Facebook engagement over the next 30 days with $0 advertising budget.', { now: h.clock.now(), series: [{ key: 'kpi.signups', name: 'Sign-ups', unit: 'count' }], market: 'US' });
+    expect(plan.draft.kpi).toMatchObject({ metricKey: 'kpi.facebook.page_post_engagements', unit: 'engagements' });
+    expect(plan.draft.channels).toEqual(['organic_social']);
+    expect(plan.draft.adBudget.amountMicros).toBe(0);
+    const g = await tx((t) => autopilot.createGoal(t, h.deps, org, h.users.owner, plan.draft), org);
+    const kinds = async () => Object.fromEntries((await tx((t) => t.select().from(goalTasks).where(eq(goalTasks.goalId, g.id)).orderBy(asc(goalTasks.createdAt), asc(goalTasks.seq)), org)).map((x) => [x.kind, x]));
+
+    // Meta answers with no values: nothing is stored or invented, and the blocker names the gap.
+    await autopilot.advanceGoal(h.deps, org, g.id, { maxSteps: 20 });
+    let k = await kinds();
+    expect(k.observe!.detail).toMatch(/Meta returned no Page insights values.*read_insights/);
+    expect(k.forecast).toMatchObject({ status: 'blocked', needs: 'data' });
+    expect(k.forecast!.detail).toMatch(/Page insights sync/);
+    expect(await tx((t) => t.select().from(metricSeries), org)).toHaveLength(0);
+
+    // Once Meta has values, the next cycle syncs them itself and asks M08 for a forecast.
+    answer = 'values';
+    await tx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'run_now'), org);
+    await autopilot.advanceGoal(h.deps, org, g.id, { maxSteps: 3 });
+    k = await kinds();
+    expect(k.observe!.detail).toMatch(/88 daily values just synced from Facebook Page insights/);
+    expect(k.forecast!.status).toBe('waiting');
+    expect(k.forecast!.refs.analyticsRequestId).toBeTruthy();
+    const [s] = await tx((t) => t.select().from(metricSeries).where(eq(metricSeries.key, 'kpi.facebook.page_post_engagements')), org);
+    expect(s).toMatchObject({ kind: 'kpi', channel: 'facebook:777' });
+    // The Autopilot's own sync does not nudge the goal into yet another cycle.
+    await dispatchOutbox();
+    expect((await goalRow(g.id, org)).pendingTrigger ?? '').not.toMatch(/evidence/);
+    await tx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'), org);
+  }, 120_000);
 });
 
 describe('Autopilot: budgets, controls and loop prevention', () => {

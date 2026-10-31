@@ -28,7 +28,7 @@ import { autoAcceptDecision, proposeDecision, riskFromParams } from '../m07-brai
 import { requestAnalytics } from '../m08-analytics/index.js';
 import { requestAnalysis } from '../m10-experiments/index.js';
 import { generateBrief } from '../m13-creative/index.js';
-import { postForPublishAction } from '../m16-social/index.js';
+import { FACEBOOK_INSIGHT_SERIES, isFacebookInsightsKey, postForPublishAction, syncPageInsights } from '../m16-social/index.js';
 import { keywordOpportunities, queueSeoAudit } from '../m18-discovery/index.js';
 import { DOWNLOADS_SERIES_KEY, syncDownloadsSeries } from '../m19-app-growth/index.js';
 import { approvedJurisdictions, getTenantPolicy } from '../m24-governance/index.js';
@@ -80,7 +80,9 @@ const fmtDate = (d: Date | string | null | undefined) => (d ? new Date(d).toISOS
 const money = (micros: number, currency: string) => `${(micros / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currency}`;
 
 function dataHint(metricKey: string): string {
-  return metricKey === DOWNLOADS_SERIES_KEY ? 'Connect App Store Connect in Connections (daily sales reports become this series) or upload the daily values in Advanced › Analytics.' : 'Upload the daily values of this metric in Advanced › Analytics (metric series), or connect the source that produces it.';
+  if (metricKey === DOWNLOADS_SERIES_KEY) return 'Connect App Store Connect in Connections (daily sales reports become this series) or upload the daily values in Advanced › Analytics.';
+  if (isFacebookInsightsKey(metricKey)) return 'This series comes from the daily Page insights sync of a Facebook Page in Connections. Meta returns values only when the Page token has the read_insights permission, and may withhold them for small Pages.';
+  return 'Upload the daily values of this metric in Advanced › Analytics (metric series), or connect the source that produces it.';
 }
 
 /** Written into the Brain and Idea Lab prompts as goal context (fenced as untrusted text). */
@@ -102,8 +104,47 @@ export function goalConstraints(goal: GoalRow, now: Date): string {
 /* observe: KPI data, connections, evidence, open actions (M08 M19 M01 M23) */
 /* ------------------------------------------------------------------ */
 
-const observe: StepExecutor = async (c) =>
-  tx(c, async (t) => {
+/**
+ * A Facebook KPI is refreshed from Meta when its newest value is more than two days old (Meta
+ * closes a day hours after it ends). Runs as the Autopilot, so the new evidence does not nudge
+ * the goal into another cycle. `points` counts the stored values of this KPI's own metric.
+ */
+async function refreshPageInsights(c: StepContext, metricKey: string): Promise<{ points: number; notes: string[] }> {
+  const { conns, last } = await tx(c, async (t) => ({
+    conns: await t
+      .select({ id: connections.id })
+      .from(connections)
+      .where(and(eq(connections.provider, 'meta'), inArray(connections.status, ['active', 'read_only']))),
+    last:
+      (
+        await t
+          .select({ last: max(metricPoints.ts) })
+          .from(metricPoints)
+          .innerJoin(metricSeries, eq(metricSeries.id, metricPoints.seriesId))
+          .where(eq(metricSeries.key, metricKey))
+      )[0]?.last ?? null,
+  }));
+  if (last && c.now.getTime() - new Date(last).getTime() < 2 * DAY) return { points: 0, notes: [] };
+  if (!conns.length) return { points: 0, notes: ['No Facebook Page is connected, so the Page insights behind this KPI cannot be synced.'] };
+  const metric = Object.entries(FACEBOOK_INSIGHT_SERIES).find(([, d]) => d.key === metricKey)?.[0];
+  let points = 0;
+  const notes: string[] = [];
+  for (const conn of conns) {
+    try {
+      const r = await syncPageInsights(c.deps, c.tenantId, conn.id, { actor: AUTOPILOT });
+      const synced = metric ? r.metrics[metric] : undefined;
+      if (synced?.seriesId) points += synced.days;
+      if (r.note) notes.push(r.note);
+    } catch (err) {
+      notes.push(`The Page insights sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { points, notes };
+}
+
+const observe: StepExecutor = async (c) => {
+  const insights = isFacebookInsightsKey(goalKpi(c.goal).metricKey) ? await refreshPageInsights(c, goalKpi(c.goal).metricKey) : null;
+  return tx(c, async (t) => {
     const kpi = goalKpi(c.goal);
     const bridged = kpi.metricKey === DOWNLOADS_SERIES_KEY ? await syncDownloadsSeries(t, c.tenantId) : null;
     const [series] = await t.select().from(metricSeries).where(eq(metricSeries.key, kpi.metricKey));
@@ -129,13 +170,13 @@ const observe: StepExecutor = async (c) =>
     const markets = await approvedJurisdictions(t, policy);
     const reports = kpi.metricKey === DOWNLOADS_SERIES_KEY ? ((await t.select({ n: sql<number>`count(*)::int` }).from(appStoreReports))[0]?.n ?? 0) : null;
     const points = stats?.n ?? 0;
-    const warnings: string[] = [];
+    const warnings: string[] = [...(insights?.notes ?? [])];
     if (!policy.configured) warnings.push('Your autonomy policy is not configured, so every action will wait for approval.');
     if (!markets.includes(c.goal.market)) warnings.push(`No legal-approved rules for market ${c.goal.market}: public or messaging actions also need legal approval.`);
     if (!c.deps.models) warnings.push('No approved AI model is available, so ideas and decisions cannot be generated.');
     const active = conns.filter((x) => x.status === 'active');
     const detail = [
-      series ? `${kpi.label}: ${points} data point${points === 1 ? '' : 's'} (latest ${fmtDate(stats?.last)})${bridged ? `, ${bridged.points} from App Store reports` : ''}.` : `No ${kpi.label} data yet.`,
+      series ? `${kpi.label}: ${points} data point${points === 1 ? '' : 's'} (latest ${fmtDate(stats?.last)})${bridged ? `, ${bridged.points} from App Store reports` : ''}${insights?.points ? `, ${insights.points} daily values just synced from Facebook Page insights` : ''}.` : `No ${kpi.label} data yet.`,
       `${active.length} of ${conns.length} connection${conns.length === 1 ? '' : 's'} active${active.length ? ` (${[...new Set(active.map((x) => x.provider))].join(', ')})` : ''}.`,
       `${ev?.n ?? 0} admitted evidence records, ${cl?.n ?? 0} approved claims, ${ideas?.n ?? 0} open ideas for this KPI, ${open.length} open action${open.length === 1 ? '' : 's'}.`,
       ...warnings,
@@ -149,6 +190,7 @@ const observe: StepExecutor = async (c) =>
         firstPointAt: stats?.first?.toISOString() ?? null,
         lastPointAt: stats?.last?.toISOString() ?? null,
         appStoreReports: reports,
+        pageInsightsSynced: insights ? insights.points : null,
         connections: conns.map((x) => ({ provider: x.provider, status: x.status })),
         evidence: ev?.n ?? 0,
         approvedClaims: cl?.n ?? 0,
@@ -161,6 +203,7 @@ const observe: StepExecutor = async (c) =>
       },
     };
   });
+};
 
 /* ------------------------------------------------------------------ */
 /* forecast: no-action baseline from M08                               */

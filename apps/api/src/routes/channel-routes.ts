@@ -19,6 +19,7 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.post('/v1/social/posts', { schema: { tags: ['social'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => social.schedulePost(tx, deps, tenantOf(req), actorOf(req), req.body))));
   r.get('/v1/social/stats', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.audienceStats(tx)));
   r.get('/v1/social/interactions', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.listInteractions(tx)));
+  r.post('/v1/social/connections/:id/insights/sync', { schema: { tags: ['social'], params: Id } }, async (req) => social.syncPageInsights(deps, tenantOf(req), req.params.id, { actor: actorOf(req) }));
   r.post('/v1/social/interactions/:id/draft-reply', { schema: { tags: ['social'], params: Id } }, async (req, reply) => reply.status(202).send(await social.draftReply(deps, tenantOf(req), actorOf(req), req.params.id)));
   r.post('/v1/social/interactions/:id/reply', { schema: { tags: ['social'], params: Id, body: z.object({ message: z.string().min(1).max(8000).optional(), geographies: Geos }) } }, async (req, reply) => reply.status(201).send(await social.proposeReply(deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
 

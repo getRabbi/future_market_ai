@@ -32,6 +32,20 @@ registerTasks((deps) => ({
     });
   },
 
+  /** M16: daily organic Page insights into the Facebook KPI series (Meta closes a day at Pacific midnight). */
+  page_insights_sync: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      for (const c of await activeConnections(deps, tenantId, ['meta'])) {
+        try {
+          const r = await social.syncPageInsights(deps, tenantId, c.id);
+          if (r.note) deps.logger.info({ tenantId, connectionId: c.id, note: r.note }, 'page insights sync stored no values');
+        } catch (err) {
+          deps.logger.warn({ tenantId, connectionId: c.id, err: err instanceof Error ? err.message : String(err) }, 'page insights sync failed');
+        }
+      }
+    });
+  },
+
   /** M17: campaign + spend sync for every ads connection. */
   ads_sync: async () => {
     await forEachTenant(deps, async (tenantId) => {
@@ -92,4 +106,4 @@ registerTasks((deps) => ({
   },
 }));
 
-export const CHANNEL_CRONTAB = ['* * * * * social_dispatch', '* * * * * journey_tick', '37 */6 * * * ads_sync', '15 7 * * * spend_reconcile', '45 5 * * * search_console_sync', '5 9 * * * app_store_sales_sync'];
+export const CHANNEL_CRONTAB = ['* * * * * social_dispatch', '* * * * * journey_tick', '25 11 * * * page_insights_sync', '37 */6 * * * ads_sync', '15 7 * * * spend_reconcile', '45 5 * * * search_console_sync', '5 9 * * * app_store_sales_sync'];

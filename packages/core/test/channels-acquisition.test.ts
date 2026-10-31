@@ -2,13 +2,13 @@ import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import type { ModelProvider, ProviderOutcome, StructuredRequest } from '@futuregrow/agent-kernel';
 import { PROMPTS } from '@futuregrow/agent-kernel';
 import { clearGoogleTokenCache, publicFetch } from '@futuregrow/connectors';
-import { actionRequests, adBudgetHistory, adCampaigns, adDailyMetrics, alerts, appInstalls, customerEvents, seoPages, socialInteractions, socialPosts, spendLedger, storeListings, withTenant } from '@futuregrow/db';
-import { eq } from 'drizzle-orm';
+import { actionRequests, adBudgetHistory, adCampaigns, adDailyMetrics, alerts, appInstalls, customerEvents, evidenceRecords, metricPoints, metricSeries, seoPages, socialInteractions, socialPosts, spendLedger, storeListings, withTenant } from '@futuregrow/db';
+import { eq, like } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
-import { FixtureServer } from '../../../test/helpers/fixture-server.js';
+import { FixtureServer, type RecordedRequest } from '../../../test/helpers/fixture-server.js';
 import { clearModelCache, createModelGateway } from '../src/agents.js';
-import { createConnection } from '../src/modules/connections.js';
+import { createConnection, setConnectionStatus } from '../src/modules/connections.js';
 import { ingestEvents } from '../src/modules/m02-customers/index.js';
 import type { PublicFetcher } from '../src/modules/m05-competitors/index.js';
 import * as social from '../src/modules/m16-social/index.js';
@@ -159,6 +159,59 @@ describe('M16 organic social', () => {
     expect(view.actionType).toBe('social.facebook.reply_comment');
     const [after] = await tx((t) => t.select().from(socialInteractions).where(eq(socialInteractions.id, q.id)));
     expect(after).toMatchObject({ replyStatus: 'submitted', replyActionId: view.id });
+  });
+
+  it('syncs organic Page insights into evidence-backed KPI series, idempotently and one Page per series', async () => {
+    const DAY = 86_400_000;
+    let empty = false;
+    // A Page in UTC: Meta stamps each daily value with the midnight that ends the day.
+    const insights = (req: RecordedRequest) => {
+      const metric = req.query.get('metric')!;
+      if (metric === 'page_views_total') return { status: 400, json: { error: { code: 100, message: '(#100) The value must be a valid insights metric' } } };
+      const values: { value: number; end_time: string }[] = [];
+      if (!empty && metric !== 'page_media_view')
+        for (let t = Date.parse(`${req.query.get('since')}T00:00:00Z`); t <= Date.parse(`${req.query.get('until')}T00:00:00Z`); t += DAY) values.push({ value: metric === 'page_post_engagements' ? new Date(t - DAY).getUTCDate() : 1, end_time: new Date(t).toISOString().replace('.000Z', '+0000') });
+      return { json: { data: [{ name: metric, period: 'day', values }] } };
+    };
+    server.on('GET', '/v26.0/123/insights', insights);
+    await expect(social.syncPageInsights(h.deps, h.tenantId, metaConn, { actor: h.users.analyst })).rejects.toThrow(/roles/);
+
+    const first = await social.syncPageInsights(h.deps, h.tenantId, metaConn);
+    expect(first.metrics).toMatchObject({ page_post_engagements: { status: 'ok', days: 88 }, page_daily_follows_unique: { status: 'ok', days: 88 }, page_media_view: { status: 'no_data', days: 0 }, page_views_total: { status: 'unsupported', days: 0 } });
+    expect(first).toMatchObject({ points: 176, note: null });
+    const fb = await tx((t) => t.select().from(metricSeries).where(like(metricSeries.key, 'kpi.facebook.%')));
+    expect(fb.map((s) => `${s.key} ${s.kind} ${s.channel}`).sort()).toEqual(['kpi.facebook.page_daily_follows_unique kpi facebook:123', 'kpi.facebook.page_post_engagements kpi facebook:123']);
+    const eng = fb.find((s) => s.key === social.FACEBOOK_ENGAGEMENT_SERIES_KEY)!;
+    expect(eng.name).toBe('Facebook Page post engagements (Acme Page)');
+    const points = () => tx((t) => t.select().from(metricPoints).where(eq(metricPoints.seriesId, eng.id)));
+    const pts = await points();
+    expect(pts).toHaveLength(88);
+    expect(new Set(pts.map((p) => p.evidenceId))).toEqual(new Set([first.evidenceId]));
+    expect(pts.find((p) => p.ts.toISOString().slice(0, 10) === first.to)!.value).toBe(Number(first.to.slice(8)));
+    const [ev] = await tx((t) => t.select().from(evidenceRecords).where(eq(evidenceRecords.id, first.evidenceId!)));
+    expect(ev).toMatchObject({ status: 'admitted', kind: 'metric', sourceOwner: 'meta', sourceType: 'primary' });
+
+    // Later syncs refresh the last week of the metrics that have data, and keep backfilling the rest.
+    const second = await social.syncPageInsights(h.deps, h.tenantId, metaConn);
+    expect(second.metrics).toMatchObject({ page_post_engagements: { status: 'ok', days: 7 }, page_media_view: { status: 'no_data' } });
+    expect(await points()).toHaveLength(88);
+
+    // Meta answering with nothing stores nothing and says why.
+    empty = true;
+    const none = await social.syncPageInsights(h.deps, h.tenantId, metaConn);
+    expect(none).toMatchObject({ points: 0, evidenceId: null });
+    expect(none.note).toMatch(/no Page insights values.*read_insights/);
+    expect(await points()).toHaveLength(88);
+
+    // A second Page cannot write into the first Page's series.
+    const other = (await createConnection(h.deps, h.tenantId, h.users.owner, { provider: 'meta', externalAccountId: '999', displayName: 'Other Page', grantedScopes: ['pages_read_engagement', 'read_insights'], credentials: { accessToken: 'PAGE_999' } })).id;
+    empty = false;
+    server.on('GET', '/v26.0/999/insights', insights);
+    const foreign = await social.syncPageInsights(h.deps, h.tenantId, other);
+    expect(foreign.metrics).toMatchObject({ page_post_engagements: { status: 'other_page' }, page_daily_follows_unique: { status: 'other_page' } });
+    expect(server.find('GET', '/v26.0/999/insights').map((r) => r.query.get('metric'))).toEqual(['page_media_view', 'page_views_total']);
+    expect(foreign.note).not.toMatch(/read_insights/);
+    await tx((t) => setConnectionStatus(t, h.tenantId, h.users.owner, other, 'disabled'));
   });
 });
 

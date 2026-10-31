@@ -108,6 +108,22 @@ const seeds: Seed[] = [
     sourceUrl: 'https://developers.facebook.com/docs/marketing-api/insights',
     notes: LIVE_UNVERIFIED,
   },
+  {
+    platform: 'meta',
+    apiVersion: DEFAULT_API_VERSIONS.meta,
+    capability: 'facebook_page_insights',
+    supported: true,
+    requiredScopes: ['read_insights', 'pages_read_engagement'],
+    requiredAccountType: 'facebook_page (page access token)',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 30, refillPerSecond: 0.5, notes: 'Meta Business Use Case rate limits; one request per metric per day' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'read_only',
+    sourceUrl: 'https://developers.facebook.com/docs/graph-api/reference/insights',
+    notes: 'Daily organic metrics page_post_engagements, page_daily_follows_unique, page_media_view, page_views_total. Metric names checked live against v26.0 on 2026-10-31; Meta returned no values for a 13-follower Page whose token lacks read_insights.',
+  },
   // ---------------- Google Ads (D-003) ----------------
   {
     platform: 'google_ads',

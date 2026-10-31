@@ -2,7 +2,7 @@ import { createPublicKey, verify as cryptoVerify, generateKeyPairSync } from 'no
 import { gzipSync } from 'node:zlib';
 import { hmacSha256Hex } from '@futuregrow/observability';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { appStoreConnectJwt, EXECUTORS, fetchSalesReport, READ_CONNECTORS } from '../src/index.js';
+import { appStoreConnectJwt, EXECUTORS, fetchPageInsights, fetchSalesReport, PAGE_INSIGHT_METRICS, READ_CONNECTORS } from '../src/index.js';
 import { clearGoogleTokenCache } from '../src/providers/google.js';
 import { FixtureServer, makeCtx, meta } from './helpers.js';
 
@@ -124,6 +124,46 @@ describe('Meta Graph API', () => {
     expect(camps[0]).toMatchObject({ externalCampaignId: '1', dailyBudgetMicros: 25_000_000, currency: 'USD' });
     const spend = await READ_CONNECTORS.meta!.fetchSpend!(c, '2026-10-18', '2026-10-18');
     expect(spend[0]).toMatchObject({ costMicros: 24_170_000, conversions: 2, conversionValueMicros: 80_000_000 });
+  });
+
+  describe('organic Page insights', () => {
+    const pageCtx = () => makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN', appSecret: 'APP_SECRET' }, { externalAccountId: '123' });
+    // A daily value is stamped with the end of its Page-local day (07:00 UTC in Pacific daylight time).
+    const day = (endTime: string, value: unknown) => ({ value, end_time: endTime });
+
+    it('reads each metric on its own, assigns values to the day that ended, and keeps only completed days in range', async () => {
+      server.on('GET', '/v26.0/123/insights', (req) => {
+        const metric = req.query.get('metric');
+        if (metric === 'page_views_total') return { status: 400, json: { error: { code: 100, message: '(#100) The value must be a valid insights metric' } } };
+        if (metric === 'page_media_view') return { json: { data: [] } };
+        const values = [day('2026-10-16T07:00:00+0000', 1), day('2026-10-17T07:00:00+0000', 4), day('2026-10-18T07:00:00+0000', { like: 2 }), day('2026-10-19T07:00:00+0000', 0), day('2026-10-20T07:00:00+0000', 9)];
+        return { json: { data: [{ name: metric, period: 'day', values }] } };
+      });
+      const r = await fetchPageInsights(pageCtx(), '2026-10-16', '2026-10-19');
+      // 10-15 is before the range, the object value is not a count, and 10-19 has not ended yet at 12:00 UTC.
+      expect(r.page_post_engagements).toEqual({
+        status: 'ok',
+        values: [
+          { date: '2026-10-16', value: 4 },
+          { date: '2026-10-18', value: 0 },
+        ],
+      });
+      expect(r.page_daily_follows_unique!.status).toBe('ok');
+      expect(r.page_media_view).toEqual({ status: 'no_data', values: [] });
+      expect(r.page_views_total).toMatchObject({ status: 'unsupported', values: [] });
+      const reqs = server.find('GET', '/v26.0/123/insights');
+      expect(reqs.map((q) => q.query.get('metric'))).toEqual([...PAGE_INSIGHT_METRICS]);
+      expect(reqs[0]!.query.get('period')).toBe('day');
+      expect(reqs[0]!.headers.authorization).toBe('Bearer PAGE_TOKEN');
+      expect(reqs[0]!.query.get('appsecret_proof')).toBe(hmacSha256Hex('APP_SECRET', 'PAGE_TOKEN'));
+    });
+
+    it('throws on an invalid token instead of reporting empty metrics, and refuses ranges Meta would reject', async () => {
+      server.on('GET', '/v26.0/123/insights', { status: 400, json: { error: { code: 190, message: 'Error validating access token' } } });
+      await expect(fetchPageInsights(pageCtx(), '2026-10-01', '2026-10-18')).rejects.toMatchObject({ status: 401 });
+      await expect(fetchPageInsights(pageCtx(), '2026-07-01', '2026-10-18')).rejects.toThrow(/1–88 days/);
+      await expect(fetchPageInsights(pageCtx(), '2026-10-18', '2026-10-01')).rejects.toThrow(/1–88 days/);
+    });
   });
 
   describe('separate Page and ads tokens', () => {

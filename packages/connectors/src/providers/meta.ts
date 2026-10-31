@@ -429,4 +429,60 @@ export const metaRead: ReadConnector = {
   },
 };
 
+/* --------------------------- Organic Page insights --------------------------- */
+
+/**
+ * Daily organic Page metrics that Graph v26 still accepts (checked live 2026-10-31). The older
+ * page_impressions*, page_engaged_users and page_fans* metrics are rejected as invalid.
+ */
+export const PAGE_INSIGHT_METRICS = ['page_post_engagements', 'page_daily_follows_unique', 'page_media_view', 'page_views_total'] as const;
+
+export interface PageInsightMetricResult {
+  /** `no_data`: Meta answered with no values (e.g. no read_insights grant, or a Page too small for insights). */
+  status: 'ok' | 'no_data' | 'unsupported' | 'error';
+  /** One value per completed day, oldest first. */
+  values: { date: string; value: number }[];
+  error?: string;
+}
+
+const DAY_MS = 86_400_000;
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * Daily Page insights for the days `from`..`to` (inclusive, at most 88 days, so the padded query
+ * stays inside Meta's 93-day since/until limit). Each metric is read
+ * on its own so a metric Meta retires does not hide the others; an invalid token still throws.
+ * Meta stamps a daily value with the end of that day in the Page's time zone, so a value belongs
+ * to the day before its end_time. Days that have not ended yet are left out.
+ */
+export async function fetchPageInsights(ctx: ConnectorContext, from: string, to: string, metrics: readonly string[] = PAGE_INSIGHT_METRICS): Promise<Record<string, PageInsightMetricResult>> {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end - start > 87 * DAY_MS) throw new Error('page insights need a range of 1–88 days');
+  const pageId = ctx.connection.externalAccountId;
+  const now = ctx.now().getTime();
+  const out: Record<string, PageInsightMetricResult> = {};
+  for (const metric of metrics) {
+    try {
+      const res = await graph<{ data: { name: string; period: string; values: { value: unknown; end_time: string }[] }[] }>(ctx, 'GET', `${pageId}/insights`, {
+        query: { metric, period: 'day', since: isoDay(start - DAY_MS), until: isoDay(end + 2 * DAY_MS) },
+      });
+      const byDay = new Map<string, number>();
+      for (const v of res.data.data.find((d) => d.name === metric && d.period === 'day')?.values ?? []) {
+        const endsAt = Date.parse(v.end_time);
+        if (typeof v.value !== 'number' || !Number.isFinite(v.value) || !Number.isFinite(endsAt) || endsAt > now) continue;
+        const date = isoDay(endsAt - DAY_MS);
+        if (date >= from && date <= to) byDay.set(date, v.value);
+      }
+      const values = [...byDay].map(([date, value]) => ({ date, value })).sort((a, b) => a.date.localeCompare(b.date));
+      out[metric] = { status: values.length ? 'ok' : 'no_data', values };
+    } catch (err) {
+      if (!(err instanceof ProviderHttpError) || err.status === 401) throw err;
+      const e = (err.body as { error?: { code?: number; message?: string } } | undefined)?.error;
+      out[metric] = { status: e?.code === 100 && /insights metric/i.test(e.message ?? '') ? 'unsupported' : 'error', values: [], error: e?.message ?? err.message };
+    }
+  }
+  return out;
+}
+
 export type { ExecuteResult };

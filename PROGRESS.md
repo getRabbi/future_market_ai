@@ -135,6 +135,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Autopilot-first web home (Business setup, Growth goals, AI activity, Pending approvals, Results) built only from persisted rows; the 24 module screens, evidence, claims, governance and the journey stay in the Advanced workspace (`/app/advanced`). Per-organization opt-in, platform switch `FG_AUTOPILOT`.
 - [x] Tests: 8 worker-level autonomy tests (real worker task list, real PostgreSQL, real Python forecasting job, fixture Meta API), 3 API tests, 2 browser flows with a real Graphile worker (desktop + 390 px phone).
 - [x] Live (2026-10-31, `a2e09db`): API, worker tasks and web home deployed; the production worker ran a goal cycle unattended in the smoke organization, with explicit blockers and event-triggered replanning (TEST_REPORT §1.0).
+- [x] Facebook Page insights → evidence-backed KPI series `kpi.facebook.*` (daily sync, on-demand route, Autopilot observe refresh) and engagement/follower goal intake (D-034). Live data not yet demonstrated: the connected test Page returns no insights (token lacks `read_insights`, 13 followers).
 - [ ] A real goal in a real organization producing measured results (needs live KPI data, policy, forecast gates and approved actions; see BLOCKERS / DEPLOYMENT §10).
 
 ## Completion summary

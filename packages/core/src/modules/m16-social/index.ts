@@ -1,12 +1,16 @@
 import { injectionSignals, PROMPTS, redactPii, untrustedBlock } from '@futuregrow/agent-kernel';
-import { assets, connections, type DbOrTx, socialInteractions, socialPosts, syntheticPersonas, type Tx, withTenant } from '@futuregrow/db';
+import { fetchPageInsights, type PAGE_INSIGHT_METRICS } from '@futuregrow/connectors';
+import { assets, connections, type DbOrTx, metricPoints, metricSeries, socialInteractions, socialPosts, syntheticPersonas, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, identifierHash, invalid, notFound, sha256Hex } from '@futuregrow/observability';
-import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, max, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runAgent } from '../../agents.js';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, normalizeText, record, requireRole } from '../../util.js';
+import { readContext } from '../connections.js';
+import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { lintCopy, screenRetrieved, searchKnowledge } from '../m03-knowledge/index.js';
+import { appendPoints, upsertSeries } from '../m08-analytics/index.js';
 import { personaContentCheck } from '../m15-personas/index.js';
 import { proposeAction } from '../m23-execution/gateway.js';
 import { type ActionRow, registerHooks, registerResolver } from '../m23-execution/registry.js';
@@ -442,6 +446,142 @@ export async function listInteractions(tx: DbOrTx) {
 export async function audienceStats(tx: DbOrTx) {
   const r = await tx.execute<{ platform: string; posts: number; verified: number }>(sql`select platform, count(*)::int as posts, count(*) filter (where status = 'published_verified')::int as verified from social_posts group by platform`);
   return r.rows;
+}
+
+/* ------------------------------------------------------------------ */
+/* Organic Page insights → M08 KPI series                              */
+/* ------------------------------------------------------------------ */
+
+/** M08 KPI series fed by the Page insights sync, one per Meta metric. */
+export const FACEBOOK_INSIGHT_SERIES = {
+  page_post_engagements: { key: 'kpi.facebook.page_post_engagements', name: 'Facebook Page post engagements', unit: 'engagements' },
+  page_daily_follows_unique: { key: 'kpi.facebook.page_daily_follows_unique', name: 'Facebook Page new follows', unit: 'follows' },
+  page_media_view: { key: 'kpi.facebook.page_media_view', name: 'Facebook Page content views', unit: 'views' },
+  page_views_total: { key: 'kpi.facebook.page_views_total', name: 'Facebook Page profile views', unit: 'views' },
+} as const satisfies Record<(typeof PAGE_INSIGHT_METRICS)[number], { key: string; name: string; unit: string }>;
+
+export const FACEBOOK_ENGAGEMENT_SERIES_KEY = FACEBOOK_INSIGHT_SERIES.page_post_engagements.key;
+export const isFacebookInsightsKey = (key: string) => Object.values(FACEBOOK_INSIGHT_SERIES).some((s) => s.key === key);
+
+/** The first sync backfills as far as one request reaches; later syncs refresh the days Meta may still revise. */
+const INSIGHTS_BACKFILL_DAYS = 88;
+const INSIGHTS_REFRESH_DAYS = 7;
+
+export interface PageInsightsSync {
+  pageId: string;
+  from: string;
+  to: string;
+  metrics: Record<string, { status: string; days: number; seriesId?: string; error?: string }>;
+  points: number;
+  evidenceId: string | null;
+  note: string | null;
+}
+
+/**
+ * Pull daily organic Page insights into M08 KPI series, each point backed by the admitted evidence
+ * of the fetch, so forecasts, goals and the Growth Brain can use real engagement. Idempotent
+ * (points are upserted by day); days Meta returns no value for stay absent, never zero-filled.
+ * A series belongs to one Page (its channel is `facebook:<page id>`): another Page's values are
+ * refused rather than mixed in.
+ */
+export async function syncPageInsights(deps: CoreDeps, tenantId: string, connectionId: string, opts: { actor?: Actor } = {}): Promise<PageInsightsSync> {
+  const actor = opts.actor ?? systemActor('page-insights-sync');
+  if (actor.type === 'user') requireRole(actor, ['owner', 'admin', 'growth_operator'], 'syncing Page insights');
+  const { connection, ctx } = await readContext(deps, tenantId, connectionId, 'meta');
+  const tctx = { tenantId, actor: actorRef(actor) };
+  const now = deps.clock.now();
+  const pageId = connection.externalAccountId;
+  const owner = `facebook:${pageId}`;
+  const defs = Object.entries(FACEBOOK_INSIGHT_SERIES) as [string, (typeof FACEBOOK_INSIGHT_SERIES)[keyof typeof FACEBOOK_INSIGHT_SERIES]][];
+  const existing = await withTenant(deps.db, tctx, (tx) =>
+    tx
+      .select({ key: metricSeries.key, channel: metricSeries.channel, last: max(metricPoints.ts) })
+      .from(metricSeries)
+      .leftJoin(metricPoints, eq(metricPoints.seriesId, metricSeries.id))
+      .where(
+        inArray(
+          metricSeries.key,
+          defs.map(([, d]) => d.key),
+        ),
+      )
+      .groupBy(metricSeries.key, metricSeries.channel),
+  );
+  const byKey = new Map(existing.map((r) => [r.key, r]));
+  const metrics: PageInsightsSync['metrics'] = {};
+  const wanted: string[] = [];
+  for (const [metric, d] of defs) {
+    const s = byKey.get(d.key);
+    if (s && s.channel !== owner) metrics[metric] = { status: 'other_page', days: 0, error: `${d.key} already holds ${s.channel ?? 'other'} data` };
+    else wanted.push(metric);
+  }
+  const day = (offsetDays: number) => new Date(now.getTime() + offsetDays * 86_400_000).toISOString().slice(0, 10);
+  const recent = (key: string) => {
+    const last = byKey.get(key)?.last;
+    return Boolean(last && now.getTime() - new Date(last).getTime() < 30 * 86_400_000);
+  };
+  const to = day(-1);
+  // Metrics with recent values refresh the last week; the others (new, or never answered) backfill.
+  const fresh = wanted.filter((m) => recent(FACEBOOK_INSIGHT_SERIES[m as keyof typeof FACEBOOK_INSIGHT_SERIES].key));
+  const stale = wanted.filter((m) => !fresh.includes(m));
+  const from = day(stale.length ? -INSIGHTS_BACKFILL_DAYS : -INSIGHTS_REFRESH_DAYS);
+  const fetched = {
+    ...(fresh.length ? await fetchPageInsights(ctx, day(-INSIGHTS_REFRESH_DAYS), to, fresh) : {}),
+    ...(stale.length ? await fetchPageInsights(ctx, day(-INSIGHTS_BACKFILL_DAYS), to, stale) : {}),
+  };
+
+  return withTenant(deps.db, tctx, async (tx) => {
+    const total = Object.values(fetched).reduce((s, r) => s + r.values.length, 0);
+    let evidenceId: string | null = null;
+    let points = 0;
+    if (total > 0) {
+      const ev = await admitInternalEvidence(tx, tenantId, actor, {
+        kind: 'metric',
+        sourceType: 'primary',
+        owner: 'meta',
+        uri: `meta://page/${pageId}/insights/${from}..${to}@${now.toISOString()}`,
+        content: { pageId, from, to, metrics: fetched },
+        summary: `Facebook Page ${connection.displayName} insights ${from}..${to}: ${Object.entries(fetched)
+          .map(([m, r]) => `${m} ${r.values.length} day${r.values.length === 1 ? '' : 's'}`)
+          .join(', ')}`,
+        confidence: 1,
+        license: 'Meta Platform Terms (authorized Page data)',
+        permittedUses: ['analytics', 'forecasting', 'causal_measurement'],
+        externalPlatformTerms: 'meta',
+        freshnessSlaHours: 48,
+        now,
+      });
+      if (ev.status === 'admitted') evidenceId = ev.evidenceId;
+    }
+    for (const [metric, r] of Object.entries(fetched)) {
+      const d = FACEBOOK_INSIGHT_SERIES[metric as keyof typeof FACEBOOK_INSIGHT_SERIES];
+      metrics[metric] = { status: r.status, days: r.values.length, ...(r.error ? { error: r.error } : {}) };
+      if (!r.values.length || !evidenceId) continue;
+      const series = await upsertSeries(tx, tenantId, actor, { key: d.key, name: `${d.name} (${connection.displayName})`.slice(0, 300), unit: d.unit, granularity: 'day', kind: 'kpi', channel: owner, sourceEvidenceId: evidenceId });
+      if (series.channel !== owner) {
+        metrics[metric] = { status: 'other_page', days: 0, error: `${d.key} already holds ${series.channel ?? 'other'} data` };
+        continue;
+      }
+      await appendPoints(
+        tx,
+        tenantId,
+        series.id,
+        r.values.map((v) => ({ ts: `${v.date}T00:00:00Z`, value: v.value, evidenceId })),
+      );
+      metrics[metric]!.seriesId = series.id;
+      points += r.values.length;
+    }
+    const scopes = connection.grantedScopes ?? [];
+    const note =
+      points > 0
+        ? null
+        : wanted.length === 0
+          ? 'Every Facebook insights series already belongs to another Page.'
+          : total > 0
+            ? 'The fetched insights were not admitted as evidence, so no values were stored.'
+            : `Meta returned no Page insights values for ${from}..${to}.${scopes.includes('read_insights') ? '' : ' The Page token was not granted read_insights; reconnect the Page with that permission.'} Meta may also withhold insights from small Pages.`;
+    await record(tx, tenantId, actor, 'social.insights.synced', { type: 'connection', id: connectionId }, { pageId, from, to, points, evidenceId, metrics: Object.fromEntries(Object.entries(metrics).map(([m, r]) => [m, r.status])) });
+    return { pageId, from, to, metrics, points, evidenceId, note };
+  });
 }
 
 export { audit };

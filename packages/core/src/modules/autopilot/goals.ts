@@ -5,6 +5,7 @@ import { defaultTenantPolicy } from '@futuregrow/policies';
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { type Actor, actorRef, type CoreConfig, type CoreDeps } from '../../deps.js';
 import { audit, record, requireRole } from '../../util.js';
+import { FACEBOOK_ENGAGEMENT_SERIES_KEY, FACEBOOK_INSIGHT_SERIES } from '../m16-social/index.js';
 import { DOWNLOADS_SERIES_KEY } from '../m19-app-growth/index.js';
 
 export type GoalRow = typeof growthGoals.$inferSelect;
@@ -255,11 +256,35 @@ export async function inbox(tx: DbOrTx) {
 /* Natural-language intake (deterministic; the owner reviews the draft) */
 /* ------------------------------------------------------------------ */
 
-const KPI_TEMPLATES: { re: RegExp; kpi: Omit<GoalKpi, 'target' | 'targetChangePct' | 'direction'>; channels: GoalChannel[] }[] = [
+const FACEBOOK_CONTEXT = /\b(facebook|fb|page|posts?|social)\b/i;
+const PAGE_INSIGHTS_PENDING = 'it arrives from the daily Page insights sync of a connected Facebook Page';
+
+/**
+ * `when`: the template applies only if the sentence also matches it ("engagement" alone may mean
+ * email or in-app engagement). `exact`: only the template's own series counts as existing data,
+ * so a goal never silently measures a neighbouring metric.
+ */
+const KPI_TEMPLATES: { re: RegExp; when?: RegExp; exact?: boolean; pending?: string; kpi: Omit<GoalKpi, 'target' | 'targetChangePct' | 'direction'>; channels: GoalChannel[] }[] = [
   { re: /\b(download|install)s?\b/i, kpi: { metricKey: DOWNLOADS_SERIES_KEY, label: 'App Store first-time downloads', unit: 'downloads' }, channels: ['app_store', 'organic_social', 'seo', 'experiments'] },
   { re: /\b(sign[\s-]?ups?|registrations?|trials?)\b/i, kpi: { metricKey: 'kpi.signups', label: 'Sign-ups', unit: 'count' }, channels: ['organic_social', 'seo', 'email', 'experiments'] },
   { re: /\b(revenue|sales|orders|purchases)\b/i, kpi: { metricKey: 'kpi.revenue', label: 'Revenue', unit: 'currency' }, channels: ['organic_social', 'email', 'experiments'] },
   { re: /\b(traffic|visits|visitors|sessions)\b/i, kpi: { metricKey: 'kpi.sessions', label: 'Website sessions', unit: 'sessions' }, channels: ['seo', 'organic_social', 'experiments'] },
+  {
+    re: /\b(engagements?|engaged|reactions|comments|shares|interactions)\b/i,
+    when: FACEBOOK_CONTEXT,
+    exact: true,
+    pending: PAGE_INSIGHTS_PENDING,
+    kpi: { metricKey: FACEBOOK_ENGAGEMENT_SERIES_KEY, label: FACEBOOK_INSIGHT_SERIES.page_post_engagements.name, unit: FACEBOOK_INSIGHT_SERIES.page_post_engagements.unit },
+    channels: ['organic_social', 'experiments'],
+  },
+  {
+    re: /\b(followers?|follows|fans|page likes)\b/i,
+    when: FACEBOOK_CONTEXT,
+    exact: true,
+    pending: PAGE_INSIGHTS_PENDING,
+    kpi: { metricKey: FACEBOOK_INSIGHT_SERIES.page_daily_follows_unique.key, label: FACEBOOK_INSIGHT_SERIES.page_daily_follows_unique.name, unit: FACEBOOK_INSIGHT_SERIES.page_daily_follows_unique.unit },
+    channels: ['organic_social', 'experiments'],
+  },
 ];
 
 const CHANNEL_WORDS: [RegExp, GoalChannel][] = [
@@ -315,16 +340,17 @@ export function interpretGoal(text: string, ctx: { now: Date; series: { key: str
     assumptions.push('No budget given; assumed $0 (no paid ads) until you set one');
   }
 
-  const tpl = KPI_TEMPLATES.find((k) => k.re.test(t));
+  const tpl = KPI_TEMPLATES.find((k) => k.re.test(t) && (!k.when || k.when.test(t)));
   let kpi: GoalKpi;
   let channels: GoalChannel[];
   if (tpl) {
     const words = tpl.kpi.label.toLowerCase().split(/\s+/);
-    const existing = ctx.series.find((s) => s.key === tpl.kpi.metricKey) ?? ctx.series.find((s) => words.some((w) => w.length > 3 && `${s.key} ${s.name}`.toLowerCase().includes(w.replace(/s$/, ''))));
+    const existing = ctx.series.find((s) => s.key === tpl.kpi.metricKey) ?? (tpl.exact ? undefined : ctx.series.find((s) => words.some((w) => w.length > 3 && `${s.key} ${s.name}`.toLowerCase().includes(w.replace(/s$/, '')))));
     kpi = { ...tpl.kpi, metricKey: existing?.key ?? tpl.kpi.metricKey, label: existing?.name ?? tpl.kpi.label, unit: existing?.unit ?? tpl.kpi.unit, direction: 'increase', target: null, targetChangePct: null };
     channels = [...tpl.channels];
     understood.push(`Measure: ${kpi.label} (${kpi.metricKey})${existing ? ', using your existing data series' : ''}`);
     if (!existing) check.push('kpi');
+    if (!existing && tpl.pending) assumptions.push(`No ${kpi.label} data yet: ${tpl.pending}`);
   } else {
     const first = ctx.series[0];
     kpi = { metricKey: first?.key ?? 'kpi.signups', label: first?.name ?? 'Sign-ups', unit: first?.unit ?? 'count', direction: 'increase', target: null, targetChangePct: null };
