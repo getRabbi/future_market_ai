@@ -160,6 +160,15 @@ Envelope: `{ id, tenantId, eventType, version, aggregateType, aggregateId, actor
 | `action.execution.failed` | 1 |
 | `action.execution.escalated` | 1 |
 
+## autopilot
+
+| Event type | Version |
+| --- | --- |
+| `autopilot.goal.created` | 1 |
+| `autopilot.goal.status_changed` | 1 |
+| `autopilot.cycle.started` | 1 |
+| `autopilot.cycle.finished` | 1 |
+
 ## governance
 
 | Event type | Version |

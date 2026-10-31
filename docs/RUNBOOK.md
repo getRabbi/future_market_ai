@@ -105,3 +105,13 @@ Alerts go to one webhook (`ALERT_WEBHOOK_URL`; DEPLOYMENT §9). Component proble
 * **Version unverified:** no sunset date is known yet (Meta Graph until Meta publishes one; a Google Ads version missing from `GOOGLE_ADS_SUNSET_MONTHS`). A platform admin records the published date with `PUT /v1/platform/api-lifecycle` (DEPLOYMENT §9); a recorded date takes precedence over the built-in rule.
 * **Deprecation signal observed:** a live response carried `Deprecation`/`Sunset` headers, a provider deprecation warning, or the provider served a newer version than requested. Treat it as an early sunset warning for that endpoint.
 * **Model end of life:** approve the replacement model (`POST /v1/platform/models/approve`) before the date.
+
+## 14. Autopilot (D-033)
+
+* **Stop everything now:** engage a kill switch with scope `agent` and target `autopilot` (or a tenant kill switch, or the system halt). Every goal stops before its next step; M23 still refuses actions under its own kill switches.
+* **One goal:** Autopilot → Growth goals → Pause (resume continues where it stopped) or Cancel goal (ends the running cycle). "Run now" brings the next cycle forward but daily caps still apply.
+* **Platform:** `FG_AUTOPILOT=off` on api and worker (DEPLOYMENT §10).
+* **A goal does not move:** AI activity shows each step's state. *Waiting* steps name what they wait for (analytics job, an approval, verification); *blocked* steps name what they need (data, evidence, claims, connection, model, budget, configuration). A step interrupted by a worker restart is retried after its 10-minute lease (up to 3 attempts).
+* **Limits:** per goal, at most 4 cycles and 12 model calls per 24 h (configurable at creation), 3 open actions, AI steps 90 s apart; tenant AI spend limits (§13) apply on top.
+* **Forecast blocked "insufficient history":** the engine needs 26 + horizon daily values; the Autopilot asks for the longest horizon the data supports (minimum 33 values for a 7-day forecast).
+

@@ -36,6 +36,8 @@ export interface CoreConfig {
   environment: 'development' | 'test' | 'staging' | 'production';
   /** Monthly model spend limit (USD) for tenants without their own aiSpend policy; null = none. */
   aiSpendDefaultMonthlyUsd: number | null;
+  /** Platform switch for the Autopilot (FG_AUTOPILOT=off → false). Tenants opt in separately. */
+  autopilotAvailable?: boolean;
 }
 
 export interface Clock {

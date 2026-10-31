@@ -1,14 +1,14 @@
 import { AbstainError, PROMPTS, untrustedBlock } from '@futuregrow/agent-kernel';
-import { type ActionRisk, type GrowthDecision, GrowthDecisionSchema, getActionType, listActionTypes } from '@futuregrow/contracts';
+import { type ActionRisk, type GrowthDecision, GrowthDecisionSchema, getActionType, listActionTypes, type RiskCategory } from '@futuregrow/contracts';
 import { connections, type DbOrTx, evidenceRecords, experimentResults, experiments, forecastPoints, forecastRuns, growthDecisions, growthIdeas, metricSeries, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
 import { evaluatePolicy } from '@futuregrow/policies';
 import { and, desc, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { runAgent } from '../../agents.js';
-import { type Actor, actorRef, type CoreDeps } from '../../deps.js';
-import { record, requireRole } from '../../util.js';
-import { gatherPolicyFacts } from '../m23-execution/facts.js';
+import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
+import { audit, record, requireRole } from '../../util.js';
+import { AUTOPILOT_DECIDER, gatherPolicyFacts } from '../m23-execution/facts.js';
 import { proposeAction } from '../m23-execution/gateway.js';
 import { getTenantPolicy } from '../m24-governance/index.js';
 
@@ -75,6 +75,8 @@ export interface ProposeDecisionInput {
   market: string;
   horizon: { value: number; unit: 'day' | 'week' | 'month' };
   seriesId?: string;
+  /** Set by the Autopilot: the goal asking, its constraints and the action categories it authorized. */
+  goal?: { id: string; constraints: string; allowedCategories: readonly RiskCategory[] };
 }
 
 /**
@@ -122,7 +124,8 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
             .where(eq(evidenceRecords.sourceUriOrObjectId, `analytics://forecast/${run.id}`))
         : [];
       const conns = await tx.select({ id: connections.id, provider: connections.provider, displayName: connections.displayName, externalAccountId: connections.externalAccountId, status: connections.status }).from(connections);
-      return { idea, series: series ?? null, run: run ?? null, points, result: results[0] ?? null, fcEvidence: fcEvidence.map((e) => e.id), conns };
+      const startable = exps.filter((e) => e.status === 'draft' || e.status === 'approved');
+      return { idea, series: series ?? null, run: run ?? null, points, result: results[0] ?? null, fcEvidence: fcEvidence.map((e) => e.id), conns, startable };
     });
     if (!obs.series || !obs.run || obs.points.length === 0) throw new AbstainError('INSUFFICIENT_EVIDENCE', `no usable forecast for target metric "${obs.idea.targetMetric}"`);
     const periods = Math.max(1, Math.min(obs.points.length, Math.round((input.horizon.value * DAYS[input.horizon.unit]) / STEP_DAYS[obs.series.granularity as keyof typeof STEP_DAYS])));
@@ -132,8 +135,9 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
     ctx.note('observe', { seriesId: obs.series.id, forecastRunId: obs.run.id, periods, baselineMean: baseline.mean, experimentResultId: obs.result?.id ?? null });
 
     /* ---------- Strategist ---------- */
+    const allowed = input.goal ? new Set<RiskCategory>(input.goal.allowedCategories) : null;
     const allow = listActionTypes()
-      .filter((a) => a.supported)
+      .filter((a) => a.supported && (!allowed || allowed.has(a.category)))
       .map((a) => `${a.type} (${a.category}${a.provider === 'internal' ? ', internal' : `, ${a.provider}`}): ${a.description}`);
     const strat = await ctx.think('strategist', PROMPTS.brainStrategist, {
       purpose: 'planning',
@@ -148,6 +152,8 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
             obs.result ? `Latest experiment result: recommendation ${obs.result.recommendation}; P(best) ${JSON.stringify(obs.result.probBest)}.` : 'No experiment has been run for this idea.',
             `Allowed action types (or "none"):\n${allow.join('\n')}`,
             `Connections:\n${obs.conns.map((c) => `- ${c.id} ${c.provider} "${c.displayName}" account ${c.externalAccountId} (${c.status})`).join('\n') || 'none'}`,
+            obs.startable.length ? `Experiments for this idea that can be started (experiment.start takes experimentId):\n${obs.startable.map((e) => `- ${e.id} "${e.name}" (${e.riskTier} risk, ${e.status})`).join('\n')}` : 'No experiment for this idea is ready to start.',
+            input.goal ? untrustedBlock('goal', input.goal.constraints) : '',
             'Return paramsJson as a JSON object string for the chosen action type, or "{}" when actionType is "none". Use connectionId "" when not applicable.',
           ].join('\n\n'),
         },
@@ -185,6 +191,7 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
         notes.push('strategist params were not valid JSON');
       }
       if (!def || !def.supported) notes.push(`action type ${s.actionType} is not on the supported allowlist`);
+      else if (allowed && !allowed.has(def.category)) notes.push(`${def.type} is outside the channels the goal authorizes`);
       else if (params !== null) {
         const parsed = def.paramsSchema.safeParse(params);
         const connectionOk = def.provider === 'internal' || obs.conns.some((c) => c.id === s.connectionId && c.provider === def.provider);
@@ -237,7 +244,9 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
             const components = { expectedValue: ev, costTerm: policy.lambdas!.cost * expectedCost.amount, riskTerm: policy.lambdas!.risk * riskScore * Math.abs(ev), uncertaintyTerm: policy.lambdas!.uncertainty * width };
             return { status: 'SCORED' as const, value: ev - components.costTerm - components.riskTerm - components.uncertaintyTerm, components };
           })();
-    if (utility.status !== 'SCORED') approval = { ...approval, required: true };
+    // D-012: unscored value needs a person. D-033: starting an experiment is how an unscored idea
+    // gets measured, so for EXPERIMENT the tenant policy (and the high-risk rule) decides alone.
+    if (utility.status !== 'SCORED' && def?.category !== 'EXPERIMENT') approval = { ...approval, required: true };
 
     const decisionId = crypto.randomUUID();
     const decision: GrowthDecision = GrowthDecisionSchema.parse({
@@ -300,6 +309,7 @@ export async function proposeDecision(deps: CoreDeps, tenantId: string, actor: A
         narrative: s.rationale,
         ideaId: obs.idea.id,
         agentRunId: ctx.runId,
+        goalId: input.goal?.id ?? null,
       });
       await record(
         tx,
@@ -348,6 +358,63 @@ export async function acceptDecision(deps: CoreDeps, tenantId: string, actor: Ac
       .set({ status: 'ACCEPTED', actionId: view.id, decidedBy: actorRef(actor), decidedAt: new Date() })
       .where(eq(growthDecisions.id, decisionId)),
   );
+  return view;
+}
+
+type ProposedAction = NonNullable<GrowthDecision['proposedAction']>;
+
+/**
+ * Autopilot acceptance (D-033): the goal's standing authorization replaces the separate human
+ * "accept" click. The decision is first marked accepted by `system:autopilot`, so M23 applies the
+ * decision's own approval requirement (policy rule R-DECISION) at proposal and again at
+ * preflight; M23 alone decides whether the action runs pre-authorized, waits for approval or is
+ * denied. Idempotent: a retry after a crash returns the same action.
+ */
+export async function autoAcceptDecision(deps: CoreDeps, tenantId: string, decisionId: string, opts: { goalId: string; prepare?: (pa: ProposedAction) => Promise<ProposedAction> }) {
+  const tctx = { tenantId, actor: AUTOPILOT_DECIDER };
+  const d = await withTenant(deps.db, tctx, async (tx) => {
+    const [row] = await tx.select().from(growthDecisions).where(eq(growthDecisions.id, decisionId)).for('update');
+    if (!row) throw notFound('decision');
+    if (row.goalId !== opts.goalId) throw conflict('decision belongs to another goal');
+    const mine = row.status === 'ACCEPTED' && row.decidedBy === AUTOPILOT_DECIDER;
+    if (row.status !== 'PROPOSED' && !mine) throw conflict(`decision is ${row.status}`);
+    if (!row.proposedAction) throw invalid('decision has no proposed action');
+    if (row.status === 'PROPOSED') await tx.update(growthDecisions).set({ status: 'ACCEPTED', decidedBy: AUTOPILOT_DECIDER, decidedAt: deps.clock.now() }).where(eq(growthDecisions.id, decisionId));
+    return row;
+  });
+  const revert = () =>
+    withTenant(deps.db, tctx, (tx) =>
+      tx
+        .update(growthDecisions)
+        .set({ status: 'PROPOSED', decidedBy: null, decidedAt: null })
+        .where(and(eq(growthDecisions.id, decisionId), eq(growthDecisions.decidedBy, AUTOPILOT_DECIDER))),
+    );
+  let view: Awaited<ReturnType<typeof proposeAction>>;
+  try {
+    let pa = d.proposedAction as ProposedAction;
+    if (opts.prepare) {
+      const prepared = await opts.prepare(pa);
+      if (JSON.stringify(prepared) !== JSON.stringify(pa)) {
+        pa = prepared;
+        await withTenant(deps.db, tctx, (tx) => tx.update(growthDecisions).set({ proposedAction: pa }).where(eq(growthDecisions.id, decisionId)));
+      }
+    }
+    const mv = d.modelVersions as Record<string, string>;
+    view = await proposeAction(
+      deps,
+      tenantId,
+      { type: 'agent', id: BRAIN_AGENT, roles: [], mfaVerified: false, modelId: mv.strategist?.split('@')[0] ?? null, promptVersion: PROMPTS.brainStrategist.version },
+      { actionType: pa.actionType, connectionId: pa.connectionId, target: pa.target, params: pa.params, decisionId, evidenceIds: d.evidenceIds, risk: riskFromParams(pa.actionType, pa.params, d.market), idempotencyKey: `decision:${decisionId}` },
+    );
+  } catch (err) {
+    // Nothing was proposed: the decision goes back to waiting for a person.
+    await revert();
+    throw err;
+  }
+  await withTenant(deps.db, tctx, async (tx) => {
+    await tx.update(growthDecisions).set({ actionId: view.id }).where(eq(growthDecisions.id, decisionId));
+    await audit(tx, tenantId, systemActor('autopilot'), 'brain.decision.auto_accepted', { type: 'growth_decision', id: decisionId }, { goalId: opts.goalId, actionId: view.id, status: view.status });
+  });
   return view;
 }
 

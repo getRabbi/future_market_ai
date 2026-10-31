@@ -1,4 +1,4 @@
-import { brain, competitorsModule, customers, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
+import { autopilot, brain, competitorsModule, customers, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
 import { competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
 import { loadEnv, triggerNorthflankJob } from '@futuregrow/runtime';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
@@ -36,6 +36,22 @@ registerTasks((deps) => ({
         await knowledge.sweepClaims(tx, tenantId, systemActor('claims-sweep'), new Date());
       }),
     );
+  },
+
+  /** Autopilot (D-033): queue goals with due work; runs without any browser session. */
+  autopilot_tick: async () => {
+    const r = await autopilot.autopilotTick(deps);
+    if (r.queued) deps.logger.info({ queued: r.queued }, 'autopilot goals queued');
+  },
+
+  /** Run a goal's next checkpointed steps; continues itself while work is due within minutes. */
+  autopilot_advance: async (payload, helpers) => {
+    const { tenantId, goalId } = payload as { tenantId: string; goalId: string };
+    const r = await autopilot.advanceGoal(deps, tenantId, goalId);
+    helpers.logger.info(`autopilot ${goalId}: ${JSON.stringify({ ran: r.ran, idle: r.idle })}`);
+    if (r.nextAt && r.nextAt.getTime() <= Date.now() + 5 * 60_000) {
+      await helpers.addJob('autopilot_advance', { tenantId, goalId }, { jobKey: `autopilot:${goalId}`, runAt: r.nextAt, maxAttempts: 3 });
+    }
   },
 
   /** Proposals only: decisions still need human acceptance and the M23 gateway to act. */
@@ -76,4 +92,4 @@ registerEventHandlers((bus, deps) => {
   });
 });
 
-export const MODULE_CRONTAB = ['13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];
+export const MODULE_CRONTAB = ['* * * * * autopilot_tick', '13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];

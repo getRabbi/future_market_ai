@@ -2,7 +2,7 @@
 
 # Policy matrix
 
-Every consequential write is an ActionRequest evaluated by the deterministic policy engine (`fg-policy-1.1.0`) at proposal and again at preflight. Outcomes: ALLOW (pre-authorized), REQUIRE_APPROVAL (one approval per required group, distinct people, never the proposer, MFA, bound to the action hash), or DENY. No action is successful until VERIFIED by independent read-back.
+Every consequential write is an ActionRequest evaluated by the deterministic policy engine (`fg-policy-1.2.0`) at proposal and again at preflight. Outcomes: ALLOW (pre-authorized), REQUIRE_APPROVAL (one approval per required group, distinct people, never the proposer, MFA, bound to the action hash), or DENY. No action is successful until VERIFIED by independent read-back.
 
 ## Action allowlist
 

@@ -13,6 +13,8 @@ export const tenantSettings = pgTable('tenant_settings', {
   policyVersion: integer('policy_version').notNull().default(1),
   senderIdentity: json<Record<string, unknown> | null>('sender_identity'),
   remotionLicense: json<Record<string, unknown> | null>('remotion_license'),
+  /** Per-tenant rollout switch for the Autopilot (D-033); off until an owner or admin enables it. */
+  autopilotEnabled: boolean('autopilot_enabled').notNull().default(false),
   updatedBy: text('updated_by'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),

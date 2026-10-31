@@ -1,8 +1,8 @@
 import { configuredApiVersion } from '@futuregrow/connectors';
 import type { ActionRisk, ActionTypeDefinition, PlatformCapability, TenantPolicy } from '@futuregrow/contracts';
-import { actionRequests, assets, budgetReservations, claims, connections, consentState, customerProfiles, evidenceRecords, experiments, messages, platformCapabilities, suppressions, syntheticPersonas, type Tx, tenantSettings } from '@futuregrow/db';
+import { actionRequests, assets, budgetReservations, claims, connections, consentState, customerProfiles, evidenceRecords, experiments, growthDecisions, messages, platformCapabilities, suppressions, syntheticPersonas, type Tx, tenantSettings } from '@futuregrow/db';
 import { identifierHash } from '@futuregrow/observability';
-import type { DisclosureFact, MessagingFact, PolicyFacts } from '@futuregrow/policies';
+import type { DecisionFact, DisclosureFact, MessagingFact, PolicyFacts } from '@futuregrow/policies';
 import { and, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { effectiveSunset } from '../../api-lifecycle.js';
 import type { CoreDeps } from '../../deps.js';
@@ -33,6 +33,8 @@ export interface FactInput {
   evidenceIds: string[];
   risk: ActionRisk;
   proposer: { type: string; id: string; modelId: string | null };
+  /** Growth decision the action implements, if any (D-033). */
+  decisionId?: string | null;
 }
 
 function toCapability(row: typeof platformCapabilities.$inferSelect): PlatformCapability {
@@ -190,7 +192,18 @@ export async function gatherPolicyFacts(tx: Tx, deps: CoreDeps, input: FactInput
     missingAssetIds: assetIds.filter((id) => !assetRows.some((a) => a.id === id)),
     disclosure,
     experiment: def?.type === 'experiment.start' ? await experimentFact(tx, input.params.experimentId as string) : null,
+    decision: input.decisionId ? await decisionFact(tx, input.decisionId) : null,
   };
+}
+
+/** Recorded as `decided_by` when the Autopilot accepts a decision without a person (D-033). */
+export const AUTOPILOT_DECIDER = 'system:autopilot';
+
+/** Only decisions the Autopilot accepted on its own carry their approval requirement into M23. */
+async function decisionFact(tx: Tx, id: string): Promise<DecisionFact | null> {
+  const [d] = await tx.select({ id: growthDecisions.id, decidedBy: growthDecisions.decidedBy, approvalRequirement: growthDecisions.approvalRequirement }).from(growthDecisions).where(eq(growthDecisions.id, id));
+  if (!d || d.decidedBy !== AUTOPILOT_DECIDER) return null;
+  return { id: d.id, approvalRequired: (d.approvalRequirement as { required?: boolean }).required !== false };
 }
 
 async function experimentFact(tx: Tx, id: string | undefined) {

@@ -318,11 +318,13 @@ export const growthDecisions = pgTable(
     ideaId: uuid('idea_id'),
     agentRunId: uuid('agent_run_id'),
     actionId: uuid('action_id'),
+    /** Autopilot goal that requested the decision (D-033). */
+    goalId: uuid('goal_id'),
     decidedBy: text('decided_by'),
     decidedAt: ts('decided_at'),
     createdAt: createdAt(),
   },
-  (t) => [index('growth_decisions_tenant_idx').on(t.tenantId, t.status, t.createdAt), oneOf('growth_decisions_status_chk', t.status, ['PROPOSED', 'ACCEPTED', 'REJECTED', 'SUPERSEDED']), rawCheck('growth_decisions_evidence_chk', sql`cardinality(${t.evidenceIds}) > 0`)],
+  (t) => [index('growth_decisions_tenant_idx').on(t.tenantId, t.status, t.createdAt), index('growth_decisions_goal_idx').on(t.goalId), oneOf('growth_decisions_status_chk', t.status, ['PROPOSED', 'ACCEPTED', 'REJECTED', 'SUPERSEDED']), rawCheck('growth_decisions_evidence_chk', sql`cardinality(${t.evidenceIds}) > 0`)],
 );
 
 /* ------------------------------------------------------------------ */

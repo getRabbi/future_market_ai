@@ -76,20 +76,7 @@ export async function schedulePost(tx: Tx, deps: CoreDeps, tenantId: string, act
     if (rows.length !== p.assetIds.length || bad.length) throw invalid(`assets not publish-eligible: ${bad.map((b) => b.id).join(', ') || 'missing'}`);
   }
   const at = new Date(p.scheduledAt);
-  // Spam key: case, punctuation and spacing do not make a caption new.
-  const spamKey = (c: string) =>
-    sha256Hex(
-      normalizeText(c)
-        .replace(/[^\p{L}\p{N}]+/gu, ' ')
-        .trim(),
-    );
-  const hash = spamKey(caption);
-  const recent = await tx
-    .select({ id: socialPosts.id, caption: socialPosts.caption, scheduledAt: socialPosts.scheduledAt })
-    .from(socialPosts)
-    .where(and(eq(socialPosts.connectionId, p.connectionId), inArray(socialPosts.status, ['scheduled', 'submitted', 'published_verified']), gte(socialPosts.scheduledAt, new Date(at.getTime() - 7 * 86_400_000))));
-  if (recent.some((r) => spamKey(r.caption) === hash)) throw conflict('the same caption was already scheduled to this account in the last 7 days');
-  if (recent.some((r) => Math.abs(r.scheduledAt.getTime() - at.getTime()) < 15 * 60_000)) throw conflict('posts to the same account must be at least 15 minutes apart');
+  await assertNotSpam(tx, p.connectionId, caption, at);
   const [row] = await tx
     .insert(socialPosts)
     .values({
@@ -109,6 +96,86 @@ export async function schedulePost(tx: Tx, deps: CoreDeps, tenantId: string, act
     .returning();
   await record(tx, tenantId, actor, 'social.post.scheduled', { type: 'social_post', id: row!.id }, { platform: p.platform, scheduledAt: p.scheduledAt });
   return row!;
+}
+
+// Spam key: case, punctuation and spacing do not make a caption new.
+const spamKey = (c: string) =>
+  sha256Hex(
+    normalizeText(c)
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim(),
+  );
+
+async function assertNotSpam(tx: Tx, connectionId: string, caption: string, at: Date) {
+  const hash = spamKey(caption);
+  const recent = await tx
+    .select({ id: socialPosts.id, caption: socialPosts.caption, scheduledAt: socialPosts.scheduledAt })
+    .from(socialPosts)
+    .where(and(eq(socialPosts.connectionId, connectionId), inArray(socialPosts.status, ['scheduled', 'submitted', 'published_verified']), gte(socialPosts.scheduledAt, new Date(at.getTime() - 7 * 86_400_000))));
+  if (recent.some((r) => spamKey(r.caption) === hash)) throw conflict('the same caption was already scheduled to this account in the last 7 days');
+  if (recent.some((r) => Math.abs(r.scheduledAt.getTime() - at.getTime()) < 15 * 60_000)) throw conflict('posts to the same account must be at least 15 minutes apart');
+}
+
+const PUBLISH_PLATFORM: Record<string, { platform: Platform; captionKey: string }> = {
+  'social.facebook.publish_post': { platform: 'facebook', captionKey: 'message' },
+  'social.instagram.publish_media': { platform: 'instagram', captionKey: 'caption' },
+  'social.tiktok.publish_video': { platform: 'tiktok', captionKey: 'title' },
+  'social.youtube.upload_video': { platform: 'youtube', captionKey: 'description' },
+};
+
+/**
+ * Autopilot publishing (D-033): a Growth Brain publish decision gets a real M16 post record before
+ * it reaches M23, with the same copy lint and anti-spam guards as a scheduled post. The post is
+ * created as 'submitted' (the scheduler never dispatches it); M23 policy, approval and
+ * verification decide the rest. Returns the params with the new post id, or the params unchanged
+ * for other action types or when the post already exists (retries).
+ */
+export async function postForPublishAction(tx: Tx, deps: CoreDeps, tenantId: string, input: { actionType: string; connectionId: string | null; params: Record<string, unknown> }): Promise<Record<string, unknown>> {
+  const spec = PUBLISH_PLATFORM[input.actionType];
+  if (!spec) return input.params;
+  const existingId = input.params.postId as string | undefined;
+  if (existingId) {
+    const [existing] = await tx.select({ id: socialPosts.id }).from(socialPosts).where(eq(socialPosts.id, existingId));
+    if (existing) return input.params;
+  }
+  if (!input.connectionId) throw invalid('publishing needs a connection');
+  const [conn] = await tx.select().from(connections).where(eq(connections.id, input.connectionId));
+  if (!conn || conn.provider !== PLATFORM_PROVIDER[spec.platform]) throw invalid(`no ${PLATFORM_PROVIDER[spec.platform]} connection for ${spec.platform}`);
+  const caption = String(input.params[spec.captionKey] ?? '').trim();
+  if (!caption) throw invalid('the post has no text');
+  const claimIds = Array.isArray(input.params.claimIds) ? (input.params.claimIds as string[]) : [];
+  const assetIds = Array.isArray(input.params.assetIds) ? (input.params.assetIds as string[]) : [];
+  const lint = await lintCopy(tx, caption, { claimIds, channel: spec.platform, now: deps.clock.now() });
+  if (!lint.passed)
+    throw invalid(
+      `caption failed lint: ${lint.violations
+        .filter((v) => v.severity === 'block')
+        .map((v) => v.code)
+        .join(', ')}`,
+    );
+  const now = deps.clock.now();
+  await assertNotSpam(tx, input.connectionId, caption, now);
+  const disclosure = (input.params.disclosure as Record<string, unknown> | undefined) ?? { isAiGenerated: false, paidPartnership: false, syntheticPersonaId: null, disclosureText: null };
+  const actor = systemActor('autopilot');
+  const [row] = await tx
+    .insert(socialPosts)
+    .values({
+      tenantId,
+      connectionId: input.connectionId,
+      platform: spec.platform,
+      personaId: (disclosure.syntheticPersonaId as string | null) ?? null,
+      assetIds,
+      caption,
+      link: typeof input.params.link === 'string' ? input.params.link : null,
+      claimIds,
+      disclosure: { ...disclosure, options: {}, geographies: [] },
+      scheduledAt: now,
+      status: 'submitted',
+      createdBy: actorRef(actor),
+    })
+    .returning();
+  await record(tx, tenantId, actor, 'social.post.scheduled', { type: 'social_post', id: row!.id }, { platform: spec.platform, scheduledAt: now.toISOString(), via: 'autopilot' });
+  return { ...input.params, postId: row!.id };
 }
 
 function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connections.$inferSelect, assetKinds: Record<string, string>) {

@@ -2227,3 +2227,190 @@ button.pager-link.next {
     grid-column: 2;
   }
 }
+
+/* ---------- Autopilot (D-033): the business-owner home ---------- */
+.ap-shell {
+  min-height: 100vh;
+}
+.ap-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 2rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.ap-top .brand {
+  margin: 0;
+  padding: 0;
+}
+.ap-top-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+.ap-tabs {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  padding: 0.5rem 2rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+.ap-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+}
+.ap-tab.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ap-tab-n {
+  display: inline-grid;
+  place-items: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: var(--surface-3);
+}
+.ap-count {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 0 0.45rem;
+}
+.ap-main {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 1.5rem 2rem 3rem;
+}
+.ap-checks,
+.ap-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ap-check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--border);
+}
+.ap-check:first-child {
+  border-top: 0;
+}
+.ap-check-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  font-weight: 800;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.ap-check.ok .ap-check-mark {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.ap-check.partial .ap-check-mark {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.small-btn {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+}
+.ap-draft {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--border);
+}
+.ap-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  margin: 0.25rem 0 0.75rem;
+}
+.ap-progress {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+  margin: 0.5rem 0 0.75rem;
+}
+.ap-now {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.ap-task {
+  border-left: 3px solid var(--border);
+  padding: 0.55rem 0 0.55rem 0.75rem;
+  margin: 0.5rem 0;
+}
+.ap-task > * + * {
+  margin-top: 0.25rem;
+}
+.ap-task.running,
+.ap-task.waiting {
+  border-left-color: var(--info);
+}
+.ap-task.completed {
+  border-left-color: var(--ok);
+}
+.ap-task.blocked,
+.ap-task.failed {
+  border-left-color: var(--warn);
+}
+.ap-task-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.ap-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+}
+.ap-back {
+  display: block;
+  margin: 0 0.75rem 0.75rem;
+  text-align: center;
+}
+@media (max-width: 700px) {
+  .ap-top,
+  .ap-tabs {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .ap-main {
+    padding: 1rem 1rem 2.5rem;
+  }
+  .ap-check {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .ap-check > .btn {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

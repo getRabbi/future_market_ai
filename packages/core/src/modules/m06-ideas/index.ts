@@ -331,7 +331,15 @@ const GeneratedSchema = z.object({
     .max(8),
 });
 
-export async function generateIdeas(deps: CoreDeps, tenantId: string, actor: Actor, opts: { maxIdeas?: number } = {}) {
+/** Autopilot focus: every generated idea targets the goal's KPI (D-033). */
+export interface IdeaFocus {
+  objective: string;
+  targetMetric: string;
+  channels: readonly string[];
+  constraints: string;
+}
+
+export async function generateIdeas(deps: CoreDeps, tenantId: string, actor: Actor, opts: { maxIdeas?: number; focus?: IdeaFocus } = {}) {
   return runAgent(deps, tenantId, { kind: 'idea_generation', agentId: 'idea-lab', triggeredBy: actorRef(actor), input: opts }, async (ctx) => {
     const material = await withTenant(deps.db, { tenantId, actor: 'agent:idea-lab' }, async (tx) => {
       const now = deps.clock.now();
@@ -361,7 +369,7 @@ export async function generateIdeas(deps: CoreDeps, tenantId: string, actor: Act
       messages: [
         {
           role: 'user',
-          content: `Generate up to ${opts.maxIdeas ?? 5} growth hypotheses.\n\nEvidence summaries:\n${untrustedBlock('evidence', evidenceText)}\n\nTrends:\n${untrustedBlock('trends', trendText || 'none')}\n\nCustomer language:\n${untrustedBlock('topics', topicText || 'none')}\n\nCompetitor observations:\n${untrustedBlock('competitors', obsText || 'none')}\n\nPotential gaps:\n${untrustedBlock('gaps', gapText || 'none')}`,
+          content: `Generate up to ${opts.maxIdeas ?? 5} growth hypotheses.${opts.focus ? `\n\nThe business goal below is the objective. Every idea must target the metric "${opts.focus.targetMetric}" and use only these channels: ${opts.focus.channels.join(', ')}.\n${untrustedBlock('goal', `${opts.focus.objective}\n${opts.focus.constraints}`)}` : ''}\n\nEvidence summaries:\n${untrustedBlock('evidence', evidenceText)}\n\nTrends:\n${untrustedBlock('trends', trendText || 'none')}\n\nCustomer language:\n${untrustedBlock('topics', topicText || 'none')}\n\nCompetitor observations:\n${untrustedBlock('competitors', obsText || 'none')}\n\nPotential gaps:\n${untrustedBlock('gaps', gapText || 'none')}`,
         },
       ],
     });
@@ -376,7 +384,15 @@ export async function generateIdeas(deps: CoreDeps, tenantId: string, actor: Act
           continue;
         }
         try {
-          const row = await createIdea(tx, deps, tenantId, systemActor('idea-lab'), { ...idea, evidenceIds: cited, test: { type: idea.cheapFirstTest }, killCriteria: idea.killCriteria.length ? idea.killCriteria : ['no measurable improvement in the target metric'] }, 'agent', ctx.runId);
+          const row = await createIdea(
+            tx,
+            deps,
+            tenantId,
+            systemActor('idea-lab'),
+            { ...idea, ...(opts.focus ? { targetMetric: opts.focus.targetMetric } : {}), evidenceIds: cited, test: { type: idea.cheapFirstTest }, killCriteria: idea.killCriteria.length ? idea.killCriteria : ['no measurable improvement in the target metric'] },
+            'agent',
+            ctx.runId,
+          );
           created.push(row.id);
         } catch (err) {
           rejected.push({ title: idea.title, reason: err instanceof Error ? err.message : String(err) });

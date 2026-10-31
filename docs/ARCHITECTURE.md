@@ -40,10 +40,10 @@ The Sandbox is for development and a controlled beta only; a public production l
 |---|---|
 | `packages/contracts` | Zod schemas and enums shared everywhere: action allowlist, state machine, evidence, events, 24-module registry, canonical JSON. |
 | `packages/db` | Drizzle schema, SQL migrations (`drizzle/`), RLS/role application, hash-chained audit, tenancy helpers (`withTenant`, `withSystem`, `sequential`). |
-| `packages/policies` | Deterministic policy engine `fg-policy-1.1.0` and approval-group matching. |
+| `packages/policies` | Deterministic policy engine `fg-policy-1.2.0` and approval-group matching. |
 | `packages/connectors` | Official-API executors (execute / verify / rollback), read connectors, SSRF-guarded public fetch, robots.txt, webhook signature verifiers, capability seeds. |
 | `packages/agent-kernel` | Model gateway (registry-gated, circuit breaker, schema re-validation, secret scan, served-by check), Anthropic and OpenAI-compatible adapters, versioned prompts, safety utilities. |
-| `packages/core` | All 24 modules: `m01-evidence` … `m24-governance`, connections, webhooks, agents. |
+| `packages/core` | All 24 modules: `m01-evidence` … `m24-governance`, connections, webhooks, agents; `modules/autopilot` is the M23 goal orchestrator (D-033). |
 | `packages/runtime` | Environment schema, runtime construction (DB, storage, queue, model gateway), Northflank job triggers. |
 | `packages/storage`, `events`, `experiments`, `observability` | R2/filesystem object store; outbox events and bus; deterministic bucketing and SRM; hashing, logging with redaction, typed errors. |
 | `apps/api` | Fastify app: auth, `/v1` routes, public channel endpoints, webhooks, OpenAPI 3.1. |
@@ -96,6 +96,36 @@ stateDiagram-v2
 * **Verification** — a separate step re-reads provider state (read-after-write, status poll, readback) and writes an `ExecutionProof`. Database triggers forbid `VERIFIED` without a postcondition proof with verdict VERIFIED and `ROLLED_BACK` without a verified rollback proof. There is no SUCCESS state.
 * **Hooks** — modules react inside the terminal transaction (e.g. a social post becomes `published_verified`, a budget change enters the authorized-spend history, an email becomes `delivered`).
 
+## 4a. Autopilot: goal orchestration (M23, D-033)
+
+A business goal ("grow organic downloads in 30 days with a $0 ad budget") is stored in `growth_goals` and pursued in cycles without a browser:
+
+```mermaid
+flowchart LR
+  TICK["autopilot_tick (cron, every minute)"] --> ADV["autopilot_advance (one job per goal)"]
+  ADV --> OBS["observe
+M01 M08 M19 M23"] --> FC["forecast
+M08 (analytics job)"] --> RS["research
+M04 M05 M18"] --> ID["ideas
+M06 (AI)"] --> DE["decide
+M07 (AI)"] --> CO["content
+M13 (AI)"] --> SU["submit
+M23 policy"] --> TR["track
+approval, execution, verification"] --> ME["measure
+M08"] --> LE["learn
+M06 M10"] --> NEXT["next cycle
+(cadence, or sooner on events)"]
+  SU -->|pre-authorized| EXEC["execute_action + verify_action"]
+  SU -->|REQUIRE_APPROVAL| HUMAN["Pending approvals (hash-bound, MFA)"]
+  EVENTS["action / analytics / evidence / market events"] --> ADV
+```
+
+* Each step is a `goal_tasks` row (status, attempts, lease, wait deadline, refs to the analytics request, decision or action it created). A crashed worker's step is retried when its lease expires; module calls are idempotent (`decision:<id>` for M23, reuse of the cycle's decision and the day's forecast).
+* Only relevant modules run: the plan records why each step is included and which modules are left out (for a $0 goal: M09/M17 paid media).
+* The Autopilot never bypasses M23: pre-authorized actions run, others wait for approval, denials become blockers with the reason. R-DECISION keeps the Brain's approval requirement binding for decisions nobody accepted by hand.
+* Limits per goal: cycles per day, model calls per day, open actions, advertising budget; AI steps 90 s apart; event-triggered replans at most hourly. Pause, goal cancel, tenant/agent kill switches and the system halt stop every step.
+* The web home (`/app/`) shows Business setup, Growth goals, AI activity, Pending approvals and Results from these rows when the Autopilot is enabled for the organization; all 24 module screens remain in the Advanced workspace (`/app/advanced`).
+
 ## 5. Evidence (M01)
 
 Every fact that can drive a decision is an evidence record with source, licence/usage rights, PII class, lawful basis, permitted/prohibited uses, confidence, observed time and freshness SLA. Records missing rights or lawful basis are quarantined until a reviewer resolves them. Automation needs current evidence permitted for `autonomous_execution`; system producers (journeys, syncs, audits, reports) declare SLAs explicitly.
@@ -128,6 +158,7 @@ Identity resolution uses keyed hashes (pepper) and explainable merge rules. Cons
 | `41 2 * * *` | claims expiry sweep |
 | `53 3 * * *` | data retention (tenant policies only) |
 | `27 6 * * *` | Growth Brain cycle (proposals only) |
+| `* * * * *` | Autopilot tick: queue goals with due steps (D-033) |
 | `* * * * *` | social scheduler; journey enrolment and steps |
 | `37 */6 * * *` | ads campaign + spend sync |
 | `15 7 * * *` | spend reconciliation (last 7 settled days) |

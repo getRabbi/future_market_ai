@@ -159,6 +159,7 @@ async function evaluate(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, 
       evidenceIds: a.evidenceIds,
       risk: a.risk as ActionRisk,
       proposer: { type: a.proposedByType, id: a.proposedById, modelId: a.proposerModelId },
+      decisionId: a.decisionId,
     },
     policy,
   );
@@ -363,6 +364,7 @@ export async function executeAction(deps: CoreDeps, tenantId: string, actionId: 
         evidenceIds: a.evidenceIds,
         risk: a.risk as ActionRisk,
         proposer: { type: a.proposedByType, id: a.proposedById, modelId: a.proposerModelId },
+        decisionId: a.decisionId,
       },
       policy,
     );

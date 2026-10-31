@@ -1,6 +1,6 @@
 import type { ActionRisk, ActionTypeDefinition, ApprovalGroup, CategoryPolicy, DataPurpose, PlatformCapability, PolicyDecision, PolicyOutcome, Proposer, RiskCategory, TenantPolicy, TenantRole } from '@futuregrow/contracts';
 
-export const POLICY_VERSION = 'fg-policy-1.1.0';
+export const POLICY_VERSION = 'fg-policy-1.2.0';
 
 /* ------------------------------------------------------------------ */
 /* Inputs: facts are gathered by the caller from the database; the      */
@@ -84,6 +84,17 @@ export interface PolicyFacts {
   disclosure: DisclosureFact | null;
   /** Present for experiment.start. */
   experiment?: { riskTier: 'low' | 'medium' | 'high'; status: string } | null;
+  /**
+   * Present when the action implements a Growth Brain decision that the Autopilot submitted
+   * without a human accepting it first (D-033). The decision's own approval requirement then
+   * binds the action.
+   */
+  decision?: DecisionFact | null;
+}
+
+export interface DecisionFact {
+  id: string;
+  approvalRequired: boolean;
 }
 
 export interface PolicyInput {
@@ -328,6 +339,18 @@ function ruleExperiment(i: PolicyInput): Finding[] {
   return [];
 }
 
+/**
+ * D-033: an Autopilot-submitted decision that the Growth Brain marked as needing approval (for
+ * example because its utility could not be scored) needs that approval in M23 as well, even
+ * when the tenant policy would pre-authorize the action type.
+ */
+function ruleDecision(i: PolicyInput): Finding[] {
+  const d = i.facts.decision;
+  if (!d || !d.approvalRequired) return [];
+  // No group of its own: the category's approvers decide, so one approval covers both reasons.
+  return [approve('R-DECISION', 'DECISION_REQUIRES_APPROVAL', `growth decision ${d.id} requires human approval (submitted by the Autopilot)`)];
+}
+
 function positiveSpend(risk: ActionRisk): number {
   return Math.max(0, risk.spendDeltaMicros);
 }
@@ -397,6 +420,7 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
     ...ruleMessaging(input),
     ...rulePlatformSpecific(input),
     ...ruleExperiment(input),
+    ...ruleDecision(input),
   ];
   const autonomy = ruleAutonomy(input);
   findings.push(...autonomy.findings);

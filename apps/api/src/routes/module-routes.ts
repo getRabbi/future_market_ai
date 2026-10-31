@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { type ApiContext, actorOf, tenantOf, tenantTx } from '../http.js';
+import { registerAutopilotRoutes } from './autopilot-routes.js';
 import { registerChannelRoutes } from './channel-routes.js';
 import { registerIntelligenceRoutes } from './intelligence-routes.js';
 import { registerStudioRoutes } from './studio-routes.js';
@@ -77,6 +78,7 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
   );
 
   registerIntelligenceRoutes(app, ctx);
+  registerAutopilotRoutes(app, ctx);
   registerStudioRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
 }

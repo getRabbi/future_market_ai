@@ -16,6 +16,7 @@ export interface RuntimeEnv {
   VERIFICATION_MAX_ATTEMPTS?: number | string;
   VERIFICATION_BASE_DELAY_SECONDS?: number | string;
   FG_TENANT_AI_MONTHLY_LIMIT_USD?: number | string;
+  FG_AUTOPILOT?: string;
 }
 
 export function buildCoreConfig(env: RuntimeEnv): CoreConfig {
@@ -41,5 +42,6 @@ export function buildCoreConfig(env: RuntimeEnv): CoreConfig {
     },
     environment,
     aiSpendDefaultMonthlyUsd: env.FG_TENANT_AI_MONTHLY_LIMIT_USD === undefined || env.FG_TENANT_AI_MONTHLY_LIMIT_USD === '' ? null : Number(env.FG_TENANT_AI_MONTHLY_LIMIT_USD),
+    autopilotAvailable: env.FG_AUTOPILOT !== 'off',
   };
 }

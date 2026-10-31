@@ -28,6 +28,11 @@ export const AuditRequestSchema = z.object({
 
 export async function requestSeoAudit(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
   requireRole(actor, ['owner', 'admin', 'growth_operator', 'analyst'], 'requesting a site audit');
+  return queueSeoAudit(tx, deps, tenantId, actor, raw);
+}
+
+/** Queue a read-only, robots.txt-honouring audit (also used by the Autopilot's research step). */
+export async function queueSeoAudit(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
   const input = AuditRequestSchema.parse(raw);
   const origin = new URL(input.siteUrl).origin;
   const [row] = await tx

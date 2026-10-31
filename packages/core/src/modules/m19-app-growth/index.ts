@@ -1,14 +1,15 @@
 import { fetchSalesReport } from '@futuregrow/connectors';
-import { appInstalls, appStoreReports, customerEvents, type DbOrTx, withTenant } from '@futuregrow/db';
+import { appInstalls, appStoreReports, customerEvents, type DbOrTx, evidenceRecords, type Tx, withTenant } from '@futuregrow/db';
 import { invalid, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
-import { desc, eq, sql } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { record } from '../../util.js';
 import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { ingestEvents } from '../m02-customers/index.js';
+import { appendPoints, upsertSeries } from '../m08-analytics/index.js';
 
 /**
  * Referrer minimisation: only campaign parameters are kept. Click IDs and anything else in the
@@ -218,4 +219,27 @@ export async function installStats(tx: DbOrTx) {
 
 export async function listReports(tx: DbOrTx) {
   return tx.select().from(appStoreReports).orderBy(desc(appStoreReports.period)).limit(400);
+}
+
+/** M08 series key for App Store first-time downloads, fed from the daily sales reports. */
+export const DOWNLOADS_SERIES_KEY = 'app.downloads.first_time';
+
+/**
+ * Bridge App Store sales reports into an M08 KPI series (one point per report day, each backed by
+ * the report's evidence), so forecasts and the Growth Brain can use downloads. Idempotent: points
+ * are upserted by day. Returns null when no report has been synced yet.
+ */
+export async function syncDownloadsSeries(tx: Tx, tenantId: string): Promise<{ seriesId: string; points: number } | null> {
+  const rows = await tx
+    .select({ period: appStoreReports.period, evidenceId: appStoreReports.evidenceId, content: evidenceRecords.content })
+    .from(appStoreReports)
+    .innerJoin(evidenceRecords, eq(evidenceRecords.id, appStoreReports.evidenceId))
+    .where(eq(appStoreReports.reportType, 'SALES_SUMMARY_DAILY'))
+    .orderBy(asc(appStoreReports.period));
+  const pts = rows.map((r) => ({ ts: `${r.period}T00:00:00Z`, value: Number((r.content as { firstTimeDownloads?: unknown } | null)?.firstTimeDownloads), evidenceId: r.evidenceId })).filter((p) => /^\d{4}-\d{2}-\d{2}T/.test(p.ts) && Number.isFinite(p.value));
+  if (!pts.length) return null;
+  const actor = systemActor('app-store-sync');
+  const series = await upsertSeries(tx, tenantId, actor, { key: DOWNLOADS_SERIES_KEY, name: 'App Store first-time downloads', unit: 'downloads', granularity: 'day', kind: 'kpi', channel: 'app_store', sourceEvidenceId: pts[pts.length - 1]!.evidenceId });
+  await appendPoints(tx, tenantId, series.id, pts);
+  return { seriesId: series.id, points: pts.length };
 }

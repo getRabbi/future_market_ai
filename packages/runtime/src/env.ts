@@ -64,6 +64,8 @@ export const EnvSchema = z
     NORTHFLANK_MEDIA_JOB_ID: z.string().optional(),
     /** Default monthly model spend limit per tenant (USD at registry prices) when the tenant set none. */
     FG_TENANT_AI_MONTHLY_LIMIT_USD: z.coerce.number().positive().max(1_000_000).optional(),
+    /** Autopilot platform switch (D-033): "off" stops every goal; tenants still opt in one by one. */
+    FG_AUTOPILOT: z.enum(['on', 'off']).default('on'),
     // Operator alerts (Slack/Discord incoming webhook or any https JSON endpoint). Unset = log only.
     ALERT_WEBHOOK_URL: z.string().url().startsWith('https://').optional(),
     /** Label in alerts; defaults to "<NODE_ENV> <APP_BASE_URL host>". */

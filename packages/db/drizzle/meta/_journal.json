@@ -64,6 +64,13 @@
       "when": 1792568091302,
       "tag": "0008_ops_and_deprecations",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793425867913,
+      "tag": "0009_autopilot",
+      "breakpoints": true
     }
   ]
 }

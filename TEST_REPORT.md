@@ -1,8 +1,31 @@
 # FUTUREGROW AI — Test report
 
-Date: 2026-10-30 · Commit: see `git log -1` · Environment: Windows 11 (8 GB RAM), Node 24.22.0, npm 12.2, Python 3.13.16, embedded PostgreSQL 17.10 (UTF-8 cluster), Playwright 1.63.0 Chromium.
+Date: 2026-10-31 · Commit: see `git log -1` · Environment: Windows 11 (8 GB RAM), Node 24.22.0, npm 12.2, Python 3.13.16, embedded PostgreSQL 17.10 (UTF-8 cluster), Playwright 1.63.0 Chromium.
 
 ## 1. Results
+
+### 1.0 Autopilot: goal-driven orchestration (2026-10-31, D-033)
+
+Durable goal orchestrator in M23, policy `fg-policy-1.2.0` (R-DECISION), migration 0009, Autopilot web home. Checks run, in sequence, on Windows 11 / Node 24.22 / embedded PostgreSQL 17.10:
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck | `npm run typecheck` | **pass** |
+| Lint | `npm run lint` | **pass** — 0 errors |
+| Generated docs current | `npm run docs -- --check` | **pass** (event taxonomy +4 events, policy version) |
+| TypeScript tests | `npm test` | **326 / 326 passed**, 39 files, 204 s |
+| Production bundles | `node scripts/build.mjs all` | **pass** — api, worker, media |
+| Web build | `npm run build -w @futuregrow/web` | **pass** — 29 pages (new `/app/advanced`), hashed CSP |
+| SBOM + licence policy | `npm run sbom` | **pass** — 0 policy violations, no new dependencies |
+| Browser E2E (Chromium, CSP enforced, real Graphile worker) | `npm run test:e2e` | **10 / 10 passed**, 3.2 min |
+
+New tests:
+
+* `apps/worker/test/autopilot.test.ts` (8) drives the **real worker task list** (minute tick, advance jobs, outbox dispatch, execute/verify jobs) against real PostgreSQL, a scripted model through the registry-gated gateway, the Meta fixture server, and the **real Python forecasting job** when its venv exists (CI and this machine): one $0 organic-downloads goal → persisted plan (paid media explicitly left out) → App Store reports bridged into the KPI series → forecast request processed by the analytics job → Idea Lab → Growth Brain → `experiment.start` pre-authorized by tenant policy → executed and independently verified → measure → learn → next cycle scheduled; publishing stops at APPROVAL_REQUIRED (nothing reaches Meta however long the worker runs), then one MFA approval executes it exactly once and read-back verifies it; a tenant with no data or evidence gets explicit blockers, no model calls and no decisions, and new evidence brings the next cycle forward (debounced); an abstaining Brain blocks with its reason and the next cycle picks another idea; a $0 goal never submits spend even when the model proposes it, and a small budget refuses an overrun; AI allowance, pause/resume, agent kill switch, daily cycle cap and the one-running-cycle index; recovery of a step whose worker died (lease expiry) without duplicate decisions or actions; completion at the target date with a final measurement from recorded values only; tenant isolation.
+* `apps/api/test/autopilot-api.test.ts` (3): per-organization opt-in, the owner sentence interpreted conservatively (KPI, 30 days, $0, no paid ads), goal lifecycle commands, cross-organization 404/403, paid ads refused on $0.
+* `e2e/tests/autopilot.spec.ts` (2): turn on, type the sentence, start the goal; the E2E stack's real worker runs the first cycle and the browser shows the explained blockers (no KPI data → App Store Connect; no approved AI model); approvals, results, setup, the Advanced workspace; a 390 px phone fits without sideways scrolling.
+
+Finding fixed during testing: the Autopilot first requested a 30-day forecast from 40 days of history; the real engine abstains below 26 + horizon values, so the forecast step now asks for the longest horizon the history supports and states the true minimum (33 daily values).
 
 ### 1.0 Guided control plane (2026-10-30)
 

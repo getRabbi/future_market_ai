@@ -128,3 +128,20 @@ Then in the control plane: Audit trail → **Verify chain now** (valid), Evidenc
      -d '{"provider":"meta","apiVersion":"v26.0","sunsetAt":"<published date, ISO 8601>","sourceUrl":"<provider changelog URL>"}'
    ```
    Deprecation and sunset headers seen on live provider responses are recorded and shown in Governance → *Provider API lifecycle*.
+
+## 10. Autopilot release (D-033)
+
+**What changes on deploy:** migration `0009_autopilot` (additive: tables `growth_goals`, `goal_cycles`, `goal_tasks`; nullable `growth_decisions.goal_id`; `tenant_settings.autopilot_enabled` default `false`), the policy version `fg-policy-1.2.0` (rule R-DECISION), worker tasks `autopilot_tick` (every minute) and `autopilot_advance`, routes under `/v1/autopilot/*`, and the web home at `/app/` (classic workspace at `/app/advanced`). Existing data and behaviour are unchanged until an organization turns the Autopilot on.
+
+**Feature flag and rollout:**
+* Per organization: off by default. An owner or admin turns it on in the classic home ("Try the Autopilot") or in Autopilot → Business setup; the change is audited (`autopilot.settings.changed`).
+* Platform-wide: `FG_AUTOPILOT=off` on the api and worker stops every goal (the worker tick does nothing, advances return immediately) and the web falls back to the classic home. Default `on` (availability only; each organization still opts in).
+* Before turning it on for real work: configure the autonomy policy (which categories may run within limits), forecast gates (`forecastGates`, otherwise forecasts cannot back agent-proposed actions, D-023), approved markets, connections and an approved model. Business setup lists what is missing.
+
+**Verify after deploy:** `GET /statusz` 200; `GET /v1/autopilot/status` 200 for a signed-in user (`available: true`); worker logs show `autopilot_tick` every minute; the web `/app/advanced` page loads.
+
+**Rollback:**
+1. Fast, no deploy: set `FG_AUTOPILOT=off` (or turn it off per organization; or pause goals; or engage the agent kill switch `autopilot` / a tenant kill switch). In-flight M23 actions keep their own state machine; cancel any you do not want in Approvals.
+2. Code: revert the release commit on `main` (Northflank redeploys api and worker); redeploy Pages from the previous deployment. Migration 0009 is additive and the previous code ignores the new tables and columns, so no database restore is needed.
+3. Removing the schema (only if required, after the code rollback): `DROP TABLE goal_tasks, goal_cycles, growth_goals; ALTER TABLE growth_decisions DROP COLUMN goal_id; ALTER TABLE tenant_settings DROP COLUMN autopilot_enabled;` and delete the newest row (migration 0009) from `drizzle.__drizzle_migrations`. Take a backup first (RUNBOOK §9).
+

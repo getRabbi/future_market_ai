@@ -125,6 +125,17 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 
 **Test status:** 315/315 TS tests (37 files) + 8/8 browser E2E; typecheck and lint pass (0 errors). See TEST_REPORT.md §1.0.
 
+### Autopilot: goal-driven orchestration (2026-10-31) — ◐ (built and tested; live release pending)
+- [x] Persistent business goals (KPI, target date, authorized channels, advertising budget, limits, cadence, status, memory) with durable cycles and checkpointed steps in PostgreSQL (migration 0009, RLS) — D-033.
+- [x] Growth loop observe → forecast → research → ideas → decide → content → submit → track → measure → learn, delegating to M01/M04/M05/M06/M07/M08/M10/M13/M16/M18/M19/M23/M24; deterministic relevance planning that records why each module is used or left out.
+- [x] Background continuation: minute tick + per-goal advance jobs, leases with crash recovery, waits re-checked on schedule and on events, event-triggered replanning (verified/failed actions, new evidence, claims, connections, market changes) debounced to at most hourly.
+- [x] Decision → execution without the manual accept: Autopilot acceptance + M23 policy (pre-authorized runs and is verified; everything else waits for approval; denials become blockers). Policy `fg-policy-1.2.0` adds R-DECISION so the Brain's approval requirement binds unaccepted decisions.
+- [x] Guardrails: goal channel allowlist in M07, $0 budget = no paid ads, goal spend ceiling, AI calls/day, cycles/day, open actions, AI step spacing, pause/resume/cancel, kill switches, one running cycle per goal (DB-enforced), explicit blocked/insufficient-data states.
+- [x] Missing connections closed: App Store sales reports → M08 KPI series (`app.downloads.first_time`); forecast horizons sized to the history the engine accepts; social publish decisions get a linted, spam-guarded M16 post record.
+- [x] Autopilot-first web home (Business setup, Growth goals, AI activity, Pending approvals, Results) built only from persisted rows; the 24 module screens, evidence, claims, governance and the journey stay in the Advanced workspace (`/app/advanced`). Per-organization opt-in, platform switch `FG_AUTOPILOT`.
+- [x] Tests: 8 worker-level autonomy tests (real worker task list, real PostgreSQL, real Python forecasting job, fixture Meta API), 3 API tests, 2 browser flows with a real Graphile worker (desktop + 390 px phone).
+- [ ] Live: deploy, then demonstrate on a real goal. Real-world outcomes are not claimed until demonstrated.
+
 ## Completion summary
 
 All 24 modules are implemented and tested against real PostgreSQL with provider APIs exercised through fixture servers. Every P0 gate (FG-P0-001…008) and P1 item (FG-P1-001…006) is implemented and verified. FG-P2-001 (failover, AI spend limits, deprecation monitoring) is implemented and tested; the controlled beta is live. What remains is external: live credentials and app reviews, legal rule packs, vendor reviews and the payout provider — each listed with its unblock step in BLOCKERS.md. Deployment steps: DEPLOYMENT.md; operations: docs/RUNBOOK.md.

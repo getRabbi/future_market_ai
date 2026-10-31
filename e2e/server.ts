@@ -13,9 +13,12 @@ import { fileURLToPath } from 'node:url';
 import { governance } from '@futuregrow/core';
 import { createRuntime, loadEnv } from '@futuregrow/runtime';
 import EmbeddedPostgres from 'embedded-postgres';
+import { run as runWorker } from 'graphile-worker';
 import pg from 'pg';
 import { buildApp } from '../apps/api/src/app.js';
+import '../apps/worker/src/register-modules.js';
 import { createAuth } from '../apps/api/src/auth.js';
+import { buildTaskList } from '../apps/worker/src/tasks.js';
 import { runAllMigrations } from '../packages/db/src/migrate.js';
 import { E2E_ORIGIN, E2E_PORT, ORG, OWNER } from './fixtures.js';
 
@@ -71,6 +74,11 @@ await seedAuth.api.createOrganization({ body: { ...ORG, userId: user.id } });
 
 const { app } = await buildApp({ env, deps: runtime.deps });
 
+// A real Graphile worker, so the browser sees the Autopilot work in the background (no model is
+// configured here: AI steps record "no approved AI model" instead of fabricating output).
+process.env.DATABASE_URL = databaseUrl;
+const worker = await runWorker({ pgPool: runtime.pool, concurrency: 1, taskList: buildTaskList(runtime.deps, { environment: 'e2e' }), crontab: '* * * * * autopilot_tick', noHandleSignals: true, pollInterval: 500 });
+
 /** Cloudflare Pages `_headers`: path patterns with `*`, all matching blocks apply. */
 const headerRules = fs
   .readFileSync(path.join(dist, '_headers'), 'utf8')
@@ -120,6 +128,7 @@ const stop = async () => {
   if (stopping) return;
   stopping = true;
   await app.close().catch(() => {});
+  await worker.stop().catch(() => {});
   await runtime.close().catch(() => {});
   await pgServer.stop().catch(() => {});
   for (let i = 0; i < 10; i++) {

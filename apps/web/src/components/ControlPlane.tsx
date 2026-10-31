@@ -4,6 +4,7 @@ import { authClient } from '../lib/auth.js';
 import { SECTION_GROUPS, SECTIONS, sectionBySlug } from '../lib/catalog.js';
 import { STAGES, stageOf } from '../lib/journey.js';
 import { Approvals } from './Approvals.js';
+import { AutopilotOffer, AutopilotShell, type AutopilotStatus } from './Autopilot.js';
 import { Connections } from './Connections.js';
 import { Governance } from './Governance.js';
 import { GroundTruth } from './GroundTruth.js';
@@ -14,8 +15,13 @@ import { AssetUpload, Audit, Overview, Settings } from './Views.js';
 
 type Org = { id: string; name: string; slug: string };
 
-export function ControlPlane({ section }: { section: string }) {
+/**
+ * `mode="auto"` (the /app/ home) shows the Autopilot when it is enabled for the organization and
+ * the classic overview otherwise; `mode="classic"` is the Advanced workspace (all 24 modules).
+ */
+export function ControlPlane({ section, mode = 'classic' }: { section: string; mode?: 'auto' | 'classic' }) {
   const [me, setMe] = useState<Me | null>(null);
+  const [autopilot, setAutopilot] = useState<AutopilotStatus | null>(null);
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -39,6 +45,11 @@ export function ControlPlane({ section }: { section: string }) {
     } catch (err) {
       setError(err);
     }
+    // An API without the Autopilot (older deploy) simply keeps the classic workspace.
+    setAutopilot(await api<AutopilotStatus>('GET', '/v1/autopilot/status').catch(() => null));
+  }, []);
+  const refreshAutopilot = useCallback(async () => {
+    setAutopilot(await api<AutopilotStatus>('GET', '/v1/autopilot/status').catch(() => null));
   }, []);
 
   useEffect(() => {
@@ -62,12 +73,30 @@ export function ControlPlane({ section }: { section: string }) {
     );
   }
 
+  const orgSelect = (
+    <div className="org-box">
+      <label htmlFor="org">Organization</label>
+      <select id="org" value={me.tenantId} onChange={(e) => switchTenant(e.target.value)}>
+        {(orgs ?? []).map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
+      <span className="who" title="Your roles in this organization">
+        {me.roles.join(', ')}
+      </span>
+    </div>
+  );
+  const autopilotOn = Boolean(autopilot?.available && autopilot.enabled);
+  if (mode === 'auto' && autopilotOn && autopilot) return <AutopilotShell me={me} status={autopilot} orgSelect={orgSelect} onStatus={() => void refreshAutopilot()} />;
+
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const stage = stageOf(current.slug);
   return (
     <JourneyProvider me={me}>
       <div className="shell">
-        <Sidebar current={current.slug} open={menuOpen} />
+        <Sidebar current={current.slug} open={menuOpen} autopilot={autopilotOn} />
         {menuOpen ? <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={() => setMenuOpen(false)} /> : null}
         <main className="main" id="content">
           <div className="topbar">
@@ -81,23 +110,12 @@ export function ControlPlane({ section }: { section: string }) {
                 <p className="summary">{current.summary}</p>
               </div>
             </div>
-            <div className="org-box">
-              <label htmlFor="org">Organization</label>
-              <select id="org" value={me.tenantId} onChange={(e) => switchTenant(e.target.value)}>
-                {(orgs ?? []).map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
-              <span className="who" title="Your roles in this organization">
-                {me.roles.join(', ')}
-              </span>
-            </div>
+            {orgSelect}
           </div>
           <ErrorNotice error={error} />
           {current.slug !== 'overview' ? <StageBanner slug={current.slug} /> : null}
           <div className="content">
+            {current.custom === 'overview' && autopilot?.available && !autopilot.enabled ? <AutopilotOffer me={me} onEnabled={() => (window.location.href = '/app/')} /> : null}
             {current.custom === 'overview' ? <Overview me={me} /> : null}
             {current.custom === 'approvals' ? <Approvals initialId={params.get('id')} /> : null}
             {current.custom === 'governance' ? <Governance /> : null}
@@ -114,15 +132,20 @@ export function ControlPlane({ section }: { section: string }) {
   );
 }
 
-function Sidebar({ current, open }: { current: string; open: boolean }) {
+function Sidebar({ current, open, autopilot }: { current: string; open: boolean; autopilot: boolean }) {
   const j = useJourney();
   return (
     <nav className={`sidebar${open ? ' open' : ''}`} aria-label="Modules">
-      <a className="brand" href="/app/">
+      <a className="brand" href={autopilot ? '/app/advanced' : '/app/'}>
         <Logo size={26} />
         <span>FUTUREGROW</span>
-        <small>beta</small>
+        <small>{autopilot ? 'advanced' : 'beta'}</small>
       </a>
+      {autopilot ? (
+        <a className="btn primary ap-back" href="/app/">
+          ← Back to the Autopilot
+        </a>
+      ) : null}
       <SidebarRank />
       {SECTION_GROUPS.map((g) => {
         const entry = g.stage && j ? j.view.stages.find((s) => s.stage.n === g.stage) : undefined;
@@ -148,7 +171,7 @@ function Sidebar({ current, open }: { current: string; open: boolean }) {
               const s = sectionBySlug(slug)!;
               const mark = sectionState(slug, j);
               return (
-                <a key={slug} href={sectionHref(slug)} aria-current={slug === current ? 'page' : undefined}>
+                <a key={slug} href={autopilot && slug === 'overview' ? '/app/advanced' : sectionHref(slug)} aria-current={slug === current ? 'page' : undefined}>
                   <span>{s.title}</span>
                   {slug === 'approvals' && j?.pending ? (
                     <span className="count" title="Waiting for approval">
