@@ -66,7 +66,7 @@ export async function runChecks(env: Pick<MonitorEnv, 'WEB_URL' | 'API_URL'>, f:
   const web = env.WEB_URL.replace(/\/$/, '');
   const api = env.API_URL.replace(/\/$/, '');
   const checks = await Promise.all([
-    probe(f, `${web}/login`, timeoutMs, (r, b) => (r.status !== 200 ? 'unexpected status' : b.includes('FUTUREGROW') ? null : 'unexpected page content')).then((r) => ({ name: 'web', critical: true, ...r })),
+    probe(f, `${web}/login/`, timeoutMs, (r, b) => (r.status !== 200 ? 'unexpected status' : b.includes('FUTUREGROW') ? null : 'unexpected page content')).then((r) => ({ name: 'web', critical: true, ...r })),
     probe(f, `${web}/v1/openapi.json`, timeoutMs, (r, b) => (r.status !== 200 ? 'unexpected status' : /"openapi"\s*:/.test(b) ? null : 'not the API document')).then((r) => ({ name: 'pages-proxy', critical: true, ...r })),
     probe(f, `${api}/healthz`, timeoutMs, (r) => (r.status === 200 ? null : 'unexpected status')).then((r) => ({ name: 'api', critical: true, ...r })),
     probe(f, `${api}/statusz`, timeoutMs, (r, b) => {
