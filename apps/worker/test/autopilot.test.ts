@@ -754,11 +754,11 @@ describe('Autopilot: a small Facebook Page without Page insights gets explorator
         angle: 'সহজ বাংলা ব্যাখ্যা',
         hooks: ['কোরিয়ান গ্রামার এখন বাংলায়'],
         proofPoints: [{ text: 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার', claimId: ids[0] }],
-        cta: 'অ্যাপটি দেখুন',
+        cta: 'অ্যাপটি দেখুন এবং শিখা শুরু করুন',
         prohibitedClaims: ['পাস নিশ্চিত'],
         posts: [
           { text: 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শিখুন। আজ কোন অধ্যায় পড়ছেন?', claimIds: [ids[0]] },
-          { text: '১০০% পাস নিশ্চিত!', claimIds: [] },
+          { text: 'সব অধ্যায়ে বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শিখুন।', claimIds: [ids[0]] },
           { text: 'রাতে রিপোর্ট পান', claimIds: [unrelated.id] },
         ],
       };
@@ -777,7 +777,7 @@ describe('Autopilot: a small Facebook Page without Page insights gets explorator
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({ status: 'draft', platform: 'facebook', connectionId: conn.id, claimIds: [claim.id], createdBy: 'system:autopilot', disclosure: { review: { exploratory: true, forecastValidated: false, language: 'bn', goalId: g.id, market: 'BD' } } });
     const brief = (await otx((t) => t.select().from(creativeBriefs)))[0]!;
-    expect(brief).toMatchObject({ status: 'draft', channel: 'facebook' });
+    expect(brief).toMatchObject({ status: 'draft', channel: 'facebook', cta: 'অ্যাপটি দেখুন এবং শেখা শুরু করুন' });
     expect(brief.title).toMatch(/^\[Exploratory\]/);
     const inbox = await otx((t) => autopilot.inbox(t));
     expect(inbox.postDrafts).toMatchObject([{ id: posts[0]!.id, claims: [{ id: claim.id, status: 'approved' }] }]);

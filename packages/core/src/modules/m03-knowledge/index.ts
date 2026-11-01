@@ -271,6 +271,23 @@ const CLAIM_TRIGGERS: { code: string; re: RegExp; label: string }[] = [
   { code: 'SCARCITY', re: /(সীমিত সময়|আজই শেষ|শেষ সুযোগ)/u, label: 'scarcity/urgency' },
 ];
 
+/**
+ * Words that widen a statement's scope or promise an outcome. A sentence may use one only when a
+ * claim it cites says the same: the token overlap in covered() accepts "all lessons work offline"
+ * against "offline-available lessons work offline" because most words still match.
+ */
+const NOT_LETTER_BEFORE = '(?<![\\p{L}\\p{M}])';
+const NOT_LETTER_AFTER = '(?![\\p{L}\\p{M}])';
+const word = (alts: string) => new RegExp(`${NOT_LETTER_BEFORE}(${alts.normalize('NFC')})${NOT_LETTER_AFTER}`, 'giu');
+const SCOPE_TERMS: { code: string; re: RegExp; label: string }[] = [
+  { code: 'OVERSTATED_SCOPE', re: word('all|every|everything|entire|entirely|whole|always|never|unlimited|fully|completely|anytime|anywhere|anyone|any time'), label: 'universal scope' },
+  { code: 'OVERSTATED_SCOPE', re: word('সব|সবই|সবাই|সবার|সবকিছু|সবগুলো|সকল|সমস্ত|প্রতিটি|প্রত্যেক|প্রত্যেকটি|যেকোনো|যে কোনো|সবসময়|সর্বদা|সম্পূর্ণ|সম্পূর্ণভাবে|পুরো|পুরোপুরি|সীমাহীন|আনলিমিটেড|অসীম|কখনোই'), label: 'universal scope' },
+  { code: 'UNSUPPORTED_PROMISE', re: word("you(?:'ll| will) (?:pass|master|become|be fluent|get a job)|master|fluent|fluently|fluency|instantly|effortless|effortlessly|in (?:just |only )?\\d+ (?:days?|weeks?|hours?)"), label: 'outcome promise' },
+  { code: 'UNSUPPORTED_PROMISE', re: word('পাস করবেন|পাস করতে পারবেন|উত্তীর্ণ হবেন|নিশ্চিতভাবে|অবশ্যই|দক্ষ হয়ে উঠবেন|সাবলীল|সাবলীলভাবে|অনর্গল|সহজেই|দ্রুত শিখুন|তাড়াতাড়ি শিখুন|(?:মাত্র )?[০-৯0-9]+ (?:দিনে|সপ্তাহে|ঘণ্টায়)'), label: 'outcome promise' },
+];
+
+const termsIn = (re: RegExp, text: string) => new Set([...text.normalize('NFC').matchAll(re)].map((m) => m[1]!.toLowerCase()));
+
 function sentences(text: string): string[] {
   return text
     .split(/(?<=[.!?।])\s+|\n+/)
@@ -315,6 +332,11 @@ export async function lintCopy(tx: DbOrTx, text: string, opts: { claimIds: strin
         violations.push({ code: `UNSUBSTANTIATED_${t.code}`, severity: 'block', message: `${t.label} without an approved claim`, excerpt: s.slice(0, 300) });
         break;
       }
+    }
+    for (const t of SCOPE_TERMS) {
+      const claimed = new Set(usable.flatMap((c) => [...termsIn(t.re, c.text)]));
+      const extra = [...termsIn(t.re, s)].filter((w) => !claimed.has(w));
+      if (extra.length) violations.push({ code: t.code, severity: 'block', message: `${t.label} ("${extra.join('", "')}") that no cited approved claim states`, excerpt: s.slice(0, 300) });
     }
   }
   const rules = await tx.select().from(brandRules).where(eq(brandRules.active, true));

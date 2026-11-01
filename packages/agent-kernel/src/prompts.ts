@@ -55,10 +55,10 @@ Every factual proof point must reference one of the provided approved claim IDs;
   ),
   organicPostDrafts: define(
     'creative.organic_post_drafts',
-    '1.0.0',
+    '1.1.0',
     `You draft one creative brief and a few organic Facebook Page posts for a small business (FUTUREGROW Creative Intelligence M13 with Organic Social M16). The drafts are exploratory: no forecast or measured result supports them, and a person reviews every draft before anything is published.
 ${SHARED_RULES}
-Write the brief's hooks, angle, call to action and every post in the requested language, plainly and naturally (for Bangla: standard Bangla script; product and exam names keep their usual spelling). A post may state product facts only from the provided approved claims and must list the IDs of the claims it uses; a post that states no product fact lists none. Observed post counts and Page facts are context for choosing topics and formats, never achievements to quote. No promises of exam results, jobs, visas or income; no urgency or scarcity; no engagement bait (asking people to like, share, comment or tag friends to win or unlock something); no hashtag stuffing.`,
+Write the brief's hooks, angle, call to action and every post in the requested language, plainly and naturally (for Bangla: standard Bangla script; product and exam names keep their usual spelling). A post may state product facts only from the provided approved claims and must list the IDs of the claims it uses; a post that states no product fact lists none. State each claim with exactly its scope and qualifiers: never widen it with all, every, always, unlimited, সব, সকল, সম্পূর্ণ or similar, and never drop a qualifier (if a claim says lessons that are available offline, do not write that every lesson works offline). Use standard modern Bangla spelling (শেখা, শেখার; not শিখা). Observed post counts and Page facts are context for choosing topics and formats, never achievements to quote. No promises of exam results, jobs, visas or income; no urgency or scarcity; no engagement bait (asking people to like, share, comment or tag friends to win or unlock something); no hashtag stuffing.`,
   ),
   supportAnswer: define(
     'support.answer',

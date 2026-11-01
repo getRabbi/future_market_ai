@@ -355,7 +355,7 @@ describe('M16 organic social', () => {
 
     // Bangla copy gets the same claim checks, sentence by sentence (। ends a sentence).
     const lint = await tx((t) => knowledge.lintCopy(t, 'এই অ্যাপটি সেরা। ১০০% পাস নিশ্চিত। ৫০ শতাংশ দ্রুত শিখুন।', { claimIds: [], now: h.clock.now() }));
-    expect(lint.violations.map((v) => v.code)).toEqual(['UNSUBSTANTIATED_SUPERLATIVE', 'UNSUBSTANTIATED_ABSOLUTE', 'UNSUBSTANTIATED_STATISTIC']);
+    expect(lint.violations.map((v) => v.code)).toEqual(['UNSUBSTANTIATED_SUPERLATIVE', 'UNSUBSTANTIATED_ABSOLUTE', 'UNSUBSTANTIATED_STATISTIC', 'UNSUPPORTED_PROMISE']);
     expect((await tx((t) => knowledge.lintCopy(t, 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শিখুন।', { claimIds: [], now: h.clock.now() }))).passed).toBe(true);
     h.clock.current = start;
   });

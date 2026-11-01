@@ -222,6 +222,32 @@ describe('M03 knowledge graph and claims', () => {
     expect(noDisclosure.violations.map((v) => v.code)).toContain('DISCLOSURE_MISSING');
   });
 
+  it('lints copy: widening a claim to "all" or promising an outcome blocks even when most claim words match', async () => {
+    const e = await evidence();
+    const approve = async (text: string) => {
+      const c = await tx((t) => knowledge.proposeClaim(t, h.deps, h.tenantId, h.users.operator, { text, claimType: 'product_capability', evidenceIds: [e.evidenceId] }));
+      return (await tx((t) => knowledge.reviewClaim(t, h.tenantId, h.users.approver, c.id, 'approved'))).id;
+    };
+    const offline = await approve('অফলাইনে উপলব্ধ লেসন ও অনুশীলন ইন্টারনেট ছাড়াও ব্যবহার করা যায়।');
+    const lint = (text: string, claimIds: string[]) => tx((t) => knowledge.lintCopy(t, text, { claimIds, now: h.clock.now() }));
+    const codes = async (text: string, claimIds: string[]) => (await lint(text, claimIds)).violations.map((v) => v.code);
+
+    // The first real Autopilot cycle drafted this (2026-11-01): the claim covers only offline-available lessons.
+    const widened = await lint('ইন্টারনেট ছাড়াই শিখুন—অ্যাপের সব লেসন ও অনুশীলন অফলাইনে ব্যবহার করা যায়।', [offline]);
+    expect(widened.passed).toBe(false);
+    expect(widened.violations).toEqual([expect.objectContaining({ code: 'OVERSTATED_SCOPE', severity: 'block', message: expect.stringContaining('"সব"') })]);
+    expect(await lint('অফলাইনে উপলব্ধ লেসন ও অনুশীলন ইন্টারনেট ছাড়াও ব্যবহার করা যায়।', [offline])).toMatchObject({ passed: true });
+    expect(await codes('সম্পূর্ণ বিনামূল্যে, প্রতিটি লেসন অফলাইনে।', [offline])).toEqual(['OVERSTATED_SCOPE']);
+    expect(await codes('All lessons work offline, anytime.', [offline])).toEqual(['OVERSTATED_SCOPE']);
+    // Outcome promises need a claim that says so; "সবচেয়ে" is a superlative, not "সব".
+    expect(await codes('এই অ্যাপ দিয়ে আপনি নিশ্চিতভাবে পাস করবেন।', [offline])).toEqual(['UNSUPPORTED_PROMISE']);
+    expect(await codes('Become fluent in 30 days.', [])).toEqual(expect.arrayContaining(['UNSUPPORTED_PROMISE']));
+    expect(await codes('সবচেয়ে সহজ অ্যাপ', [])).toEqual(['UNSUBSTANTIATED_SUPERLATIVE']);
+    // A claim that itself states the scope allows it.
+    const all = await approve('All lessons are free to open.');
+    expect(await lint('All lessons are free to open.', [all])).toMatchObject({ passed: true });
+  });
+
   it('expires claims whose evidence is no longer current', async () => {
     const e = await evidence({ freshnessSlaHours: 1 });
     const c = await tx((t) => knowledge.proposeClaim(t, h.deps, h.tenantId, h.users.operator, { text: `Ships in 2 days ${randomUUID().slice(0, 4)}`, claimType: 'availability', evidenceIds: [e.evidenceId] }));

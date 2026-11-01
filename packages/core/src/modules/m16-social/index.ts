@@ -969,6 +969,10 @@ export type DraftLanguage = keyof typeof LANGUAGE_NAMES;
 /** The language organic drafts are written in for a market. */
 export const draftLanguage = (market: string): DraftLanguage => (market.toUpperCase() === 'BD' ? 'bn' : 'en');
 
+/** Misspellings models make in Bangla, fixed before lint: "শিখা" means flame; learning is "শেখা" (শেখার, শেখায়). */
+const BN_SPELLING: [RegExp, string][] = [[new RegExp('(?<![\\p{L}\\p{M}])শিখা(র|য়)?(?![\\p{L}\\p{M}])'.normalize('NFC'), 'gu'), 'শেখা$1']];
+export const fixBanglaSpelling = (text: string) => BN_SPELLING.reduce((s, [re, to]) => s.replace(re, to), text.normalize('NFC'));
+
 const GeneratedDrafts = z.object({
   abstain: z.boolean(),
   abstainReason: z.string(),
@@ -1021,6 +1025,8 @@ export async function draftOrganicPosts(deps: CoreDeps, tenantId: string, actor:
       ],
     });
     if (r.output.abstain) return { briefId: null, postIds: [] as string[], rejected: [] as { text: string; reason: string }[], abstained: r.output.abstainReason };
+    const fix = input.language === 'bn' ? fixBanglaSpelling : (s: string) => s;
+    const out = { ...r.output, title: fix(r.output.title), angle: fix(r.output.angle), hooks: r.output.hooks.map(fix), cta: fix(r.output.cta), proofPoints: r.output.proofPoints.map((p) => ({ ...p, text: fix(p.text) })), posts: r.output.posts.map((p) => ({ ...p, text: fix(p.text) })) };
     const ok = new Set(mat.claims.map((c) => c.id));
     const evidenceIds = [...new Set([...idea.evidenceIds, ...mat.claims.flatMap((c) => c.evidenceIds)])];
     const agent: Actor = { type: 'agent', id: 'creative-strategist', roles: [], mfaVerified: false };
@@ -1028,23 +1034,23 @@ export async function draftOrganicPosts(deps: CoreDeps, tenantId: string, actor:
       const rejected: { text: string; reason: string }[] = [];
       let briefId: string | null = null;
       try {
-        const hooks = r.output.hooks.map((x) => x.trim()).filter((x) => x.length >= 3);
+        const hooks = out.hooks.map((x) => x.trim()).filter((x) => x.length >= 3);
         const brief = await createBrief(
           tx,
           deps,
           tenantId,
           agent,
           {
-            title: `[Exploratory] ${r.output.title || idea.title}`.slice(0, 200),
+            title: `[Exploratory] ${out.title || idea.title}`.slice(0, 200),
             objective: input.objective.slice(0, 500),
             channel: 'facebook',
             audience: idea.audience.slice(0, 500),
-            angle: r.output.angle,
+            angle: out.angle,
             hooks: (hooks.length ? hooks : [idea.title]).slice(0, 10),
-            proofPoints: r.output.proofPoints.filter((p) => ok.has(p.claimId)).slice(0, 10),
-            cta: r.output.cta,
+            proofPoints: out.proofPoints.filter((p) => ok.has(p.claimId)).slice(0, 10),
+            cta: out.cta,
             formatPlan: { format: 'Facebook Page post', aspectRatio: 'n/a', durationSeconds: null, notes: `${EXPLORATORY_DRAFT_NOTE} Language: ${LANGUAGE_NAMES[input.language]}.` },
-            prohibitedClaims: r.output.prohibitedClaims.slice(0, 20),
+            prohibitedClaims: out.prohibitedClaims.slice(0, 20),
             experimentMatrix: [],
             ideaId: idea.id,
           },
@@ -1055,7 +1061,7 @@ export async function draftOrganicPosts(deps: CoreDeps, tenantId: string, actor:
         rejected.push({ text: 'brief', reason: err instanceof Error ? err.message : String(err) });
       }
       const postIds: string[] = [];
-      for (const p of r.output.posts.slice(0, max)) {
+      for (const p of out.posts.slice(0, max)) {
         const text = p.text.trim();
         if (!text || text.length > 5000) {
           rejected.push({ text: text.slice(0, 120), reason: 'empty or too long' });
