@@ -2,14 +2,16 @@ import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import type { ModelProvider, ProviderOutcome, StructuredRequest } from '@futuregrow/agent-kernel';
 import { PROMPTS } from '@futuregrow/agent-kernel';
 import { clearGoogleTokenCache, publicFetch } from '@futuregrow/connectors';
-import { actionRequests, adBudgetHistory, adCampaigns, adDailyMetrics, alerts, appInstalls, customerEvents, evidenceRecords, metricPoints, metricSeries, seoPages, socialInteractions, socialPosts, spendLedger, storeListings, withTenant } from '@futuregrow/db';
+import { actionRequests, adBudgetHistory, adCampaigns, adDailyMetrics, alerts, appInstalls, customerEvents, evidenceRecords, kgEntities, metricPoints, metricSeries, seoPages, socialInteractions, socialPosts, spendLedger, storeListings, withTenant } from '@futuregrow/db';
 import { eq, like } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer, type RecordedRequest } from '../../../test/helpers/fixture-server.js';
 import { clearModelCache, createModelGateway } from '../src/agents.js';
 import { createConnection, setConnectionStatus } from '../src/modules/connections.js';
+import { admitEvidence } from '../src/modules/m01-evidence/index.js';
 import { ingestEvents } from '../src/modules/m02-customers/index.js';
+import * as knowledge from '../src/modules/m03-knowledge/index.js';
 import type { PublicFetcher } from '../src/modules/m05-competitors/index.js';
 import * as social from '../src/modules/m16-social/index.js';
 import * as paid from '../src/modules/m17-paid/index.js';
@@ -212,6 +214,149 @@ describe('M16 organic social', () => {
     expect(server.find('GET', '/v26.0/999/insights').map((r) => r.query.get('metric'))).toEqual(['page_media_view', 'page_views_total']);
     expect(foreign.note).not.toMatch(/read_insights/);
     await tx((t) => setConnectionStatus(t, h.tenantId, h.users.owner, other, 'disabled'));
+  });
+
+  it('stores daily post-counter snapshots idempotently and derives changes only from consecutive reads (D-035)', async () => {
+    const DAY = 86_400_000;
+    const start = h.clock.current;
+    const kpiPoints = async () => (await tx((t) => t.select().from(metricPoints).innerJoin(metricSeries, eq(metricSeries.id, metricPoints.seriesId)).where(like(metricSeries.key, 'kpi.facebook.%')))).length;
+    const insightPointsBefore = await kpiPoints();
+    // Lifetime counters as Graph v26 serves them; a missing key means Meta left the field out.
+    const counters: Record<string, { reactions?: number; comments?: number; shares?: number; created: string }> = {
+      '123_a': { reactions: 1, comments: 0, created: '2026-10-15T19:10:35+0000' },
+      '123_b': { reactions: 1, comments: 0, created: '2026-10-15T19:12:02+0000' },
+    };
+    server.on('GET', '/v26.0/123/posts', () => ({
+      json: {
+        data: Object.entries(counters).map(([id, c]) => ({
+          id,
+          created_time: c.created,
+          status_type: 'added_photos',
+          message: `post ${id}`,
+          ...(c.reactions === undefined ? {} : { reactions: { summary: { total_count: c.reactions } } }),
+          ...(c.comments === undefined ? {} : { comments: { summary: { total_count: c.comments } } }),
+          ...(c.shares === undefined ? {} : { shares: { count: c.shares } }),
+        })),
+      },
+    }));
+    const reads = () => server.find('GET', '/v26.0/123/posts').length;
+    await expect(social.collectPagePostSnapshot(h.deps, h.tenantId, metaConn, { actor: h.users.analyst })).rejects.toThrow(/roles/);
+
+    const first = await social.collectPagePostSnapshot(h.deps, h.tenantId, metaConn);
+    expect(first).toMatchObject({ reused: false, change: null, points: 0, totals: { posts: 2, metrics: { reactions: { value: 2, posts: 2, notReturned: 0 }, comments: { value: 0, posts: 2 }, shares: { value: 0, posts: 0, notReturned: 2 } } } });
+    expect(first.note).toMatch(/First snapshot/);
+    const [ev] = await tx((t) => t.select().from(evidenceRecords).where(eq(evidenceRecords.id, first.evidenceId!)));
+    expect(ev).toMatchObject({ status: 'admitted', kind: 'snapshot', sourceType: 'primary', sourceOwner: 'meta', sourceUriOrObjectId: `meta://page/123/posts@${first.day}` });
+    const content = ev!.content as { connectionId: string; pageId: string; observedAt: string; definitions: Record<string, string>; posts: { metrics: Record<string, { status: string; value: number | null }> }[] };
+    expect(content).toMatchObject({ connectionId: metaConn, pageId: '123', observedAt: h.clock.now().toISOString() });
+    expect(content.definitions.shares).toMatch(/not_returned, never as zero/);
+    expect(content.posts[0]!.metrics.shares).toEqual({ status: 'not_returned', value: null });
+    expect(ev!.summary).toMatch(/2 posts.*reactions 2 \(from 2 posts\).*shares not returned by Meta/);
+
+    // A second call the same day reuses the snapshot: no Graph call, no new evidence.
+    const before = reads();
+    h.clock.advance(3 * 3_600_000);
+    expect(await social.collectPagePostSnapshot(h.deps, h.tenantId, metaConn)).toMatchObject({ reused: true, evidenceId: first.evidenceId });
+    expect(reads()).toBe(before);
+
+    // Next day: one post gains reactions, one stops returning them, one is new; shares are never returned.
+    h.clock.advance(DAY - 3 * 3_600_000);
+    counters['123_a'] = { ...counters['123_a']!, reactions: 3, comments: 1 };
+    counters['123_b'] = { comments: 0, created: counters['123_b']!.created };
+    counters['123_c'] = { reactions: 2, comments: 0, created: new Date(h.clock.now().getTime() - 3_600_000).toISOString() };
+    const second = await social.collectPagePostSnapshot(h.deps, h.tenantId, metaConn);
+    expect(second.change).toEqual({
+      previousEvidenceId: first.evidenceId,
+      previousObservedAt: first.observedAt,
+      metrics: { reactions: { value: 4, posts: 2, excluded: 1 }, comments: { value: 1, posts: 3, excluded: 0 }, shares: { value: null, posts: 0, excluded: 3 } },
+    });
+    expect(second).toMatchObject({ points: 2, note: null });
+    const signals = await tx((t) => t.select().from(metricSeries).where(like(metricSeries.key, 'signal.facebook.posts.%')));
+    expect(signals.map((s) => `${s.key} ${s.kind} ${s.channel}`).sort()).toEqual(['signal.facebook.posts.comments_change signal facebook:123', 'signal.facebook.posts.reactions_change signal facebook:123']);
+    const reactions = signals.find((s) => s.key === social.FACEBOOK_POST_CHANGE_SERIES.reactions.key)!;
+    const changePoints = () => tx((t) => t.select().from(metricPoints).where(eq(metricPoints.seriesId, reactions.id)));
+    expect((await changePoints()).map((p) => [p.ts.toISOString(), p.value, p.evidenceId])).toEqual([[`${second.day}T00:00:00.000Z`, 4, second.evidenceId]]);
+    const [secondEv] = await tx((t) => t.select().from(evidenceRecords).where(eq(evidenceRecords.id, second.evidenceId!)));
+    expect(secondEv!.lineageParentIds).toEqual([first.evidenceId]);
+    // Post counters never write into the Page-insights KPI series.
+    expect(await kpiPoints()).toBe(insightPointsBefore);
+
+    // A missed day: nothing is derived and nothing is backfilled.
+    h.clock.advance(2 * DAY);
+    const third = await social.collectPagePostSnapshot(h.deps, h.tenantId, metaConn);
+    expect(third).toMatchObject({ change: null, points: 0 });
+    expect(third.note).toMatch(/not from the previous day/);
+    expect(await changePoints()).toHaveLength(1);
+    h.clock.current = start;
+  });
+
+  it('keeps the Page profile as evidence and a product fact; the brand scope holds only claims about that Page (D-035)', async () => {
+    const DAY = 86_400_000;
+    const start = h.clock.current;
+    let followers = 13;
+    server.on('GET', '/v26.0/123', () => ({ json: { id: '123', name: 'Acme Page', about: 'Learn Korean in Bangla', category: 'Education', category_list: [{ name: 'App Page' }], website: 'https://play.example/acme', link: 'https://www.facebook.com/123', followers_count: followers } }));
+    await expect(social.syncPageProfile(h.deps, h.tenantId, metaConn, { actor: h.users.analyst })).rejects.toThrow(/roles/);
+    const p1 = await social.syncPageProfile(h.deps, h.tenantId, metaConn);
+    expect(p1).toMatchObject({ reused: false, profile: { name: 'Acme Page', categories: ['Education', 'App Page'], followersCount: 13 } });
+    const facts = () =>
+      tx((t) =>
+        t
+          .select()
+          .from(kgEntities)
+          .where(eq(kgEntities.key, social.pageFactKey('123'))),
+      );
+    expect(await facts()).toMatchObject([{ id: p1.entityId, kind: 'product', status: 'active', evidenceId: p1.evidenceId, attributes: { facebookPageId: '123', categories: ['Education', 'App Page'], about: 'Learn Korean in Bangla' } }]);
+    expect((await facts())[0]!.attributes).not.toHaveProperty('followersCount');
+    expect(await social.syncPageProfile(h.deps, h.tenantId, metaConn)).toMatchObject({ reused: true, evidenceId: p1.evidenceId });
+    expect(server.find('GET', '/v26.0/123')).toHaveLength(1);
+
+    // A week later only the follower count changed: new evidence, the same fact (linked claims stay valid).
+    h.clock.advance(8 * DAY);
+    followers = 20;
+    const p2 = await social.syncPageProfile(h.deps, h.tenantId, metaConn);
+    expect(p2).toMatchObject({ reused: false, entityId: p1.entityId });
+    expect(p2.evidenceId).not.toBe(p1.evidenceId);
+    expect(await facts()).toHaveLength(1);
+
+    const brand = await tx((t) => knowledge.proposeClaim(t, h.deps, h.tenantId, h.users.operator, { text: 'Lessons explain Korean grammar in Bangla', claimType: 'product_capability', evidenceIds: [p2.evidenceId], entityIds: [p2.entityId] }));
+    await tx((t) => knowledge.reviewClaim(t, h.tenantId, h.users.approver, brand.id, 'approved'));
+    await tx((t) => knowledge.proposeClaim(t, h.deps, h.tenantId, h.users.operator, { text: 'The app has five model tests', claimType: 'product_capability', evidenceIds: [p2.evidenceId] }));
+    const otherEv = await tx((t) =>
+      admitEvidence(
+        t,
+        h.tenantId,
+        h.users.owner,
+        {
+          sourceType: 'primary',
+          sourceOwner: 'acme',
+          sourceUriOrObjectId: `crm://${randomUUID()}`,
+          retrievedAt: h.clock.now().toISOString(),
+          licenseOrUsageRights: 'first-party',
+          schemaVersion: '1',
+          piiClassification: 'none',
+          confidence: 0.9,
+          permittedUses: ['analytics'],
+          kind: 'observation',
+          summary: 'another product',
+          content: { x: 1 },
+        } as never,
+        { now: h.clock.now() },
+      ),
+    );
+    const unrelated = await tx((t) => knowledge.proposeClaim(t, h.deps, h.tenantId, h.users.operator, { text: 'Our CRM add-on syncs contacts hourly', claimType: 'product_capability', evidenceIds: [otherEv.evidenceId] }));
+    await tx((t) => knowledge.reviewClaim(t, h.tenantId, h.users.approver, unrelated.id, 'approved'));
+
+    const scope = await tx((t) => social.pageBrandScope(t, ['123'], h.clock.now()));
+    expect(scope).toMatchObject({ pageIds: ['123'], entityIds: [p1.entityId], approvedClaimIds: [brand.id], pendingClaims: 1 });
+    expect(scope.evidenceIds).toContain(p2.evidenceId);
+    expect(scope.evidenceIds).not.toContain(otherEv.evidenceId);
+    expect(await tx((t) => social.pageBrandScope(t, ['999'], h.clock.now()))).toMatchObject({ approvedClaimIds: [], pendingClaims: 0 });
+
+    // Bangla copy gets the same claim checks, sentence by sentence (। ends a sentence).
+    const lint = await tx((t) => knowledge.lintCopy(t, 'এই অ্যাপটি সেরা। ১০০% পাস নিশ্চিত। ৫০ শতাংশ দ্রুত শিখুন।', { claimIds: [], now: h.clock.now() }));
+    expect(lint.violations.map((v) => v.code)).toEqual(['UNSUBSTANTIATED_SUPERLATIVE', 'UNSUBSTANTIATED_ABSOLUTE', 'UNSUBSTANTIATED_STATISTIC']);
+    expect((await tx((t) => knowledge.lintCopy(t, 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শিখুন।', { claimIds: [], now: h.clock.now() }))).passed).toBe(true);
+    h.clock.current = start;
   });
 });
 

@@ -261,11 +261,19 @@ const CLAIM_TRIGGERS: { code: string; re: RegExp; label: string }[] = [
   { code: 'ENVIRONMENTAL', re: /\b(eco[- ]friendly|carbon[- ]neutral|sustainable|green(?:er)?|biodegradable|net[- ]zero|climate[- ]positive)\b/iu, label: 'environmental claim' },
   { code: 'FINANCIAL', re: /\b(earn|make)\s+[$€£]?\d|\b(passive income|get rich|returns? of)\b/iu, label: 'financial claim' },
   { code: 'SCARCITY', re: /\b(only \d+ left|limited (?:time|stock)|ends (?:tonight|today|soon)|last chance|while supplies last)\b/iu, label: 'scarcity/urgency' },
+  // Bangla (bn) copy: \b and \d are ASCII-only in JS, so these match the words and Bengali digits directly.
+  { code: 'SUPERLATIVE', re: /(সেরা|সর্বশ্রেষ্ঠ|এক নম্বর|[১1]\s?নম্বর|সবচেয়ে (?:ভালো|জনপ্রিয়|সহজ|দ্রুত|কার্যকর|বিশ্বস্ত))/u, label: 'superlative' },
+  { code: 'ABSOLUTE', re: /(গ্যারান্টি|শতভাগ|[১1][০0][০0]\s?%|(?:পাস|চাকরি|সাফল্য|সফলতা|ভিসা)\s*(?:নিশ্চিত|পাক্কা)|নিশ্চিত\s*(?:পাস|চাকরি|সাফল্য|ভিসা))/u, label: 'absolute promise' },
+  { code: 'STATISTIC', re: /([০-৯]+(?:[.,][০-৯]+)?\s?(?:%|শতাংশ|গুণ))/u, label: 'statistic' },
+  { code: 'COMPARATIVE', re: /((?:চেয়ে|চাইতে|থেকে)\s*(?:ভালো|সহজ|দ্রুত|সস্তা|কার্যকর|উন্নত))/u, label: 'comparison' },
+  { code: 'TESTIMONIAL', re: /(রিভিউ|রেটিং|[৪৫45](?:\.[০-৯0-9])?\s?স্টার|ব্যবহারকারীরা বলছেন)/u, label: 'testimonial' },
+  { code: 'FINANCIAL', re: /(আয় করুন|ইনকাম করুন|টাকা (?:আয়|উপার্জন))/u, label: 'financial claim' },
+  { code: 'SCARCITY', re: /(সীমিত সময়|আজই শেষ|শেষ সুযোগ)/u, label: 'scarcity/urgency' },
 ];
 
 function sentences(text: string): string[] {
   return text
-    .split(/(?<=[.!?])\s+|\n+/)
+    .split(/(?<=[.!?।])\s+|\n+/)
     .map((s) => s.trim())
     .filter(Boolean);
 }

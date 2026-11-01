@@ -330,6 +330,8 @@ export const metaRead: ReadConnector = {
       }
       const details: Record<string, unknown> = { id: me.data.id };
       if (page?.type) details.tokenType = page.type;
+      // Informational: Page insights need read_insights; posts, replies and post counters do not.
+      if (page?.type === 'PAGE' && scopes) details.readInsights = scopes.includes('read_insights');
       if (expiry(page)) details.tokenExpiresAt = expiry(page);
       if (dataAccess(page)) details.tokenDataAccessUntil = dataAccess(page);
       const warnings: string[] = [];
@@ -483,6 +485,115 @@ export async function fetchPageInsights(ctx: ConnectorContext, from: string, to:
     }
   }
   return out;
+}
+
+/* --------------------------- Organic post counters --------------------------- */
+
+/**
+ * Post-level counters Meta serves to a Page token with pages_read_engagement, no read_insights
+ * needed (checked live 2026-11-01 on Graph v26). Each is a lifetime total at the moment of the
+ * read, not a daily value.
+ */
+export const PAGE_POST_METRICS = {
+  reactions: { field: 'reactions.summary(total_count).limit(0)', definition: 'Reactions of all types on the post (reactions.summary.total_count), lifetime total at the read time.' },
+  comments: { field: 'comments.filter(toplevel).summary(true).limit(0)', definition: 'Top-level comments on the post (comments.summary.total_count, filter=toplevel); replies are not counted. Lifetime total at the read time.' },
+  shares: { field: 'shares', definition: 'Shares of the post (shares.count), lifetime total at the read time. Meta leaves the field out when there are no shares or they are not visible to the token, so an absent value is recorded as not_returned, never as zero.' },
+} as const;
+export type PagePostMetric = keyof typeof PAGE_POST_METRICS;
+
+export interface PagePostCounter {
+  /** `not_returned`: Meta left the field out, so the value is unknown (not zero). */
+  status: 'ok' | 'not_returned';
+  value: number | null;
+}
+
+export interface PagePostObservation {
+  id: string;
+  createdTime: string;
+  statusType: string | null;
+  permalinkUrl: string | null;
+  /** The start of the Page's own post text. */
+  message: string | null;
+  metrics: Record<PagePostMetric, PagePostCounter>;
+}
+
+interface RawPost {
+  id: string;
+  created_time: string;
+  status_type?: string;
+  permalink_url?: string;
+  message?: string;
+  reactions?: { summary?: { total_count?: unknown } };
+  comments?: { summary?: { total_count?: unknown } };
+  shares?: { count?: unknown };
+}
+
+const POSTS_PAGE_SIZE = 100;
+const POSTS_MAX_PAGES = 3;
+const counter = (n: unknown): PagePostCounter => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? { status: 'ok', value: n } : { status: 'not_returned', value: null });
+
+/**
+ * The Page's own posts created since `since` (newest first, at most 300) with their counters as
+ * read now. One request per 100 posts; `truncated` says older posts were left out.
+ */
+export async function fetchPagePosts(ctx: ConnectorContext, opts: { since: Date }): Promise<{ posts: PagePostObservation[]; truncated: boolean; requests: number }> {
+  const pageId = ctx.connection.externalAccountId;
+  const fields = ['id', 'created_time', 'status_type', 'permalink_url', 'message', ...Object.values(PAGE_POST_METRICS).map((m) => m.field)].join(',');
+  let query: Record<string, string> = { fields, limit: String(POSTS_PAGE_SIZE), since: String(Math.floor(opts.since.getTime() / 1000)) };
+  const posts: PagePostObservation[] = [];
+  let truncated = false;
+  let requests = 0;
+  for (let page = 0; page < POSTS_MAX_PAGES; page++) {
+    const res = await graph<{ data?: RawPost[]; paging?: { cursors?: { after?: string }; next?: string } }>(ctx, 'GET', `${pageId}/posts`, { query });
+    requests++;
+    for (const p of res.data.data ?? []) {
+      posts.push({
+        id: p.id,
+        createdTime: new Date(p.created_time).toISOString(),
+        statusType: p.status_type ?? null,
+        permalinkUrl: p.permalink_url ?? null,
+        message: p.message ? p.message.slice(0, 500) : null,
+        metrics: { reactions: counter(p.reactions?.summary?.total_count), comments: counter(p.comments?.summary?.total_count), shares: counter(p.shares?.count) },
+      });
+    }
+    const after = res.data.paging?.next ? res.data.paging.cursors?.after : undefined;
+    if (!after) break;
+    if (page === POSTS_MAX_PAGES - 1) truncated = true;
+    else query = { ...query, after };
+  }
+  return { posts, truncated, requests };
+}
+
+export interface PageProfile {
+  id: string;
+  name: string;
+  about: string | null;
+  description: string | null;
+  categories: string[];
+  website: string | null;
+  link: string | null;
+  followersCount: number | null;
+  verificationStatus: string | null;
+}
+
+/** The Page's public profile as Meta serves it to the Page token (one request). */
+export async function fetchPageProfile(ctx: ConnectorContext): Promise<PageProfile> {
+  const res = await graph<{ id: string; name?: string; about?: string; description?: string; category?: string; category_list?: { name: string }[]; website?: string; link?: string; followers_count?: unknown; verification_status?: string }>(ctx, 'GET', ctx.connection.externalAccountId, {
+    query: { fields: 'id,name,about,description,category,category_list,website,link,followers_count,verification_status' },
+  });
+  const p = res.data;
+  const categories = [...new Set([p.category, ...(p.category_list ?? []).map((c) => c.name)].filter((c): c is string => Boolean(c)))];
+  return {
+    id: p.id,
+    name: p.name ?? p.id,
+    about: p.about ?? null,
+    description: p.description ?? null,
+    categories,
+    website: p.website ?? null,
+    link: p.link ?? null,
+    followersCount: counter(p.followers_count).value,
+    verificationStatus: p.verification_status ?? null,
+  };
 }
 
 export type { ExecuteResult };

@@ -53,6 +53,13 @@ Identify assumptions not supported by the cited evidence, missing evidence, conf
 ${SHARED_RULES}
 Every factual proof point must reference one of the provided approved claim IDs; if no approved claim supports a point, leave it out. Hooks and angles must not copy competitor wording. Include a call to action, a format plan for the channel, phrases to avoid, and a small experiment matrix of variants to test.`,
   ),
+  organicPostDrafts: define(
+    'creative.organic_post_drafts',
+    '1.0.0',
+    `You draft one creative brief and a few organic Facebook Page posts for a small business (FUTUREGROW Creative Intelligence M13 with Organic Social M16). The drafts are exploratory: no forecast or measured result supports them, and a person reviews every draft before anything is published.
+${SHARED_RULES}
+Write the brief's hooks, angle, call to action and every post in the requested language, plainly and naturally (for Bangla: standard Bangla script; product and exam names keep their usual spelling). A post may state product facts only from the provided approved claims and must list the IDs of the claims it uses; a post that states no product fact lists none. Observed post counts and Page facts are context for choosing topics and formats, never achievements to quote. No promises of exam results, jobs, visas or income; no urgency or scarcity; no engagement bait (asking people to like, share, comment or tag friends to win or unlock something); no hashtag stuffing.`,
+  ),
   supportAnswer: define(
     'support.answer',
     '1.0.0',

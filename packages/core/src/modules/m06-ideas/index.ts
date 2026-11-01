@@ -1,7 +1,7 @@
 import { PROMPTS, untrustedBlock } from '@futuregrow/agent-kernel';
 import { type DbOrTx, evidenceRecords, growthIdeas, type Tx, topicClusters, trends, withTenant } from '@futuregrow/db';
 import { invalid, notFound } from '@futuregrow/observability';
-import { desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runAgent } from '../../agents.js';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
@@ -220,7 +220,11 @@ export const IdeaInputSchema = z.object({
 });
 export type IdeaInput = z.infer<typeof IdeaInputSchema>;
 
-export async function createIdea(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown, source: 'agent' | 'human', agentRunId: string | null = null) {
+/**
+ * `exploratory`: the reason no forecast backs this idea (Autopilot bootstrap, D-035). Such an
+ * idea is routed to a discovery test at most and its impact model says it is not forecast-validated.
+ */
+export async function createIdea(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown, source: 'agent' | 'human', agentRunId: string | null = null, opts: { exploratory?: string } = {}) {
   const input = IdeaInputSchema.parse(raw);
   const now = deps.clock.now();
   const ev = await tx.select().from(evidenceRecords).where(inArray(evidenceRecords.id, input.evidenceIds));
@@ -252,7 +256,8 @@ export async function createIdea(tx: Tx, deps: CoreDeps, tenantId: string, actor
   });
   let sampleSize: number | null = null;
   if (input.test.baselineRate && input.test.minimumDetectableEffect) sampleSize = sampleSizeTwoProportions(input.test.baselineRate, input.test.minimumDetectableEffect);
-  const route = !screening.passed ? 'reject' : value.status === 'unscored' || evidenceStrength < 0.5 ? 'discovery_test' : 'full_test';
+  const route = !screening.passed ? 'reject' : opts.exploratory || value.status === 'unscored' || evidenceStrength < 0.5 ? 'discovery_test' : 'full_test';
+  const impactModel = opts.exploratory ? { status: 'unknown', basis: 'exploratory', forecastValidated: false, note: opts.exploratory } : (input.impact ?? { status: 'unknown' });
   const [row] = await tx
     .insert(growthIdeas)
     .values({
@@ -263,7 +268,7 @@ export async function createIdea(tx: Tx, deps: CoreDeps, tenantId: string, actor
       audience: input.audience,
       targetMetric: input.targetMetric,
       evidenceIds: input.evidenceIds,
-      impactModel: input.impact ?? { status: 'unknown' },
+      impactModel,
       costModel: input.expectedCost ?? { status: 'unknown' },
       riskModel: { riskScore, risks: input.risks, basis: 'count of identified risks + screening' },
       successPrior: { family: 'beta', alpha: value.pSuccess.alpha, beta: value.pSuccess.beta, source: 'tenant experiment history' },
@@ -337,13 +342,29 @@ export interface IdeaFocus {
   targetMetric: string;
   channels: readonly string[];
   constraints: string;
+  /** Use only this evidence (no tenant-wide trends or competitor material), e.g. one brand's. */
+  evidenceIds?: readonly string[];
+  /** Ideas are labelled exploratory with this reason (no forecast backs them). */
+  exploratory?: string;
 }
 
 export async function generateIdeas(deps: CoreDeps, tenantId: string, actor: Actor, opts: { maxIdeas?: number; focus?: IdeaFocus } = {}) {
   return runAgent(deps, tenantId, { kind: 'idea_generation', agentId: 'idea-lab', triggeredBy: actorRef(actor), input: opts }, async (ctx) => {
     const material = await withTenant(deps.db, { tenantId, actor: 'agent:idea-lab' }, async (tx) => {
       const now = deps.clock.now();
-      const ev = (await tx.select().from(evidenceRecords).where(eq(evidenceRecords.status, 'admitted')).orderBy(desc(evidenceRecords.createdAt)).limit(60)).filter((e) => effectiveFreshness(e, now) !== 'stale').slice(0, 30);
+      const scope = opts.focus?.evidenceIds;
+      if (scope && !scope.length) return { ev: [], tr: [], topics: [], obs: [], gaps: [] };
+      const ev = (
+        await tx
+          .select()
+          .from(evidenceRecords)
+          .where(and(eq(evidenceRecords.status, 'admitted'), scope ? inArray(evidenceRecords.id, [...scope]) : undefined))
+          .orderBy(desc(evidenceRecords.createdAt))
+          .limit(60)
+      )
+        .filter((e) => effectiveFreshness(e, now) !== 'stale')
+        .slice(0, 30);
+      if (scope) return { ev, tr: [], topics: [], obs: [], gaps: [] };
       const tr = (await tx.select().from(trends).orderBy(desc(trends.createdAt)).limit(20)).filter((t) => t.direction !== 'flat');
       const topics = await tx.select().from(topicClusters).orderBy(desc(topicClusters.createdAt)).limit(10);
       const obs = (await listObservations(tx)).slice(0, 20);
@@ -392,6 +413,7 @@ export async function generateIdeas(deps: CoreDeps, tenantId: string, actor: Act
             { ...idea, ...(opts.focus ? { targetMetric: opts.focus.targetMetric } : {}), evidenceIds: cited, test: { type: idea.cheapFirstTest }, killCriteria: idea.killCriteria.length ? idea.killCriteria : ['no measurable improvement in the target metric'] },
             'agent',
             ctx.runId,
+            opts.focus?.exploratory ? { exploratory: opts.focus.exploratory } : {},
           );
           created.push(row.id);
         } catch (err) {
