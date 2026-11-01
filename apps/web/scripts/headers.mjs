@@ -47,7 +47,8 @@ const csp = [
   "object-src 'none'",
 ].join('; ');
 
-// HTML pages carry `no-transform` so the Cloudflare edge leaves them byte-for-byte as built: the
+// HTML pages carry `no-transform` so the Cloudflare edge leaves them byte-for-byte as built (its email
+// obfuscation would hide the legal pages' contact address from crawlers), and the
 // zone's Web Analytics auto-injection would otherwise add a beacon script the CSP above blocks.
 const headers = `/*
   Content-Security-Policy: ${csp}
@@ -72,6 +73,15 @@ const headers = `/*
 
 /invite/*
   Cache-Control: no-store, no-transform
+
+/privacy/*
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
+
+/terms/*
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
+
+/data-deletion/*
+  Cache-Control: public, max-age=0, must-revalidate, no-transform
 `;
 writeFileSync(join(dist, '_headers'), headers);
 console.log(`_headers written: ${files.length} pages, ${scripts.size} inline script hash(es), ${styles.size} inline style hash(es)`);

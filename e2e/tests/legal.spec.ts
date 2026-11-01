@@ -12,8 +12,10 @@ for (const p of PAGES) {
   test(`${p.path} is a standalone public page`, async ({ page }) => {
     const errors: string[] = [];
     page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-    const res = await page.goto(`${E2E_ORIGIN}${p.path}`);
+    const res = await page.goto(`${E2E_ORIGIN}${p.path}/`);
     expect(res?.status()).toBe(200);
+    // Without no-transform the Cloudflare edge rewrites the contact email into a script-decoded span crawlers cannot read.
+    expect(res?.headers()['cache-control']).toContain('no-transform');
     expect(new URL(page.url()).pathname.replace(/\/$/, '')).toBe(p.path);
     await expect(page.locator('h1')).toHaveText(p.h1);
     const text = await page.locator('main').innerText();
