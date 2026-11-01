@@ -1,11 +1,11 @@
-import { CHANNEL_CATEGORIES, GOAL_CHANNELS, type GoalChannel, type GoalInput, GoalInputSchema, type GoalKpi, GoalLimitsSchema, type RiskCategory } from '@futuregrow/contracts';
+import { CHANNEL_CATEGORIES, GOAL_CHANNELS, type GoalChannel, type GoalInput, GoalInputSchema, type GoalKpi, type GoalLimits, GoalLimitsSchema, type RiskCategory } from '@futuregrow/contracts';
 import { actionRequests, creativeBriefs, type DbOrTx, goalCycles, goalTasks, growthDecisions, growthGoals, growthIdeas, metricSeries, type Tx, tenantSettings } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
 import { defaultTenantPolicy } from '@futuregrow/policies';
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { type Actor, actorRef, type CoreConfig, type CoreDeps } from '../../deps.js';
 import { audit, record, requireRole } from '../../util.js';
-import { FACEBOOK_ENGAGEMENT_SERIES_KEY, FACEBOOK_INSIGHT_SERIES } from '../m16-social/index.js';
+import { FACEBOOK_ENGAGEMENT_SERIES_KEY, FACEBOOK_INSIGHT_SERIES, listPostDrafts } from '../m16-social/index.js';
 import { DOWNLOADS_SERIES_KEY } from '../m19-app-growth/index.js';
 
 export type GoalRow = typeof growthGoals.$inferSelect;
@@ -51,6 +51,9 @@ export function goalCategories(channels: readonly string[], adBudgetMicros: numb
 export function goalKpi(g: Pick<GoalRow, 'kpi'>): GoalKpi {
   return g.kpi as unknown as GoalKpi;
 }
+
+/** The goal's limits with defaults for keys added after it was created. */
+export const limitsOf = (g: Pick<GoalRow, 'limits'>): GoalLimits => ({ ...GoalLimitsSchema.parse({}), ...(g.limits as Partial<GoalLimits>) });
 
 export async function createGoal(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown): Promise<GoalRow> {
   requireRole(actor, GOAL_EDITORS, 'creating Autopilot goals');
@@ -150,7 +153,10 @@ export async function listGoals(tx: DbOrTx) {
   return goals.map((g) => ({ ...g, latestCycle: cycles.find((c) => c.goalId === g.id) ?? null, cycleCount: cycles.filter((c) => c.goalId === g.id).length }));
 }
 
-/** Actions the goal's decisions created, newest first. */
+/** The goal an action's social post was drafted for (D-036), or null. */
+const postGoalId = sql<string | null>`(select p.disclosure->'review'->>'goalId' from social_posts p where p.id::text = ${actionRequests.params}->>'postId')`;
+
+/** Actions the goal created (its decisions' actions and its organic posts' publications), newest first. */
 export async function goalActions(tx: DbOrTx, goalId: string) {
   return tx
     .select({
@@ -165,8 +171,8 @@ export async function goalActions(tx: DbOrTx, goalId: string) {
       updatedAt: actionRequests.updatedAt,
     })
     .from(actionRequests)
-    .innerJoin(growthDecisions, eq(growthDecisions.id, actionRequests.decisionId))
-    .where(eq(growthDecisions.goalId, goalId))
+    .leftJoin(growthDecisions, eq(growthDecisions.id, actionRequests.decisionId))
+    .where(or(eq(growthDecisions.goalId, goalId), sql`${postGoalId} = ${goalId}`))
     .orderBy(desc(actionRequests.createdAt))
     .limit(200);
 }
@@ -223,18 +229,20 @@ export async function listActivity(tx: DbOrTx, opts: { goalId?: string; limit?: 
 
 /** Everything the Autopilot is waiting on a person for. */
 export async function inbox(tx: DbOrTx) {
+  const goalOf = sql`coalesce(${growthDecisions.goalId}::text, ${postGoalId})`;
   const approvals = await tx
-    .select({ id: actionRequests.id, actionType: actionRequests.actionType, status: actionRequests.status, statusReason: actionRequests.statusReason, createdAt: actionRequests.createdAt, goalId: growthDecisions.goalId, goalTitle: growthGoals.title, decisionId: growthDecisions.id })
+    .select({ id: actionRequests.id, actionType: actionRequests.actionType, status: actionRequests.status, statusReason: actionRequests.statusReason, createdAt: actionRequests.createdAt, goalId: growthGoals.id, goalTitle: growthGoals.title, decisionId: growthDecisions.id })
     .from(actionRequests)
-    .innerJoin(growthDecisions, eq(growthDecisions.id, actionRequests.decisionId))
-    .innerJoin(growthGoals, eq(growthGoals.id, growthDecisions.goalId))
+    .leftJoin(growthDecisions, eq(growthDecisions.id, actionRequests.decisionId))
+    .innerJoin(growthGoals, sql`${growthGoals.id}::text = ${goalOf}`)
     .where(eq(actionRequests.status, 'APPROVAL_REQUIRED'))
     .orderBy(desc(actionRequests.createdAt))
     .limit(100);
   const otherApprovals = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(actionRequests)
-    .where(and(eq(actionRequests.status, 'APPROVAL_REQUIRED'), sql`not exists (select 1 from growth_decisions d where d.id = ${actionRequests.decisionId} and d.goal_id is not null)`));
+    .leftJoin(growthDecisions, eq(growthDecisions.id, actionRequests.decisionId))
+    .where(and(eq(actionRequests.status, 'APPROVAL_REQUIRED'), sql`${goalOf} is null`));
   const decisions = await tx
     .select({ id: growthDecisions.id, objective: growthDecisions.objective, proposedAction: growthDecisions.proposedAction, narrative: growthDecisions.narrative, policyResult: growthDecisions.policyResult, createdAt: growthDecisions.createdAt, goalId: growthDecisions.goalId, goalTitle: growthGoals.title })
     .from(growthDecisions)
@@ -249,7 +257,9 @@ export async function inbox(tx: DbOrTx) {
     .where(and(eq(creativeBriefs.status, 'draft'), sql`exists (select 1 from goal_tasks t where t.kind = 'content' and t.refs->>'briefId' = ${creativeBriefs.id}::text)`))
     .orderBy(desc(creativeBriefs.createdAt))
     .limit(50);
-  return { approvals, otherApprovals: otherApprovals[0]?.n ?? 0, decisions, drafts };
+  // Post drafts the Autopilot did not publish itself (suggest-only goals, or the gateway refused them, D-036).
+  const postDrafts = await listPostDrafts(tx);
+  return { approvals, otherApprovals: otherApprovals[0]?.n ?? 0, decisions, drafts, postDrafts };
 }
 
 /* ------------------------------------------------------------------ */

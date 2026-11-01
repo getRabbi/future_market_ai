@@ -5,7 +5,7 @@ import type { CoreDeps } from '../../deps.js';
 import { registerEventHandlers } from '../../event-handlers.js';
 import { record } from '../../util.js';
 import { isSystemHalted } from '../m24-governance/index.js';
-import { autopilotAvailable, type GoalRow, goalKpi } from './goals.js';
+import { autopilotAvailable, type GoalRow, goalKpi, limitsOf } from './goals.js';
 import { AI_CALLS, AUTOPILOT, type CycleRow, EXECUTORS, measureGoal, type StepContext, type StepResult, type TaskRow } from './steps.js';
 
 const ACTOR_REF = 'system:autopilot';
@@ -21,9 +21,6 @@ export const AI_STEP_GAP_MS = 90_000;
 const STEPS_PER_ADVANCE = 4;
 
 const tctx = (tenantId: string) => ({ tenantId, actor: ACTOR_REF });
-
-type Limits = { cadenceHours: number; maxCyclesPerDay: number; maxAiCallsPerDay: number; maxOpenActions: number };
-const limitsOf = (g: GoalRow): Limits => ({ cadenceHours: 24, maxCyclesPerDay: 4, maxAiCallsPerDay: 12, maxOpenActions: 3, ...(g.limits as Partial<Limits>) });
 
 /* ------------------------------------------------------------------ */
 /* Planning: which modules this cycle needs, and why                   */
@@ -171,7 +168,9 @@ async function finishCycle(tx: Tx, tenantId: string, cycle: CycleRow, goal: Goal
     .where(eq(goalCycles.id, cycle.id));
   const memory = (goal.memory ?? {}) as { triedIdeas?: Record<string, unknown>; lessons?: string[] };
   const decide = tasks.find((t) => t.kind === 'decide');
-  const ideaId = decide?.output.ideaId as string | undefined;
+  // An exploratory post handed to M23 (D-036) tries its idea just like a decision does.
+  const posted = tasks.find((t) => t.kind === 'submit' && t.output.postId);
+  const ideaId = (decide?.output.ideaId ?? posted?.output.ideaId ?? undefined) as string | undefined;
   const tried = { ...(memory.triedIdeas ?? {}) };
   if (ideaId) tried[ideaId] = { cycle: cycle.seq, outcome: (learn?.output.actionStatus as string | null) ?? (decide?.output.abstained ? 'abstained' : decide?.output.actionType ? 'proposed' : 'no_action'), at: now.toISOString() };
   const lessons = [...((learn?.output.lessons as string[] | undefined) ?? []), ...(memory.lessons ?? [])].slice(0, 30);

@@ -63,6 +63,8 @@ export const GoalLimitsSchema = z.object({
   maxAiCallsPerDay: z.number().int().min(0).max(50).default(12),
   /** Actions this goal may have open (proposed, awaiting approval or executing) at once. */
   maxOpenActions: z.number().int().min(1).max(10).default(3),
+  /** Organic posts the Autopilot may hand to the execution gateway per rolling 24 h (D-036). */
+  maxPostsPerDay: z.number().int().min(1).max(10).default(1),
 });
 export type GoalLimits = z.infer<typeof GoalLimitsSchema>;
 

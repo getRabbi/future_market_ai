@@ -2392,6 +2392,10 @@ button.pager-link.next {
   flex-wrap: wrap;
   gap: 0.25rem 0.9rem;
 }
+.ap-draft-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .ap-back {
   display: block;
   margin: 0 0.75rem 0.75rem;

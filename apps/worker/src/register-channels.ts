@@ -32,7 +32,7 @@ registerTasks((deps) => ({
     });
   },
 
-  /** M16: daily organic Page insights into the Facebook KPI series (Meta closes a day at Pacific midnight). */
+  /** M16: daily organic Page insights into the Facebook KPI series (Meta closes a day at Pacific midnight), then the daily post-counter snapshot (D-035). */
   page_insights_sync: async () => {
     await forEachTenant(deps, async (tenantId) => {
       for (const c of await activeConnections(deps, tenantId, ['meta'])) {
@@ -41,6 +41,12 @@ registerTasks((deps) => ({
           if (r.note) deps.logger.info({ tenantId, connectionId: c.id, note: r.note }, 'page insights sync stored no values');
         } catch (err) {
           deps.logger.warn({ tenantId, connectionId: c.id, err: err instanceof Error ? err.message : String(err) }, 'page insights sync failed');
+        }
+        try {
+          const s = await social.collectPagePostSnapshot(deps, tenantId, c.id);
+          if (s.note) deps.logger.info({ tenantId, connectionId: c.id, note: s.note }, 'page post snapshot');
+        } catch (err) {
+          deps.logger.warn({ tenantId, connectionId: c.id, err: err instanceof Error ? err.message : String(err) }, 'page post snapshot failed');
         }
       }
     });

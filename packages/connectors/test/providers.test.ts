@@ -2,7 +2,7 @@ import { createPublicKey, verify as cryptoVerify, generateKeyPairSync } from 'no
 import { gzipSync } from 'node:zlib';
 import { hmacSha256Hex } from '@futuregrow/observability';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { appStoreConnectJwt, EXECUTORS, fetchPageInsights, fetchSalesReport, PAGE_INSIGHT_METRICS, READ_CONNECTORS } from '../src/index.js';
+import { appStoreConnectJwt, EXECUTORS, fetchPageInsights, fetchPagePosts, fetchPageProfile, fetchSalesReport, PAGE_INSIGHT_METRICS, READ_CONNECTORS } from '../src/index.js';
 import { clearGoogleTokenCache } from '../src/providers/google.js';
 import { FixtureServer, makeCtx, meta } from './helpers.js';
 
@@ -166,6 +166,86 @@ describe('Meta Graph API', () => {
     });
   });
 
+  describe('organic post counters (no read_insights needed)', () => {
+    const pageCtx = () => makeCtx(server, { provider: 'meta', accessToken: 'PAGE_TOKEN', appSecret: 'APP_SECRET' }, { externalAccountId: '123' });
+    // The shape Graph v26 returned for a small Page on 2026-11-01: no `shares` field when a post has none.
+    const post = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      created_time: '2026-10-15T19:12:02+0000',
+      status_type: 'added_photos',
+      permalink_url: `https://fb.example/${id}`,
+      message: 'হ্যালো',
+      reactions: { data: [], summary: { total_count: 1 } },
+      comments: { data: [], summary: { order: 'chronological', total_count: 0, can_comment: true } },
+      ...extra,
+    });
+
+    it('reads lifetime reactions, top-level comments and shares; an absent counter is not_returned, never zero', async () => {
+      server.on('GET', '/v26.0/123/posts', (req) => (req.query.get('after') ? { json: { data: [post('123_3', { shares: { count: 2 }, reactions: undefined })] } } : { json: { data: [post('123_1'), post('123_2', { message: undefined })], paging: { cursors: { after: 'CUR1' }, next: 'https://graph.example/next' } } }));
+      const since = new Date('2026-08-03T12:00:00Z');
+      const r = await fetchPagePosts(pageCtx(), { since });
+      expect(r).toMatchObject({ truncated: false, requests: 2 });
+      expect(r.posts.map((p) => p.id)).toEqual(['123_1', '123_2', '123_3']);
+      expect(r.posts[0]).toEqual({
+        id: '123_1',
+        createdTime: '2026-10-15T19:12:02.000Z',
+        statusType: 'added_photos',
+        permalinkUrl: 'https://fb.example/123_1',
+        message: 'হ্যালো',
+        metrics: { reactions: { status: 'ok', value: 1 }, comments: { status: 'ok', value: 0 }, shares: { status: 'not_returned', value: null } },
+      });
+      expect(r.posts[1]!.message).toBeNull();
+      expect(r.posts[2]!.metrics).toEqual({ reactions: { status: 'not_returned', value: null }, comments: { status: 'ok', value: 0 }, shares: { status: 'ok', value: 2 } });
+      const [first, second] = server.find('GET', '/v26.0/123/posts');
+      expect(first!.query.get('fields')).toContain('reactions.summary(total_count).limit(0)');
+      expect(first!.query.get('fields')).toContain('comments.filter(toplevel).summary(true).limit(0)');
+      expect(first!.query.get('since')).toBe(String(since.getTime() / 1000));
+      expect(first!.headers.authorization).toBe('Bearer PAGE_TOKEN');
+      expect(first!.query.get('appsecret_proof')).toBe(hmacSha256Hex('APP_SECRET', 'PAGE_TOKEN'));
+      expect(second!.query.get('after')).toBe('CUR1');
+      expect(server.find('GET', /insights/)).toHaveLength(0);
+    });
+
+    it('stops after three pages and says so; an invalid token throws', async () => {
+      server.on('GET', '/v26.0/123/posts', (req) => ({ json: { data: [post(`123_${req.query.get('after') ?? '0'}`)], paging: { cursors: { after: `${Number(req.query.get('after') ?? 0) + 1}` }, next: 'https://graph.example/next' } } }));
+      const r = await fetchPagePosts(pageCtx(), { since: new Date('2026-08-01T00:00:00Z') });
+      expect(r).toMatchObject({ truncated: true, requests: 3 });
+      server.reset();
+      server.on('GET', '/v26.0/123/posts', { status: 400, json: { error: { code: 190, message: 'Error validating access token' } } });
+      await expect(fetchPagePosts(pageCtx(), { since: new Date() })).rejects.toMatchObject({ status: 401 });
+    });
+
+    it('reads the public Page profile with de-duplicated categories', async () => {
+      server.on('GET', '/v26.0/123', {
+        json: {
+          id: '123',
+          name: 'EPS-topik-Bangla',
+          about: 'বাংলায় কোরিয়ান',
+          category: 'Education',
+          category_list: [
+            { id: '1', name: 'Education' },
+            { id: '2', name: 'App Page' },
+          ],
+          website: 'https://play.google.com/store/apps/details?id=x',
+          link: 'https://www.facebook.com/123',
+          followers_count: 13,
+          verification_status: 'not_verified',
+        },
+      });
+      expect(await fetchPageProfile(pageCtx())).toEqual({
+        id: '123',
+        name: 'EPS-topik-Bangla',
+        about: 'বাংলায় কোরিয়ান',
+        description: null,
+        categories: ['Education', 'App Page'],
+        website: 'https://play.google.com/store/apps/details?id=x',
+        link: 'https://www.facebook.com/123',
+        followersCount: 13,
+        verificationStatus: 'not_verified',
+      });
+    });
+  });
+
   describe('separate Page and ads tokens', () => {
     const both = { provider: 'meta' as const, accessToken: 'PAGE_TOKEN', adsAccessToken: 'ADS_TOKEN', appSecret: 'APP_SECRET' };
     const pageMe = () => {
@@ -239,7 +319,7 @@ describe('Meta Graph API', () => {
       server.on('GET', '/v26.0/act_555', { json: { id: 'act_555', currency: 'BDT' } });
       const both = { provider: 'meta' as const, accessToken: 'PAGE_TOKEN', adsAccessToken: 'ADS_TOKEN', appSecret: 'APP_SECRET' };
       const h = await READ_CONNECTORS.meta!.healthCheck(makeCtx(server, both, { externalAccountId: '123', metadata: { adAccountId: 'act_555' } }));
-      expect(h).toMatchObject({ healthy: true, status: 'healthy', grantedScopes: PAGE_SCOPES, details: { id: '123', tokenType: 'PAGE', tokenExpiresAt: 'never', feedWebhook: true, adAccount: 'act_555 (BDT)', adsTokenType: 'SYSTEM_USER', adsTokenExpiresAt: 'never' } });
+      expect(h).toMatchObject({ healthy: true, status: 'healthy', grantedScopes: PAGE_SCOPES, details: { id: '123', tokenType: 'PAGE', readInsights: false, tokenExpiresAt: 'never', feedWebhook: true, adAccount: 'act_555 (BDT)', adsTokenType: 'SYSTEM_USER', adsTokenExpiresAt: 'never' } });
       const adsDebug = server.find('GET', '/v26.0/debug_token').find((r) => r.query.get('input_token') === 'ADS_TOKEN')!;
       expect(adsDebug.headers.authorization).toBe('Bearer ADS_TOKEN');
       expect(adsDebug.query.get('appsecret_proof')).toBe(hmacSha256Hex('APP_SECRET', 'ADS_TOKEN'));

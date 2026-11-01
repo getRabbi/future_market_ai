@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { type ModelProvider, PROMPTS, type ProviderOutcome, type StructuredRequest } from '@futuregrow/agent-kernel';
-import { analytics, autopilot, brain, clearModelCache, connectionsModule, createModelGateway, evidence, execution, experimentsModule, governance, ideas, record, systemActor } from '@futuregrow/core';
-import { actionRequests, analyticsRequests, appStoreReports, forecastPoints, forecastRuns, goalCycles, goalTasks, growthDecisions, growthGoals, killSwitches, metricSeries, organization, outboxEvents, socialPosts, withSystem, withTenant } from '@futuregrow/db';
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { analytics, autopilot, brain, clearModelCache, connectionsModule, createModelGateway, evidence, execution, experimentsModule, governance, ideas, knowledge, record, social, systemActor } from '@futuregrow/core';
+import { actionRequests, analyticsRequests, approvals, appStoreReports, auditLog, creativeBriefs, forecastPoints, forecastRuns, goalCycles, goalTasks, growthDecisions, growthGoals, growthIdeas, killSwitches, metricSeries, organization, outboxEvents, socialPosts, withSystem, withTenant } from '@futuregrow/db';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type { JobHelpers, Task } from 'graphile-worker';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
@@ -640,6 +640,338 @@ describe('Autopilot: a Facebook engagement goal measures real Page insights', ()
     expect((await goalRow(g.id, org)).pendingTrigger ?? '').not.toMatch(/evidence/);
     await tx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'), org);
   }, 120_000);
+});
+
+describe('Autopilot: a small Facebook Page without Page insights gets exploratory drafts; a suggest-only goal leaves them to a person (D-035)', () => {
+  it('reads the Page profile and post counters, proposes exploratory ideas from that evidence only, waits for approved claims about the product, then drafts Bangla posts that a person must schedule', async () => {
+    const org = `org_${randomUUID().slice(0, 8)}`;
+    const otx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => tx(fn, org);
+    await h.t.handle.db.insert(organization).values({ id: org, name: 'Small Page Co', slug: org });
+    await otx((t) => autopilot.setAutopilotEnabled(t, org, h.users.owner, true));
+    const conn = await connectionsModule.createConnection(h.deps, org, h.users.owner, { provider: 'meta', externalAccountId: '888', displayName: 'EPS Page', grantedScopes: ['pages_manage_posts', 'pages_read_engagement'], credentials: { accessToken: 'PAGE_888' } });
+    // Meta as it answered for a 13-follower Page: no insights values, three posts with one reaction each and no shares field.
+    server.on('GET', '/v26.0/888/insights', (req) => ({ json: { data: [{ name: req.query.get('metric'), period: 'day', values: [] }] } }));
+    server.on('GET', '/v26.0/888', { json: { id: '888', name: 'EPS Page', about: 'বাংলায় সহজে কোরিয়ান শিখুন', category: 'Education', website: 'https://play.example/eps', link: 'https://www.facebook.com/888', followers_count: 13 } });
+    const created = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    server.on('GET', '/v26.0/888/posts', { json: { data: ['a', 'b', 'c'].map((x, i) => ({ id: `888_${x}`, created_time: created(48 + i), status_type: 'added_photos', message: `কোরিয়ান শেখা ${x}`, reactions: { summary: { total_count: 1 } }, comments: { summary: { total_count: 0 } } })) } });
+
+    // What the owner prepares (Phase 4 evidence pack): the Page's product fact, store-listing evidence and a proposed claim.
+    const profile = await social.syncPageProfile(h.deps, org, conn.id, { actor: h.users.owner });
+    const listing = await otx((t) =>
+      evidence.admitEvidence(
+        t,
+        org,
+        h.users.owner,
+        {
+          sourceType: 'primary',
+          sourceOwner: 'google_play',
+          sourceUriOrObjectId: 'https://play.example/eps',
+          retrievedAt: h.clock.now().toISOString(),
+          licenseOrUsageRights: 'public listing, quoted for verification',
+          schemaVersion: '1',
+          piiClassification: 'none',
+          confidence: 0.9,
+          freshnessSlaHours: 24 * 90,
+          permittedUses: ['analytics', 'publishing'],
+          kind: 'snapshot',
+          summary: 'Store listing: Korean grammar with Bangla explanations',
+          content: { features: ['grammar'] },
+        } as never,
+        { now: h.clock.now() },
+      ),
+    );
+    const claim = await otx((t) => knowledge.proposeClaim(t, h.deps, org, h.users.operator, { text: 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শিখুন', claimType: 'product_capability', evidenceIds: [listing.evidenceId, profile.evidenceId!], entityIds: [profile.entityId!] }));
+    // An approved claim about something else in the same organization must never reach the drafts.
+    const otherEv = await otx((t) =>
+      evidence.admitEvidence(
+        t,
+        org,
+        h.users.owner,
+        {
+          sourceType: 'primary',
+          sourceOwner: 'smoke',
+          sourceUriOrObjectId: `crm://${randomUUID()}`,
+          retrievedAt: h.clock.now().toISOString(),
+          licenseOrUsageRights: 'first-party',
+          schemaVersion: '1',
+          piiClassification: 'none',
+          confidence: 0.9,
+          permittedUses: ['analytics'],
+          kind: 'observation',
+          summary: 'Synthetic smoke-test product',
+          content: { x: 1 },
+        } as never,
+        { now: h.clock.now() },
+      ),
+    );
+    const unrelated = await otx((t) => knowledge.proposeClaim(t, h.deps, org, h.users.operator, { text: 'Smoke widget exports reports nightly', claimType: 'product_capability', evidenceIds: [otherEv.evidenceId] }));
+    await otx((t) => knowledge.reviewClaim(t, org, h.users.approver, unrelated.id, 'approved'));
+
+    const plan = autopilot.interpretGoal('Improve our organic Facebook engagement over the next 30 days with $0 advertising budget.', { now: h.clock.now(), series: [], market: 'BD' });
+    const g = await otx((t) => autopilot.createGoal(t, h.deps, org, h.users.owner, { ...plan.draft, market: 'BD', autoSubmit: false }));
+    const kinds = async () => Object.fromEntries((await otx((t) => t.select().from(goalTasks).where(eq(goalTasks.goalId, g.id)).orderBy(asc(goalTasks.createdAt), asc(goalTasks.seq)))).map((x) => [x.kind, x]));
+    const runCycle = async () => {
+      for (let i = 0; i < 6; i++) {
+        await autopilot.advanceGoal(h.deps, org, g.id, { maxSteps: 20 });
+        h.clock.advance(2 * 60_000); // AI steps are spaced 90 s apart
+      }
+    };
+    const draftCalls = () => provider.calls.filter((x) => x.prompt === 'organicPostDrafts');
+
+    // Cycle 1: no Page insights, no forecast, the brand claim still awaits review.
+    await runCycle();
+    let k = await kinds();
+    expect(k.observe!.detail).toMatch(/Meta returned no Page insights values/);
+    expect(k.observe!.detail).toMatch(/Facebook Page EPS Page: 3 posts in the last 90 days.*reactions 3 \(from 3 posts\).*shares not returned by Meta/);
+    expect(k.observe!.detail).toMatch(/Bootstrap mode: .* has 0 of the 33 daily values/);
+    expect(k.observe!.output.brand).toMatchObject({ approvedClaimIds: [], pendingClaims: 1, entityIds: [profile.entityId] });
+    expect(k.forecast).toMatchObject({ status: 'blocked', needs: 'data' });
+    expect(k.research!.detail).toMatch(/EPS Page: 3 posts on .* by format: added_photos 3 \(mean reactions 1, mean top-level comments 0\).*Too few posts/);
+    expect(k.ideas).toMatchObject({ status: 'completed', output: { exploratory: true } });
+    const ideaPrompt = provider.calls.filter((x) => x.prompt === 'ideaGeneration').at(-1)!.content;
+    expect(ideaPrompt).toContain(profile.evidenceId);
+    expect(ideaPrompt).not.toContain(otherEv.evidenceId);
+    expect(ideaPrompt).toMatch(/Bootstrap \(exploratory\)/);
+    const goalIdeas = await otx((t) => t.select().from(growthIdeas).where(eq(growthIdeas.targetMetric, 'kpi.facebook.page_post_engagements')));
+    expect(goalIdeas.length).toBeGreaterThan(0);
+    for (const i of goalIdeas) expect(i).toMatchObject({ route: 'discovery_test', impactModel: { basis: 'exploratory', forecastValidated: false } });
+    expect(k.decide).toMatchObject({ status: 'skipped' });
+    expect(k.decide!.detail).toMatch(/decides only with a forecast/);
+    expect(k.content).toMatchObject({ status: 'blocked', needs: 'claims' });
+    expect(k.content!.detail).toMatch(/1 proposed claim about it wait for review/);
+    expect(draftCalls()).toHaveLength(0);
+    expect(await otx((t) => t.select().from(growthDecisions))).toHaveLength(0);
+
+    // The approver approves the claim; the next cycle drafts posts that state only that claim.
+    await otx((t) => knowledge.reviewClaim(t, org, h.users.approver, claim.id, 'approved'));
+    provider.responders.set('organicPostDrafts', (c) => {
+      const ids = [...c.matchAll(new RegExp(`claim (${UUID})`, 'g'))].map((m) => m[1]!);
+      return {
+        abstain: false,
+        abstainReason: '',
+        title: 'বাংলায় কোরিয়ান গ্রামার',
+        angle: 'সহজ বাংলা ব্যাখ্যা',
+        hooks: ['কোরিয়ান গ্রামার এখন বাংলায়'],
+        proofPoints: [{ text: 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার', claimId: ids[0] }],
+        cta: 'অ্যাপটি দেখুন',
+        prohibitedClaims: ['পাস নিশ্চিত'],
+        posts: [
+          { text: 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শিখুন। আজ কোন অধ্যায় পড়ছেন?', claimIds: [ids[0]] },
+          { text: '১০০% পাস নিশ্চিত!', claimIds: [] },
+          { text: 'রাতে রিপোর্ট পান', claimIds: [unrelated.id] },
+        ],
+      };
+    });
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'run_now'));
+    h.clock.advance(61 * 60_000);
+    await runCycle();
+    k = await kinds();
+    expect(k.content).toMatchObject({ status: 'completed', output: { language: 'bn', exploratory: true } });
+    expect(k.content!.detail).toMatch(/Drafted 1 exploratory Bangla Facebook post and a creative brief .* stating only 1 approved claim about EPS Page\. Not forecast-validated.*nothing is scheduled or published\. 2 proposed drafts failed the checks/);
+    expect(draftCalls()).toHaveLength(1);
+    expect(draftCalls()[0]!.content).toContain(claim.id);
+    expect(draftCalls()[0]!.content).not.toContain(unrelated.id);
+    expect(draftCalls()[0]!.content).toMatch(/Language: Bangla \(bn\)/);
+    const posts = await otx((t) => t.select().from(socialPosts));
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ status: 'draft', platform: 'facebook', connectionId: conn.id, claimIds: [claim.id], createdBy: 'system:autopilot', disclosure: { review: { exploratory: true, forecastValidated: false, language: 'bn', goalId: g.id, market: 'BD' } } });
+    const brief = (await otx((t) => t.select().from(creativeBriefs)))[0]!;
+    expect(brief).toMatchObject({ status: 'draft', channel: 'facebook' });
+    expect(brief.title).toMatch(/^\[Exploratory\]/);
+    const inbox = await otx((t) => autopilot.inbox(t));
+    expect(inbox.postDrafts).toMatchObject([{ id: posts[0]!.id, claims: [{ id: claim.id, status: 'approved' }] }]);
+    expect(inbox.drafts.map((d) => d.id)).toEqual([brief.id]);
+    // Suggest only: the submit step stops for the person; no decision, no action, no spend, no Graph write; the scheduler ignores drafts.
+    expect(k.submit).toMatchObject({ status: 'blocked', needs: 'approval' });
+    expect(await otx((t) => t.select().from(growthDecisions))).toHaveLength(0);
+    expect(await otx((t) => t.select().from(actionRequests))).toHaveLength(0);
+    expect(await social.dispatchDuePosts(h.deps, org)).toEqual([]);
+    expect(server.find('POST', /\/v26\.0\/888/)).toHaveLength(0);
+    // Another tenant sees none of it.
+    expect(await tx((t) => social.listPostDrafts(t))).toEqual([]);
+
+    // A rerun (or a worker that crashed after drafting) does not draft the same idea again.
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'run_now'));
+    h.clock.advance(61 * 60_000);
+    await runCycle();
+    expect((await kinds()).content).toMatchObject({ status: 'skipped' });
+    expect(draftCalls()).toHaveLength(1);
+    expect(await otx((t) => t.select().from(socialPosts))).toHaveLength(1);
+
+    // A person schedules the reviewed draft: it becomes theirs and goes through policy and approval.
+    await expect(otx((t) => social.scheduleDraft(t, h.deps, org, h.users.analyst, posts[0]!.id, { scheduledAt: h.clock.now().toISOString(), geographies: ['BD'] }))).rejects.toThrow(/roles/);
+    const scheduled = await otx((t) => social.scheduleDraft(t, h.deps, org, h.users.operator, posts[0]!.id, { scheduledAt: h.clock.now().toISOString(), geographies: ['BD'] }));
+    expect(scheduled).toMatchObject({ status: 'scheduled', createdBy: `user:${h.users.operator.id}` });
+    await expect(otx((t) => social.discardDraft(t, org, h.users.operator, posts[0]!.id))).rejects.toThrow(/not a draft/);
+    const [dispatched] = await social.dispatchDuePosts(h.deps, org);
+    expect(dispatched!.status).toBe('APPROVAL_REQUIRED');
+    expect(server.find('POST', /\/v26\.0\/888/)).toHaveLength(0);
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'));
+  }, 180_000);
+});
+
+describe('Autopilot: under a pre-authorized publishing policy an exploratory Facebook post goes from AI draft to verified publication unattended (D-036)', () => {
+  it('waits for approval while the policy requires it; once the owner pre-authorizes publishing it drafts, publishes through M23, verifies by read-back, keeps the daily post limit, reads the results back and stops at a kill switch', async () => {
+    const org = `org_${randomUUID().slice(0, 8)}`;
+    const otx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => tx(fn, org);
+    await h.t.handle.db.insert(organization).values({ id: org, name: 'Unattended Page Co', slug: org });
+    await otx((t) => autopilot.setAutopilotEnabled(t, org, h.users.owner, true));
+    await governance.upsertJurisdictionRules(h.t.handle.db, { userId: h.users.owner.id }, { jurisdiction: 'BD', domain: 'advertising', rules: { reviewed: true }, sourceRefs: ['https://example.org/bd'], approve: true });
+    const publishing = (autonomy: 'approval_required' | 'pre_authorized_within_limits') =>
+      otx((t) =>
+        governance.setTenantPolicy(t, org, h.users.owner, {
+          configured: true,
+          currency: 'USD',
+          approvedJurisdictions: ['BD'],
+          categories: { PUBLIC_PUBLISHING: { autonomy, approverRoles: ['approver'], requiresDistinctApprover: true, maxSpendDeltaMicrosPerAction: null, maxSpendDeltaMicrosPerDay: null, maxAudienceSize: null } },
+        }),
+      );
+    await publishing('approval_required');
+    const conn = await connectionsModule.createConnection(h.deps, org, h.users.owner, { provider: 'meta', externalAccountId: '777', displayName: 'Topik Page', grantedScopes: ['pages_manage_posts', 'pages_read_engagement'], credentials: { accessToken: 'PAGE_777' } });
+
+    // A fake Graph API for this Page (never the real one): no insights, two older posts, and every publication can be read back.
+    const published: { id: string; message: string; at: string }[] = [];
+    const ago = (hours: number) => new Date(h.clock.now().getTime() - hours * 3_600_000).toISOString();
+    const older = ['a', 'b'].map((x, i) => ({ id: `777_${x}`, created_time: ago(72 + i), status_type: 'mobile_status_update', message: `কোরিয়ান শব্দ ${x}`, reactions: { summary: { total_count: 1 } }, comments: { summary: { total_count: 0 } } }));
+    server.on('GET', '/v26.0/777/insights', (req) => ({ json: { data: [{ name: req.query.get('metric'), period: 'day', values: [] }] } }));
+    server.on('GET', '/v26.0/777', { json: { id: '777', name: 'Topik Page', about: 'বাংলায় কোরিয়ান ভাষা', category: 'Education', link: 'https://www.facebook.com/777', followers_count: 13 } });
+    server.on('GET', '/v26.0/777/posts', () => ({ json: { data: [...published.map((p) => ({ id: p.id, created_time: p.at, status_type: 'mobile_status_update', message: p.message, reactions: { summary: { total_count: 4 } }, comments: { summary: { total_count: 1 } } })), ...older] } }));
+    server.on('POST', '/v26.0/777/feed', (req) => {
+      const id = `777_${published.length + 1}`;
+      published.push({ id, message: req.form!.get('message')!, at: h.clock.now().toISOString() });
+      return { json: { id } };
+    });
+    server.on('GET', /^\/v26\.0\/777_\d+$/, (req) => {
+      const p = published.find((x) => req.path === `/v26.0/${x.id}`);
+      return p ? { json: { id: p.id, message: p.message, is_published: true, permalink_url: `https://fb.example/${p.id}` } } : { status: 404, json: { error: { message: 'not found' } } };
+    });
+
+    // The owner's one-time setup: the Page's product fact and one approved claim about it, reused by every post.
+    const profile = await social.syncPageProfile(h.deps, org, conn.id, { actor: h.users.owner });
+    const claim = await otx((t) => knowledge.proposeClaim(t, h.deps, org, h.users.operator, { text: 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শিখুন', claimType: 'product_capability', evidenceIds: [profile.evidenceId!], entityIds: [profile.entityId!] }));
+    await otx((t) => knowledge.reviewClaim(t, org, h.users.approver, claim.id, 'approved'));
+    const questions = ['আজ কোন অধ্যায় পড়ছেন?', 'কোন বিষয়টি কঠিন লাগে?', 'আপনি কোন শব্দটি আগে শিখবেন?', 'আজ কতক্ষণ অনুশীলন করবেন?', 'কোন উচ্চারণটি নতুন লাগল?'];
+    let drafted = 0;
+    provider.responders.set('organicPostDrafts', (c) => {
+      const id = c.match(new RegExp(`claim (${UUID})`))?.[1];
+      return {
+        abstain: false,
+        abstainReason: '',
+        title: 'বাংলায় কোরিয়ান গ্রামার',
+        angle: 'প্রশ্ন দিয়ে আলাপ',
+        hooks: ['কোরিয়ান গ্রামার এখন বাংলায়'],
+        proofPoints: [{ text: 'বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার', claimId: id }],
+        cta: 'মন্তব্যে জানান',
+        prohibitedClaims: [],
+        posts: [{ text: `বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শিখুন। ${questions[drafted++ % questions.length]}`, claimIds: [id] }],
+      };
+    });
+    const plan = autopilot.interpretGoal('Grow organic engagement on our Facebook Page over the next 30 days with $0 advertising budget.', { now: h.clock.now(), series: [], market: 'BD' });
+    const g = await otx((t) => autopilot.createGoal(t, h.deps, org, h.users.owner, { ...plan.draft, market: 'BD' }));
+    expect(g).toMatchObject({ autoSubmit: true, channels: ['organic_social'], adBudgetMicros: 0 });
+
+    const kinds = async () => Object.fromEntries((await otx((t) => t.select().from(goalTasks).where(eq(goalTasks.goalId, g.id)).orderBy(asc(goalTasks.createdAt), asc(goalTasks.seq)))).map((x) => [x.kind, x]));
+    // Only the worker acts in a cycle: advance jobs, outbox dispatch and the execute/verify jobs it queues.
+    const runCycle = async () => {
+      for (let i = 0; i < 8; i++) {
+        await autopilot.advanceGoal(h.deps, org, g.id, { maxSteps: 20 });
+        await drain();
+        h.clock.advance(2 * 60_000);
+      }
+    };
+    const feedPosts = () => server.find('POST', '/v26.0/777/feed').length;
+    const humanAudit = async () => (await otx((t) => t.select({ n: sql<number>`count(*)::int` }).from(auditLog).where(eq(auditLog.actorType, 'user'))))[0]!.n;
+    const results = (k: Record<string, typeof goalTasks.$inferSelect>) => k.measure!.output.posts as { externalPostId: string; observedAt: string | null; metrics: Record<string, number | null> }[];
+
+    // Day 1 — policy requires approval: the post goes to M23 by itself and waits there; nothing reaches Meta.
+    await runCycle();
+    let k = await kinds();
+    expect(k.content).toMatchObject({ status: 'completed', output: { language: 'bn', exploratory: true } });
+    expect(k.content!.detail).toMatch(/The submit step hands one to the execution gateway \(M23\)/);
+    expect(k.submit).toMatchObject({ status: 'completed', output: { status: 'APPROVAL_REQUIRED', actionType: 'social.facebook.publish_post' } });
+    expect(k.track!.status).toBe('waiting');
+    const firstId = k.submit!.refs.actionId!;
+    const first = (await otx((t) => execution.getActionDetail(t, firstId))).action;
+    expect(first.proposedBy).toMatchObject({ type: 'agent', id: 'autopilot' });
+    expect(first.policyDecision!.reasons.map((r) => r.code)).toEqual(['CATEGORY_REQUIRES_APPROVAL']);
+    expect(feedPosts()).toBe(0);
+    const inbox1 = await otx((t) => autopilot.inbox(t));
+    expect(inbox1.approvals).toMatchObject([{ id: firstId, goalId: g.id, goalTitle: g.title }]);
+    expect(inbox1.otherApprovals).toBe(0);
+    expect(inbox1.postDrafts).toEqual([]);
+    await execution.decideApproval(h.deps, org, h.users.approver, firstId, { decision: 'rejected', expectedActionHash: first.actionHash });
+    await runCycle();
+    k = await kinds();
+    expect(k.track!.detail).toMatch(/ended as rejected/);
+    expect(feedPosts()).toBe(0);
+
+    // The owner pre-authorizes Facebook publishing once. From here until the kill switch no person acts.
+    await publishing('pre_authorized_within_limits');
+    const humansBefore = await humanAudit();
+
+    // Day 2, on schedule: a new idea, a new draft, published through M23 and verified by read-back.
+    h.clock.advance(24 * 3_600_000);
+    await runCycle();
+    k = await kinds();
+    expect(k.observe!.detail).toMatch(/your publishing policy decides whether a post publishes on its own/);
+    expect(k.ideas).toMatchObject({ status: 'completed', output: { exploratory: true } });
+    expect(k.submit).toMatchObject({ status: 'completed', output: { status: 'APPROVED' } });
+    expect(k.submit!.detail).toMatch(/pre-authorizes it/);
+    expect(k.track).toMatchObject({ status: 'completed' });
+    expect(k.track!.detail).toMatch(/independently verified/);
+    expect(k.learn!.detail).toMatch(/a post went to the execution gateway and is verified/);
+    const actionId = k.submit!.refs.actionId!;
+    const [a] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, actionId)));
+    expect(a).toMatchObject({ status: 'VERIFIED', proposedByType: 'agent', proposedById: 'autopilot', decisionId: null });
+    expect((a!.policyDecision as { outcome: string }).outcome).toBe('PRE_AUTHORIZED');
+    const snapshotId = (k.observe!.output.organic as { pages: { snapshot: { evidenceId: string } }[] }).pages[0]!.snapshot.evidenceId;
+    expect(a!.evidenceIds).toContain(snapshotId);
+    expect(await otx((t) => t.select().from(approvals).where(eq(approvals.actionId, actionId)))).toHaveLength(0);
+    expect(feedPosts()).toBe(1);
+    const [post1] = await otx((t) => t.select().from(socialPosts).where(eq(socialPosts.actionId, actionId)));
+    expect(post1).toMatchObject({ status: 'published_verified', externalPostId: '777_1', externalUrl: 'https://fb.example/777_1', createdBy: 'system:autopilot', claimIds: [claim.id] });
+    expect(published[0]!.message).toBe(post1!.caption);
+    expect((await goalRow(g.id, org)).memory).toMatchObject({ triedIdeas: { [k.submit!.output.ideaId as string]: { outcome: 'VERIFIED' } } });
+
+    // Same day, the owner asks for another cycle: the daily post limit (1) holds the next draft back.
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'run_now'));
+    const humansAfterRunNow = await humanAudit();
+    h.clock.advance(61 * 60_000);
+    await runCycle();
+    k = await kinds();
+    expect(k.submit).toMatchObject({ status: 'skipped' });
+    expect(k.submit!.detail).toMatch(/already handed 1 post to the execution gateway in the last 24 hours \(limit 1\)/);
+    expect(feedPosts()).toBe(1);
+
+    // Day 3, on schedule: the first post's counters are read back from the Page, and the next post is published.
+    h.clock.advance(24 * 3_600_000);
+    await runCycle();
+    k = await kinds();
+    expect(feedPosts()).toBe(2);
+    expect(k.track!.detail).toMatch(/independently verified/);
+    expect(results(k).find((r) => r.externalPostId === '777_1')).toMatchObject({ metrics: { reactions: 4, comments: 1, shares: null } });
+    expect(results(k).find((r) => r.externalPostId === '777_2')).toMatchObject({ observedAt: null });
+    expect(k.measure!.detail).toMatch(/2 verified posts published for this goal \(1 not read back from the Page yet\): post of .*: reactions 4, top-level comments 1, shares not returned/);
+    expect(published[1]!.message).not.toBe(published[0]!.message);
+    // Apart from the owner's "run now", no person did anything between the policy grant and two verified posts.
+    expect(humansAfterRunNow - humansBefore).toBe(1);
+    expect(await humanAudit()).toBe(humansAfterRunNow);
+
+    // Day 4: a kill switch on the Meta connection. The gateway denies the post, which returns to the drafts with the reason.
+    const ks = await otx((t) => governance.engageKillSwitch(t, org, h.users.owner, { scope: 'connector', targetRef: conn.id, reason: 'brand review' }));
+    h.clock.advance(24 * 3_600_000);
+    await runCycle();
+    k = await kinds();
+    expect(k.submit).toMatchObject({ status: 'blocked', needs: 'configuration', output: { status: 'DENIED' } });
+    expect(k.submit!.detail).toMatch(/denied publishing the post: .*KILL_SWITCH_ENGAGED/);
+    expect(feedPosts()).toBe(2);
+    const back = (await otx((t) => autopilot.inbox(t))).postDrafts.find((d) => d.id === k.submit!.output.postId);
+    expect(back?.statusReason).toMatch(/^Not published automatically: .*KILL_SWITCH_ENGAGED/);
+    // The Autopilot never offers the same draft twice.
+    expect(await social.submitPostDraft(h.deps, org, back!.id, { geographies: ['BD'], evidenceIds: [] })).toMatchObject({ action: null, reason: /already offered/ });
+    await otx((t) => governance.releaseKillSwitch(t, org, h.users.owner, ks.killSwitch.id));
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'));
+  }, 300_000);
 });
 
 describe('Autopilot: budgets, controls and loop prevention', () => {

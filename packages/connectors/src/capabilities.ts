@@ -124,6 +124,23 @@ const seeds: Seed[] = [
     sourceUrl: 'https://developers.facebook.com/docs/graph-api/reference/insights',
     notes: 'Daily organic metrics page_post_engagements, page_daily_follows_unique, page_media_view, page_views_total. Metric names checked live against v26.0 on 2026-10-31; Meta returned no values for a 13-follower Page whose token lacks read_insights.',
   },
+  {
+    platform: 'meta',
+    apiVersion: DEFAULT_API_VERSIONS.meta,
+    capability: 'facebook_page_post_counters',
+    supported: true,
+    requiredScopes: ['pages_read_engagement'],
+    requiredAccountType: 'facebook_page (page access token)',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 30, refillPerSecond: 0.5, notes: 'Meta Business Use Case rate limits; at most 3 requests per Page per day, plus the profile weekly' },
+    quota: {},
+    regionalRestrictions: [],
+    termsVersion: null,
+    fallback: 'read_only',
+    sourceUrl: 'https://developers.facebook.com/docs/graph-api/reference/page/feed',
+    notes:
+      "Lifetime reactions, top-level comments and shares of the Page's own posts (last 90 days) as daily snapshots, plus the public Page profile (D-035). No read_insights needed. Checked live against v26.0 on 2026-11-01: a 13-follower Page returned reactions and comment counts; shares is omitted when absent and recorded as not_returned.",
+  },
   // ---------------- Google Ads (D-003) ----------------
   {
     platform: 'google_ads',

@@ -161,9 +161,9 @@ function usePoll(reload: () => Promise<void>, ms = 15_000) {
 export function AutopilotShell({ me, status, orgSelect, onStatus }: { me: Me; status: AutopilotStatus; orgSelect: ReactNode; onStatus: () => void }) {
   const initial = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('view') : null) as View | null;
   const [view, setView] = useState<View>(initial && VIEWS.some((v) => v.key === initial) ? initial : 'goals');
-  const inbox = useApi<{ approvals: unknown[]; decisions: unknown[]; drafts: unknown[] }>('/v1/autopilot/inbox');
+  const inbox = useApi<{ approvals: unknown[]; decisions: unknown[]; drafts: unknown[]; postDrafts?: unknown[] }>('/v1/autopilot/inbox');
   usePoll(inbox.reload, 30_000);
-  const pending = (inbox.data?.approvals.length ?? 0) + (inbox.data?.decisions.length ?? 0) + (inbox.data?.drafts.length ?? 0);
+  const pending = (inbox.data?.approvals.length ?? 0) + (inbox.data?.decisions.length ?? 0) + (inbox.data?.drafts.length ?? 0) + (inbox.data?.postDrafts?.length ?? 0);
 
   useEffect(() => {
     const onPop = () => {
@@ -727,6 +727,57 @@ interface Inbox {
   otherApprovals: number;
   decisions: { id: string; objective: string; proposedAction: { actionType: string; params: Record<string, unknown> } | null; narrative: string | null; createdAt: string; goalTitle: string }[];
   drafts: { id: string; title: string; channel: string; createdAt: string }[];
+  postDrafts?: PostDraft[];
+}
+
+interface PostDraft {
+  id: string;
+  caption: string;
+  createdAt: string;
+  claims: { id: string; text: string; status: string }[];
+  review: { language?: string; market?: string; evidenceIds?: string[] };
+  statusReason: string | null;
+}
+
+/** A post draft the Autopilot did not publish itself (D-035/D-036): a person schedules it (then policy and approval apply) or discards it. */
+function PostDraftItem({ draft, editable, onDone, onError }: { draft: PostDraft; editable: boolean; onDone: () => void; onError: (err: unknown) => void }) {
+  const [when, setWhen] = useState('');
+  const act = async (path: string, body?: unknown) => {
+    try {
+      await api('POST', path, body);
+      onDone();
+    } catch (err) {
+      onError(err);
+    }
+  };
+  const evidence = draft.review.evidenceIds?.length ?? 0;
+  return (
+    <li className="ap-task waiting">
+      <div className="ap-task-head">
+        <strong>Exploratory post{draft.review.language === 'bn' ? ' (Bangla)' : ''}</strong>
+        <span className="small muted">{relativeTime(draft.createdAt)}</span>
+      </div>
+      <p className="ap-draft-text" lang={draft.review.language}>
+        {draft.caption}
+      </p>
+      <div className="small muted">
+        {draft.claims.length ? `States ${draft.claims.length} approved claim${draft.claims.length === 1 ? '' : 's'}: ${draft.claims.map((c) => `“${c.text}”`).join(' · ')}. ` : 'States no product claim. '}
+        Based on {evidence} evidence record{evidence === 1 ? '' : 's'}. Not forecast-validated.
+        {draft.statusReason?.startsWith('Not published automatically') ? ` ${draft.statusReason}.` : ''}
+      </div>
+      {editable ? (
+        <div className="row">
+          <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} aria-label="Publish time" />
+          <button type="button" disabled={!when} onClick={() => void act(`/v1/social/drafts/${draft.id}/schedule`, { scheduledAt: new Date(when).toISOString(), geographies: draft.review.market ? [draft.review.market] : [] })}>
+            Schedule (needs approval)
+          </button>
+          <button type="button" onClick={() => void act(`/v1/social/drafts/${draft.id}/discard`)}>
+            Discard
+          </button>
+        </div>
+      ) : null}
+    </li>
+  );
 }
 
 function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
@@ -747,7 +798,12 @@ function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
   if (inbox.error) return <ErrorNotice error={inbox.error} />;
   if (!inbox.data) return <LoadingRows label="Loading approvals…" />;
   const d = inbox.data;
-  const total = d.approvals.length + d.decisions.length + d.drafts.length;
+  const posts = d.postDrafts ?? [];
+  const total = d.approvals.length + d.decisions.length + d.drafts.length + posts.length;
+  const reload = () => {
+    void inbox.reload();
+    onChange();
+  };
   return (
     <div className="stack">
       <ErrorNotice error={error} />
@@ -825,6 +881,22 @@ function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
               </li>
             ))}
           </ul>
+        </section>
+      ) : null}
+      {posts.length ? (
+        <section className="card">
+          <header>
+            <h2>Facebook post drafts</h2>
+          </header>
+          <ul className="ap-tasks">
+            {posts.map((p) => (
+              <PostDraftItem key={p.id} draft={p} editable={canEdit(me)} onDone={reload} onError={setError} />
+            ))}
+          </ul>
+          <p className="small muted">
+            Exploratory drafts from approved claims and your Page's own data, not validated by a forecast. The Autopilot publishes posts itself when your publishing policy allows it; these are the ones it did not (suggest-only goals, or posts the policy stopped). Scheduling one sends it through your policy and
+            approval.
+          </p>
         </section>
       ) : null}
       {d.otherApprovals ? (

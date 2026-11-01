@@ -14,7 +14,7 @@ export * from './html.js';
 export * from './http.js';
 export { appStoreConnectJwt, fetchSalesReport, readLocalization } from './providers/apple.js';
 export { clearGoogleTokenCache, gaqlSearch, googleAccessToken } from './providers/google.js';
-export { fetchPageInsights, PAGE_INSIGHT_METRICS, type PageInsightMetricResult } from './providers/meta.js';
+export { fetchPageInsights, fetchPagePosts, fetchPageProfile, PAGE_INSIGHT_METRICS, PAGE_POST_METRICS, type PageInsightMetricResult, type PagePostCounter, type PagePostMetric, type PagePostObservation, type PageProfile } from './providers/meta.js';
 export { chatwootCreateHandoff, posthogCaptureBatch, searchConsoleQuery } from './providers/misc.js';
 export * from './providers/money.js';
 export type { ResolvedEmail } from './providers/resend.js';

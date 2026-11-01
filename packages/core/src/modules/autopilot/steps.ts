@@ -1,5 +1,6 @@
 import { type BlockNeed, getActionType, type TaskKind } from '@futuregrow/contracts';
 import {
+  actionRequests,
   analyticsRequests,
   appStoreReports,
   claims,
@@ -17,22 +18,39 @@ import {
   metricPoints,
   metricSeries,
   seoAudits,
+  socialPosts,
   type Tx,
   trends,
   withTenant,
 } from '@futuregrow/db';
-import { and, desc, eq, gte, inArray, isNull, lt, max, min, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, max, min, ne, or, sql } from 'drizzle-orm';
 import { type CoreDeps, systemActor } from '../../deps.js';
 import { generateIdeas, rankedIdeas } from '../m06-ideas/index.js';
 import { autoAcceptDecision, proposeDecision, riskFromParams } from '../m07-brain/index.js';
 import { requestAnalytics } from '../m08-analytics/index.js';
 import { requestAnalysis } from '../m10-experiments/index.js';
 import { generateBrief } from '../m13-creative/index.js';
-import { FACEBOOK_INSIGHT_SERIES, isFacebookInsightsKey, postForPublishAction, syncPageInsights } from '../m16-social/index.js';
+import {
+  type BrandScope,
+  collectPagePostSnapshot,
+  describeTotals,
+  draftLanguage,
+  draftOrganicPosts,
+  FACEBOOK_INSIGHT_SERIES,
+  goalPostResults,
+  isFacebookInsightsKey,
+  type PostResult,
+  type PostSnapshotResult,
+  pageBrandScope,
+  postForPublishAction,
+  submitPostDraft,
+  syncPageInsights,
+  syncPageProfile,
+} from '../m16-social/index.js';
 import { keywordOpportunities, queueSeoAudit } from '../m18-discovery/index.js';
 import { DOWNLOADS_SERIES_KEY, syncDownloadsSeries } from '../m19-app-growth/index.js';
 import { approvedJurisdictions, getTenantPolicy } from '../m24-governance/index.js';
-import { type GoalRow, goalActions, goalCategories, goalKpi } from './goals.js';
+import { type GoalRow, goalActions, goalCategories, goalKpi, limitsOf } from './goals.js';
 
 export type CycleRow = typeof goalCycles.$inferSelect;
 export type TaskRow = typeof goalTasks.$inferSelect;
@@ -142,8 +160,53 @@ async function refreshPageInsights(c: StepContext, metricKey: string): Promise<{
   return { points, notes };
 }
 
+export interface OrganicPage {
+  connectionId: string;
+  pageId: string;
+  name: string;
+  snapshot: Pick<PostSnapshotResult, 'evidenceId' | 'day' | 'reused' | 'totals' | 'stats' | 'change' | 'note'> | null;
+}
+
+/**
+ * organic_social goals read their Facebook Pages' profile (at most weekly) and post counters
+ * (at most daily; a same-day call reuses the stored snapshot) as the Autopilot (D-035).
+ */
+async function refreshOrganicPages(c: StepContext): Promise<{ pages: OrganicPage[]; notes: string[] }> {
+  const conns = await tx(c, (t) =>
+    t
+      .select({ id: connections.id, pageId: connections.externalAccountId, name: connections.displayName })
+      .from(connections)
+      .where(and(eq(connections.provider, 'meta'), inArray(connections.status, ['active', 'read_only']))),
+  );
+  const pages: OrganicPage[] = [];
+  const notes: string[] = [];
+  const why = (err: unknown) => (err instanceof Error ? err.message : String(err));
+  for (const conn of conns) {
+    const page: OrganicPage = { connectionId: conn.id, pageId: conn.pageId, name: conn.name, snapshot: null };
+    try {
+      await syncPageProfile(c.deps, c.tenantId, conn.id, { actor: AUTOPILOT });
+    } catch (err) {
+      notes.push(`Reading the profile of ${conn.name} failed: ${why(err)}`);
+    }
+    try {
+      const s = await collectPagePostSnapshot(c.deps, c.tenantId, conn.id, { actor: AUTOPILOT });
+      page.snapshot = { evidenceId: s.evidenceId, day: s.day, reused: s.reused, totals: s.totals, stats: s.stats, change: s.change, note: s.note };
+    } catch (err) {
+      notes.push(`Reading the posts of ${conn.name} failed: ${why(err)}`);
+    }
+    pages.push(page);
+  }
+  return { pages, notes };
+}
+
+/** Bootstrap (D-035): an organic_social goal whose KPI is too short for a forecast still gets exploratory ideas and drafts for review. */
+function bootstrapOf(c: StepContext): { active: boolean; reason: string | null } {
+  return (c.prior.observe?.output.bootstrap as { active: boolean; reason: string | null } | undefined) ?? { active: false, reason: null };
+}
+
 const observe: StepExecutor = async (c) => {
   const insights = isFacebookInsightsKey(goalKpi(c.goal).metricKey) ? await refreshPageInsights(c, goalKpi(c.goal).metricKey) : null;
+  const organic = c.goal.channels.includes('organic_social') ? await refreshOrganicPages(c) : null;
   return tx(c, async (t) => {
     const kpi = goalKpi(c.goal);
     const bridged = kpi.metricKey === DOWNLOADS_SERIES_KEY ? await syncDownloadsSeries(t, c.tenantId) : null;
@@ -170,7 +233,20 @@ const observe: StepExecutor = async (c) => {
     const markets = await approvedJurisdictions(t, policy);
     const reports = kpi.metricKey === DOWNLOADS_SERIES_KEY ? ((await t.select({ n: sql<number>`count(*)::int` }).from(appStoreReports))[0]?.n ?? 0) : null;
     const points = stats?.n ?? 0;
-    const warnings: string[] = [...(insights?.notes ?? [])];
+    const warnings: string[] = [...(insights?.notes ?? []), ...(organic?.notes ?? [])];
+    const bootstrap = organic?.pages.length && points < MIN_KPI_POINTS ? { active: true, reason: `${kpi.label} has ${points} of the ${MIN_KPI_POINTS} daily values a forecast needs` } : { active: false, reason: null };
+    const brand: BrandScope | null = organic
+      ? await pageBrandScope(
+          t,
+          organic.pages.map((p) => p.pageId),
+          c.now,
+        )
+      : null;
+    const pageLines = (organic?.pages ?? []).map((p) =>
+      p.snapshot
+        ? `Facebook Page ${p.name}: ${p.snapshot.stats.posts} post${p.snapshot.stats.posts === 1 ? '' : 's'} in the last 90 days${p.snapshot.stats.lastPostAt ? ` (latest ${fmtDate(p.snapshot.stats.lastPostAt)})` : ''}; lifetime post counters: ${describeTotals(p.snapshot.totals)}.`
+        : `Facebook Page ${p.name}: post counters unavailable.`,
+    );
     if (!policy.configured) warnings.push('Your autonomy policy is not configured, so every action will wait for approval.');
     if (!markets.includes(c.goal.market)) warnings.push(`No legal-approved rules for market ${c.goal.market}: public or messaging actions also need legal approval.`);
     if (!c.deps.models) warnings.push('No approved AI model is available, so ideas and decisions cannot be generated.');
@@ -179,8 +255,13 @@ const observe: StepExecutor = async (c) => {
       series ? `${kpi.label}: ${points} data point${points === 1 ? '' : 's'} (latest ${fmtDate(stats?.last)})${bridged ? `, ${bridged.points} from App Store reports` : ''}${insights?.points ? `, ${insights.points} daily values just synced from Facebook Page insights` : ''}.` : `No ${kpi.label} data yet.`,
       `${active.length} of ${conns.length} connection${conns.length === 1 ? '' : 's'} active${active.length ? ` (${[...new Set(active.map((x) => x.provider))].join(', ')})` : ''}.`,
       `${ev?.n ?? 0} admitted evidence records, ${cl?.n ?? 0} approved claims, ${ideas?.n ?? 0} open ideas for this KPI, ${open.length} open action${open.length === 1 ? '' : 's'}.`,
+      ...pageLines,
+      brand && organic?.pages.length ? `About the Page's product: ${brand.evidenceIds.length} current evidence records, ${brand.approvedClaimIds.length} approved claims, ${brand.pendingClaims} claims awaiting review.` : '',
+      bootstrap.active ? `Bootstrap mode: ${bootstrap.reason}, so this cycle prepares exploratory ideas and posts (not forecast-validated)${c.goal.autoSubmit ? '; your publishing policy decides whether a post publishes on its own or waits for approval' : ' for your review only'}.` : '',
       ...warnings,
-    ].join(' ');
+    ]
+      .filter(Boolean)
+      .join(' ');
     return {
       kind: 'completed',
       detail,
@@ -199,6 +280,9 @@ const observe: StepExecutor = async (c) => {
         policyConfigured: policy.configured,
         marketApproved: markets.includes(c.goal.market),
         modelAvailable: Boolean(c.deps.models),
+        organic: organic ? { pages: organic.pages } : null,
+        brand,
+        bootstrap,
         warnings,
       },
     };
@@ -282,9 +366,27 @@ const research: StepExecutor = async (c) =>
         notes.push(`asked M04 to test ${kpi.label} for a trend`);
       }
     }
-    const detail = `Market inputs from the last 30 days: ${tr?.n ?? 0} trends, ${ob?.n ?? 0} competitor observations, ${keywords.length} keyword opportunities.${notes.length ? ` Also ${notes.join('; ')}.` : ''}`;
-    return { kind: 'completed', detail, refs, output: { trends: tr?.n ?? 0, competitorObservations: ob?.n ?? 0, keywordOpportunities: keywords.length } };
+    const organic = organicObservations(c);
+    const detail = `Market inputs from the last 30 days: ${tr?.n ?? 0} trends, ${ob?.n ?? 0} competitor observations, ${keywords.length} keyword opportunities.${notes.length ? ` Also ${notes.join('; ')}.` : ''}${organic.length ? ` Organic Facebook activity: ${organic.join(' ')}` : ''}`;
+    return { kind: 'completed', detail, refs, output: { trends: tr?.n ?? 0, competitorObservations: ob?.n ?? 0, keywordOpportunities: keywords.length, organicObservations: organic } };
   });
+
+/** What the Page's own recent posts show, as plain observations (no recommendation, no forecast). */
+function organicObservations(c: StepContext): string[] {
+  const pages = ((c.prior.observe?.output.organic as { pages: OrganicPage[] } | null | undefined)?.pages ?? []).filter((p) => p.snapshot);
+  const n = (v: number | null) => (v === null ? 'not returned' : Number.isInteger(v) ? String(v) : v.toFixed(1));
+  return pages.map(({ name, snapshot }) => {
+    const s = snapshot!.stats;
+    if (!s.posts) return `${name} published no post in the last 90 days.`;
+    const formats = s.formats.map((f) => `${f.statusType} ${f.posts} (mean reactions ${n(f.meanReactions)}, mean top-level comments ${n(f.meanComments)})`).join('; ');
+    const change = snapshot!.change
+      ? ` Since the previous daily snapshot: ${Object.entries(snapshot!.change.metrics)
+          .map(([m, r]) => `${m} ${r.value === null ? 'unknown' : `${r.value >= 0 ? '+' : ''}${r.value}`}`)
+          .join(', ')}.`
+      : '';
+    return `${name}: ${s.posts} post${s.posts === 1 ? '' : 's'} on ${s.activeDays} day${s.activeDays === 1 ? '' : 's'} in 90 days, the latest ${s.daysSinceLastPost} day${s.daysSinceLastPost === 1 ? '' : 's'} ago; by format: ${formats}.${change}${s.posts < 6 ? ' Too few posts to compare formats or topics statistically.' : ''}`;
+  });
+}
 
 /* ------------------------------------------------------------------ */
 /* ideas: M06 Idea Lab, focused on the goal                            */
@@ -307,13 +409,39 @@ const ideas: StepExecutor = async (c) => {
   const kpi = goalKpi(c.goal);
   const open = await openIdeas(c);
   if (open.length >= 2) return { kind: 'skipped', detail: `${open.length} untried ideas for ${kpi.label} are already waiting; no new ones needed.`, output: { open: open.length } };
-  if (Number(c.prior.observe?.output.evidence ?? 0) === 0) return { kind: 'blocked', needs: 'evidence', detail: 'Ideas must cite evidence, and there is none yet. Add facts about your product, customers or market in Business setup (Advanced › Evidence).' };
-  const r = await generateIdeas(c.deps, c.tenantId, AUTOPILOT, { maxIdeas: 3, focus: { objective: c.goal.title, targetMetric: kpi.metricKey, channels: c.goal.channels, constraints: goalConstraints(c.goal, c.now) } });
+  const boot = bootstrapOf(c);
+  const brand = c.prior.observe?.output.brand as BrandScope | null | undefined;
+  if (boot.active && !brand?.evidenceIds.length)
+    return {
+      kind: 'blocked',
+      needs: 'evidence',
+      detail:
+        "Exploratory ideas must cite evidence about this Facebook Page or its product, and there is none that is current. The Page's profile and posts are read automatically once Meta answers; you can also add evidence about the product in Business setup (Advanced › Evidence) and cite it in claims linked to the Page's product fact.",
+    };
+  if (!boot.active && Number(c.prior.observe?.output.evidence ?? 0) === 0) return { kind: 'blocked', needs: 'evidence', detail: 'Ideas must cite evidence, and there is none yet. Add facts about your product, customers or market in Business setup (Advanced › Evidence).' };
+  const observations = (c.prior.research?.output.organicObservations as string[] | undefined) ?? [];
+  // Ideas the Autopilot may publish on its own cite evidence permitted to drive unattended action (D-023), when there is any.
+  const focus = boot.active
+    ? {
+        evidenceIds: c.goal.autoSubmit && brand!.autonomousEvidenceIds.length ? brand!.autonomousEvidenceIds : brand!.evidenceIds,
+        exploratory: boot.reason!,
+        constraints: `${goalConstraints(c.goal, c.now)}\nBootstrap (exploratory): ${boot.reason}. No forecast or measured result supports any idea yet. Propose low-effort organic Facebook content tests for this Page and its product only, using only the evidence given, without expected numbers.${observations.length ? `\nObserved Page activity: ${observations.join(' ')}` : ''}`,
+      }
+    : { constraints: goalConstraints(c.goal, c.now) };
+  const r = await generateIdeas(c.deps, c.tenantId, AUTOPILOT, { maxIdeas: 3, focus: { objective: c.goal.title, targetMetric: kpi.metricKey, channels: c.goal.channels, ...focus } });
   if (r.status === 'abstained') return { kind: 'blocked', needs: r.reason === 'MODEL_UNAVAILABLE' ? 'model' : 'evidence', detail: `The Idea Lab abstained (${r.reason}).`, aiCalls: 1, refs: { agentRunId: r.runId } };
   if (r.status === 'failed') return { kind: 'retry', detail: 'The Idea Lab failed; will retry.', error: r.error, aiCalls: 1 };
   const created = (r.result as { created: string[]; abstained?: string; rejected?: { title: string; reason: string }[] }).created ?? [];
   const why = (r.result as { abstained?: string }).abstained;
   if (!created.length) return { kind: 'blocked', needs: 'evidence', detail: `No usable idea came out of the evidence${why ? `: ${why}` : ''}.`, aiCalls: 1, refs: { agentRunId: r.runId } };
+  if (boot.active)
+    return {
+      kind: 'completed',
+      detail: `The Idea Lab (M06) proposed ${created.length} exploratory idea${created.length === 1 ? '' : 's'} for ${kpi.label}, each citing evidence about the Page or its product. They are discovery tests, not forecast-validated recommendations.`,
+      aiCalls: 1,
+      refs: { agentRunId: r.runId },
+      output: { created, exploratory: true },
+    };
   return { kind: 'completed', detail: `The Idea Lab (M06) proposed ${created.length} evidence-backed idea${created.length === 1 ? '' : 's'} for ${kpi.label}.`, aiCalls: 1, refs: { agentRunId: r.runId }, output: { created } };
 };
 
@@ -327,7 +455,10 @@ const decide: StepExecutor = async (c) => {
   const openActions = (c.prior.observe?.output.openActions as unknown[] | undefined)?.length ?? 0;
   if (openActions >= (limits.maxOpenActions ?? 3)) return { kind: 'skipped', detail: `${openActions} of this goal's actions are still open (awaiting approval or execution); not proposing more until they settle.` };
   const forecastRunId = c.prior.forecast?.output.forecastRunId as string | undefined;
-  if (!forecastRunId) return { kind: 'skipped', detail: `The Growth Brain needs a forecast of ${kpi.label} first (see the forecast step).` };
+  if (!forecastRunId) {
+    const boot = bootstrapOf(c);
+    return { kind: 'skipped', detail: boot.active ? `The Growth Brain decides only with a forecast of ${kpi.label} (${boot.reason}), so it proposes nothing; exploratory posts go through the content and submit steps instead.` : `The Growth Brain needs a forecast of ${kpi.label} first (see the forecast step).` };
+  }
   const existing = c.task.refs.decisionId;
   if (existing) return { kind: 'completed', detail: 'Decision already made in this cycle.', output: c.task.output };
   const [idea] = await openIdeas(c);
@@ -362,7 +493,67 @@ const decide: StepExecutor = async (c) => {
 /* content: M13 creative brief draft for the chosen idea               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Bootstrap content (D-035): an exploratory brief and Facebook post drafts that state only the
+ * approved claims about the Page's own product. The submit step hands one to M23 (D-036), or, for
+ * a suggest-only goal, they wait for a person.
+ */
+async function bootstrapContent(c: StepContext): Promise<StepResult> {
+  const s = (n: number) => (n === 1 ? '' : 's');
+  const ideaId = ((c.prior.ideas?.output.created as string[] | undefined) ?? [])[0] ?? (await openIdeas(c))[0]?.id;
+  if (!ideaId) return { kind: 'skipped', detail: 'No exploratory idea to draft posts for in this cycle.' };
+  const page = ((c.prior.observe?.output.organic as { pages: OrganicPage[] } | null | undefined)?.pages ?? [])[0];
+  if (!page) return { kind: 'blocked', needs: 'connection', detail: 'Connect the Facebook Page in Connections to draft posts for it.' };
+  const { brand, existing, idea } = await tx(c, async (t) => ({
+    brand: await pageBrandScope(t, [page.pageId], c.now),
+    existing: await t
+      .select({ id: socialPosts.id, status: socialPosts.status })
+      .from(socialPosts)
+      .where(and(ne(socialPosts.status, 'cancelled'), sql`${socialPosts.disclosure}->'review'->>'ideaId' = ${ideaId}`)),
+    idea: (await t.select().from(growthIdeas).where(eq(growthIdeas.id, ideaId)))[0],
+  }));
+  if (!idea) return { kind: 'skipped', detail: 'The idea no longer exists.' };
+  if (!brand.approvedClaimIds.length) {
+    const how = brand.pendingClaims
+      ? `${brand.pendingClaims} proposed claim${s(brand.pendingClaims)} about it wait for review in Business setup › Knowledge (Claims); someone other than the claim's author approves.`
+      : "Propose claims about the product in Business setup › Knowledge, citing evidence, and link them to the Page's product fact.";
+    return { kind: 'blocked', needs: 'claims', detail: `Post drafts may only state approved claims about ${page.name}'s product, and none is approved yet. ${how} Approved claims about anything else are not used.` };
+  }
+  if (existing.length) {
+    // A rerun never drafts the same idea twice; drafts still waiting go on to the submit step.
+    const drafts = existing.filter((e) => e.status === 'draft').map((e) => e.id);
+    return { kind: 'skipped', detail: drafts.length ? `${drafts.length} post draft${s(drafts.length)} for "${idea.title}" already exist.` : `Posts for "${idea.title}" were already drafted.`, output: { postIds: drafts, ideaId } };
+  }
+  const language = draftLanguage(c.goal.market);
+  const r = await draftOrganicPosts(c.deps, c.tenantId, AUTOPILOT, {
+    connectionId: page.connectionId,
+    ideaId,
+    claimIds: brand.approvedClaimIds,
+    language,
+    objective: c.goal.title,
+    context: organicObservations(c).join(' '),
+    review: { goalId: c.goal.id, cycleId: c.cycle.id, market: c.goal.market },
+    maxPosts: 3,
+  });
+  if (r.status === 'abstained') return { kind: 'blocked', needs: r.reason === 'MODEL_UNAVAILABLE' ? 'model' : 'claims', detail: `The creative strategist abstained (${r.reason}).`, aiCalls: 1 };
+  if (r.status === 'failed') return { kind: 'retry', detail: 'Drafting failed; will retry.', error: r.error, aiCalls: 1 };
+  const out = r.result;
+  const refs = { agentRunId: r.runId, ...(out.briefId ? { briefId: out.briefId } : {}) };
+  if (out.abstained) return { kind: 'blocked', needs: 'claims', detail: `The creative strategist drafted nothing: ${out.abstained}.`, aiCalls: 1, refs };
+  if (!out.postIds.length) return { kind: 'blocked', needs: 'claims', detail: `No post draft passed the checks: ${out.rejected.map((x) => x.reason).join('; ') || 'none proposed'}.`, aiCalls: 1, refs, output: { rejected: out.rejected } };
+  const dropped = out.rejected.length ? ` ${out.rejected.length} proposed draft${s(out.rejected.length)} failed the checks and ${out.rejected.length === 1 ? 'was' : 'were'} dropped.` : '';
+  const next = c.goal.autoSubmit ? 'The submit step hands one to the execution gateway (M23); your publishing policy decides whether it publishes now or waits for approval.' : 'This goal is set to suggest only, so they wait for your review in Pending approvals and nothing is scheduled or published.';
+  return {
+    kind: 'completed',
+    detail: `Drafted ${out.postIds.length} exploratory ${language === 'bn' ? 'Bangla' : 'English'} Facebook post${s(out.postIds.length)}${out.briefId ? ' and a creative brief' : ''} for "${idea.title}", stating only ${brand.approvedClaimIds.length} approved claim${s(brand.approvedClaimIds.length)} about ${page.name}. Not forecast-validated. ${next}${dropped}`,
+    aiCalls: 1,
+    refs,
+    output: { postIds: out.postIds, ideaId, briefId: out.briefId, language, exploratory: true, rejected: out.rejected },
+  };
+}
+
 const content: StepExecutor = async (c) => {
+  if (bootstrapOf(c).active) return bootstrapContent(c);
   const ideaId = (c.prior.decide?.output.ideaId as string | undefined) ?? (await openIdeas(c))[0]?.id;
   if (!ideaId) return { kind: 'skipped', detail: 'No idea to write content for in this cycle.' };
   if (Number(c.prior.observe?.output.approvedClaims ?? 0) === 0) return { kind: 'blocked', needs: 'claims', detail: 'Content may only state approved claims, and none exist yet. Approve claims about your product in Business setup (Advanced › Knowledge).' };
@@ -391,7 +582,56 @@ function needsFromReasons(codes: string[]): BlockNeed {
   return 'configuration';
 }
 
+/**
+ * Bootstrap publishing (D-036): one of the cycle's exploratory drafts goes to M23 as the
+ * Autopilot, citing the idea's evidence and the Page's current post snapshot, within the goal's
+ * daily post limit. M23 policy decides whether it publishes now or waits for approval; a denial
+ * becomes a blocker and the draft stays with the person.
+ */
+async function submitPost(c: StepContext): Promise<StepResult> {
+  const postIds = (c.prior.content?.output.postIds as string[] | undefined) ?? [];
+  if (!postIds.length) return { kind: 'skipped', detail: 'No post draft is ready to publish in this cycle.' };
+  if (!c.goal.autoSubmit) return { kind: 'blocked', needs: 'approval', detail: 'This goal is set to suggest only: the post drafts wait for you in Pending approvals.' };
+  const lim = limitsOf(c.goal);
+  const actions = await tx(c, (t) => goalActions(t, c.goal.id));
+  const open = actions.filter((a) => !SETTLED_ACTION_STATES.includes(a.status)).length;
+  if (open >= lim.maxOpenActions) return { kind: 'skipped', detail: `${open} of this goal's actions are still open (awaiting approval or execution); the drafts wait until they settle.`, output: { postIds } };
+  // Posts offered in the last 24 h (by the Autopilot's clock) count unless the gateway never ran them.
+  const offers = await tx(c, (t) =>
+    t
+      .select({ at: sql<string | null>`${socialPosts.disclosure}->'review'->'autoSubmit'->>'at'`, status: actionRequests.status })
+      .from(socialPosts)
+      .innerJoin(actionRequests, eq(actionRequests.id, socialPosts.actionId))
+      .where(sql`${socialPosts.disclosure}->'review'->>'goalId' = ${c.goal.id}`),
+  );
+  const recent = offers.filter((o) => o.at && Date.parse(o.at) > c.now.getTime() - DAY && !['DENIED', 'REJECTED', 'CANCELLED'].includes(o.status)).length;
+  if (recent >= lim.maxPostsPerDay) return { kind: 'skipped', detail: `This goal already handed ${recent} post${recent === 1 ? '' : 's'} to the execution gateway in the last 24 hours (limit ${lim.maxPostsPerDay}); the draft waits for a later cycle.`, output: { postIds } };
+  const ideaId = c.prior.content?.output.ideaId as string | undefined;
+  const page = ((c.prior.observe?.output.organic as { pages: OrganicPage[] } | null | undefined)?.pages ?? [])[0];
+  const [idea] = ideaId ? await tx(c, (t) => t.select({ evidenceIds: growthIdeas.evidenceIds }).from(growthIdeas).where(eq(growthIdeas.id, ideaId))) : [];
+  const evidenceIds = [...new Set([...(idea?.evidenceIds ?? []), ...(page?.snapshot?.evidenceId ? [page.snapshot.evidenceId] : [])])];
+  const refused: string[] = [];
+  for (const postId of postIds) {
+    const r = await submitPostDraft(c.deps, c.tenantId, postId, { geographies: [c.goal.market], evidenceIds });
+    if (!r.action) {
+      refused.push(r.reason ?? 'not proposed');
+      continue;
+    }
+    const v = r.action;
+    const refs = { actionId: v.id };
+    const output = { actionId: v.id, status: v.status, actionType: v.actionType, postId, ideaId: ideaId ?? null };
+    if (v.status === 'DENIED') {
+      const codes = (v.policyDecision?.reasons ?? []).filter((x) => x.effect === 'DENY').map((x) => x.code);
+      return { kind: 'blocked', needs: needsFromReasons(codes), detail: `The execution gateway (M23) denied publishing the post: ${r.reason}. The draft stays in Pending approvals for you.`, refs, output };
+    }
+    const detail = v.status === 'APPROVAL_REQUIRED' ? `Submitted an exploratory post to the execution gateway (M23); your policy requires approval: ${v.statusReason ?? ''}`.trim() : 'Submitted an exploratory post; your policy pre-authorizes it, so the worker publishes it and verifies the result independently.';
+    return { kind: 'completed', detail, refs, output };
+  }
+  return { kind: 'skipped', detail: `No draft could be handed to the execution gateway: ${refused.join('; ')}.`, output: { refused } };
+}
+
 const submit: StepExecutor = async (c) => {
+  if (bootstrapOf(c).active) return submitPost(c);
   const decisionId = c.prior.decide?.output.decisionId as string | undefined;
   if (!decisionId) return { kind: 'skipped', detail: 'No decision was made in this cycle.' };
   const [d] = await tx(c, (t) => t.select().from(growthDecisions).where(eq(growthDecisions.id, decisionId)));
@@ -537,14 +777,26 @@ export async function measureGoal(t: Tx, goal: GoalRow, now: Date): Promise<Meas
   };
 }
 
+/** The goal's published posts and their read-back counters, in one sentence (D-036). */
+function describePostResults(posts: PostResult[]): string {
+  if (!posts.length) return '';
+  const read = posts.filter((p) => p.observedAt);
+  const n = (v: number | null) => (v === null ? 'not returned' : String(v));
+  const lines = read.slice(0, 3).map((p) => `post of ${fmtDate(p.verifiedAt)}: reactions ${n(p.metrics.reactions)}, top-level comments ${n(p.metrics.comments)}, shares ${n(p.metrics.shares)} (read ${fmtDate(p.observedAt)})`);
+  const unread = posts.length - read.length;
+  return `${posts.length} verified post${posts.length === 1 ? '' : 's'} published for this goal${unread ? ` (${unread} not read back from the Page yet)` : ''}${lines.length ? `: ${lines.join('; ')}` : ''}. Observed lifetime counters, not a causal estimate.`;
+}
+
 const measure: StepExecutor = async (c) => {
-  const m = await tx(c, (t) => measureGoal(t, c.goal, c.now));
-  if (m.status !== 'measured') return { kind: 'completed', detail: `Nothing to measure yet: ${m.note}`, output: m as unknown as Record<string, unknown> };
+  const { m, posts } = await tx(c, async (t) => ({ m: await measureGoal(t, c.goal, c.now), posts: c.goal.channels.includes('organic_social') ? await goalPostResults(t, c.goal.id) : [] }));
+  const results = describePostResults(posts);
+  const output = { ...m, posts } as unknown as Record<string, unknown>;
+  if (m.status !== 'measured') return { kind: 'completed', detail: `Nothing to measure yet: ${m.note}${results ? ` ${results}` : ''}`, output };
   const parts = [`${m.label} since the goal started: ${Math.round(m.actual!).toLocaleString('en-US')} over ${m.daysObserved} day${m.daysObserved === 1 ? '' : 's'}`];
   if (m.changeVsBaselinePct !== null) parts.push(`${m.changeVsBaselinePct >= 0 ? '+' : ''}${m.changeVsBaselinePct.toFixed(1)}% versus the pre-goal daily average`);
   if (m.forecast) parts.push(`${m.forecast.position} the no-action forecast range (${Math.round(m.forecast.low)}–${Math.round(m.forecast.high)})`);
   if (m.progressPct !== null) parts.push(`${m.progressPct.toFixed(0)}% of the target`);
-  return { kind: 'completed', detail: `${parts.join('; ')}.`, output: m as unknown as Record<string, unknown> };
+  return { kind: 'completed', detail: `${parts.join('; ')}.${results ? ` ${results}` : ''}`, output };
 };
 
 /* ------------------------------------------------------------------ */
@@ -576,6 +828,17 @@ const learn: StepExecutor = async (c) => {
     replanReason = 'the Growth Brain abstained on the last idea';
   }
   if (m?.forecast) lessons.push(`${m.label} was ${m.forecast.position} the no-action forecast range over ${m.forecast.days} day${m.forecast.days === 1 ? '' : 's'} (observational, not causal).`);
+  if (bootstrapOf(c).active) {
+    const drafted = (c.prior.content?.output.postIds as string[] | undefined)?.length ?? 0;
+    const posted = c.prior.submit?.output.actionId
+      ? `a post went to the execution gateway and is ${String(actionStatus ?? 'proposed')
+          .toLowerCase()
+          .replaceAll('_', ' ')}`
+      : drafted
+        ? `${drafted} post draft${drafted === 1 ? '' : 's'} prepared, none handed to the execution gateway`
+        : 'no new post';
+    lessons.push(`Bootstrap cycle (exploratory, not forecast-validated): ${posted}; forecasts and Growth Brain decisions start once ${goalKpi(c.goal).label} has ${MIN_KPI_POINTS} daily values.`);
+  }
 
   // Experiments behind this goal's ideas get a fresh analysis at most once a day (M10).
   const analyses = await tx(c, async (t) => {
