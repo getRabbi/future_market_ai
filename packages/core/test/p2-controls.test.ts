@@ -6,7 +6,7 @@ import type { OpsAlert } from '@futuregrow/observability';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { agentActor, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { agentActor, approveJurisdictionPacks, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import { clearModelCache, createModelGateway, runAgent } from '../src/agents.js';
 import { getAiBudget } from '../src/ai-budget.js';
@@ -14,7 +14,7 @@ import { apiLifecycle, checkApiLifecycle, DeprecationRecorder, effectiveSunset, 
 import { createConnection } from '../src/modules/connections.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
 import { proposeAction } from '../src/modules/m23-execution/gateway.js';
-import { approveModel, revokeModelApproval, seedModelRegistry, setTenantPolicy, upsertJurisdictionRules } from '../src/modules/m24-governance/index.js';
+import { approveModel, revokeModelApproval, seedModelRegistry, setTenantPolicy } from '../src/modules/m24-governance/index.js';
 import type { Notifier } from '../src/ops.js';
 
 const server = new FixtureServer();
@@ -241,7 +241,7 @@ describe('API deprecation monitoring', () => {
   });
 
   it('blocks actions on a provider API version past its sunset (policy API_VERSION_SUNSET)', async () => {
-    await upsertJurisdictionRules(db(), { userId: h.users.owner.id }, { jurisdiction: 'US', domain: 'advertising', rules: { ftc: true }, sourceRefs: ['https://www.ftc.gov'], approve: true });
+    await approveJurisdictionPacks(db(), h.tenantId, h.users.owner, 'US', ['organic_social']);
     const conn = await createConnection(h.deps, h.tenantId, h.users.owner, { provider: 'meta', externalAccountId: `page-${randomUUID().slice(0, 6)}`, displayName: 'Page', grantedScopes: ['pages_manage_posts', 'pages_read_engagement'], credentials: { accessToken: 'T' } });
     const ev = await withTenant(db(), { tenantId: h.tenantId, actor: 'test' }, (tx) =>
       admitEvidence(

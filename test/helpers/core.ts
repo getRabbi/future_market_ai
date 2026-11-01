@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_API_VERSIONS, DEFAULT_ENDPOINTS, HttpClient } from '../../packages/connectors/src/index.js';
+import type { JurisdictionDomain } from '../../packages/contracts/src/index.js';
 import type { Actor, CoreConfig, CoreDeps, JobOptions, JobQueue } from '../../packages/core/src/deps.js';
-import { syncCapabilityRegistry } from '../../packages/core/src/modules/m24-governance/index.js';
-import { authUser, member, organization } from '../../packages/db/src/index.js';
+import { approveJurisdictionRules, draftJurisdictionRules, syncCapabilityRegistry } from '../../packages/core/src/modules/m24-governance/index.js';
+import { authUser, type Db, member, organization } from '../../packages/db/src/index.js';
 import { createLogger } from '../../packages/observability/src/index.js';
 import { FilesystemStore } from '../../packages/storage/src/index.js';
 import { createTestDatabase, type TestDatabase } from './db.js';
@@ -121,3 +122,14 @@ export async function createCoreHarness(opts: { endpointBase?: string; tenantSlu
 }
 
 export const agentActor = (id = 'growth-brain'): Actor => ({ type: 'agent', id, roles: [], mfaVerified: false, modelId: 'claude-sonnet-5-5', promptVersion: 'brain-v1' });
+
+/** Legal sign-off used by tests that need an approved rule pack (D-037). */
+export const TEST_SIGN_OFF = { reviewerName: 'Test Counsel', reviewerRole: 'external_counsel', reviewedAt: '2026-01-15', statement: 'Reviewed the rule pack for test fixtures; requirements and sources are adequate for this scope.', documentRef: 'TEST-LEGAL-001' } as const;
+
+/** Drafts and legally approves one pack per domain for `jurisdiction`, as a platform admin in an MFA session. */
+export async function approveJurisdictionPacks(db: Db, tenantId: string, actor: Actor, jurisdiction: string, domains: readonly JurisdictionDomain[], sourceRefs: string[] = ['https://www.ftc.gov']) {
+  for (const domain of domains) {
+    const draft = await draftJurisdictionRules(db, tenantId, actor, { jurisdiction, domain, rules: { reviewed: true }, sourceRefs });
+    await approveJurisdictionRules(db, tenantId, actor, draft.id, { expectedRulesHash: draft.contentHash, signOff: TEST_SIGN_OFF });
+  }
+}

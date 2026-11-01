@@ -37,17 +37,27 @@ export async function withTenant<T>(db: Db, ctx: TenantContext, fn: (tx: Tx) => 
   assertTenantId(ctx.tenantId);
   try {
     return await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`select set_config('app.tenant_id', ${ctx.tenantId}, true),
-                   set_config('app.actor', ${ctx.actor}, true),
-                   set_config('app.correlation_id', ${ctx.correlationId ?? ''}, true)`,
-      );
-      if (tenantRoleEnabled) await tx.execute(sql`set local role fg_tenant`);
+      await enterTenant(tx, ctx);
       return fn(tx);
     });
   } catch (err) {
     throw normalizeDbError(err);
   }
+}
+
+/**
+ * Switch the current transaction into `ctx`'s row-level security scope for the rest of the
+ * transaction. Lets a platform write (system transaction) record its tenant audit entry
+ * atomically; nothing written before the switch is affected.
+ */
+export async function enterTenant(tx: Tx, ctx: TenantContext): Promise<void> {
+  assertTenantId(ctx.tenantId);
+  await tx.execute(
+    sql`select set_config('app.tenant_id', ${ctx.tenantId}, true),
+               set_config('app.actor', ${ctx.actor}, true),
+               set_config('app.correlation_id', ${ctx.correlationId ?? ''}, true)`,
+  );
+  if (tenantRoleEnabled) await tx.execute(sql`set local role fg_tenant`);
 }
 
 /** Set the reason recorded by the action-state trigger for the next transition(s). */

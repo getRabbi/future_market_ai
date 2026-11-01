@@ -1,4 +1,4 @@
-import { type BlockNeed, getActionType, type TaskKind } from '@futuregrow/contracts';
+import { type BlockNeed, CHANNEL_JURISDICTION_DOMAINS, type GoalChannel, getActionType, type TaskKind } from '@futuregrow/contracts';
 import {
   actionRequests,
   analyticsRequests,
@@ -49,7 +49,7 @@ import {
 } from '../m16-social/index.js';
 import { keywordOpportunities, queueSeoAudit } from '../m18-discovery/index.js';
 import { DOWNLOADS_SERIES_KEY, syncDownloadsSeries } from '../m19-app-growth/index.js';
-import { approvedJurisdictions, getTenantPolicy } from '../m24-governance/index.js';
+import { approvedJurisdictionScopes, getTenantPolicy } from '../m24-governance/index.js';
 import { type GoalRow, goalActions, goalCategories, goalKpi, limitsOf } from './goals.js';
 
 export type CycleRow = typeof goalCycles.$inferSelect;
@@ -230,7 +230,9 @@ const observe: StepExecutor = async (c) => {
       .from(growthIdeas)
       .where(and(eq(growthIdeas.targetMetric, kpi.metricKey), inArray(growthIdeas.status, ['candidate', 'queued_for_test', 'testing', 'validated'])));
     const policy = await getTenantPolicy(t, c.tenantId);
-    const markets = await approvedJurisdictions(t, policy);
+    const scopes = await approvedJurisdictionScopes(t, policy);
+    const neededDomains = [...new Set(c.goal.channels.flatMap((ch) => CHANNEL_JURISDICTION_DOMAINS[ch as GoalChannel] ?? []))];
+    const missingDomains = neededDomains.filter((d) => !(scopes[c.goal.market] ?? []).includes(d));
     const reports = kpi.metricKey === DOWNLOADS_SERIES_KEY ? ((await t.select({ n: sql<number>`count(*)::int` }).from(appStoreReports))[0]?.n ?? 0) : null;
     const points = stats?.n ?? 0;
     const warnings: string[] = [...(insights?.notes ?? []), ...(organic?.notes ?? [])];
@@ -248,7 +250,7 @@ const observe: StepExecutor = async (c) => {
         : `Facebook Page ${p.name}: post counters unavailable.`,
     );
     if (!policy.configured) warnings.push('Your autonomy policy is not configured, so every action will wait for approval.');
-    if (!markets.includes(c.goal.market)) warnings.push(`No legal-approved rules for market ${c.goal.market}: public or messaging actions also need legal approval.`);
+    if (missingDomains.length) warnings.push(`No legal-approved ${missingDomains.join(', ')} rules for market ${c.goal.market}: those actions also need legal approval.`);
     if (!c.deps.models) warnings.push('No approved AI model is available, so ideas and decisions cannot be generated.');
     const active = conns.filter((x) => x.status === 'active');
     const detail = [
@@ -278,7 +280,7 @@ const observe: StepExecutor = async (c) => {
         openIdeas: ideas?.n ?? 0,
         openActions: open.map((a) => ({ id: a.id, status: a.status, actionType: a.actionType })),
         policyConfigured: policy.configured,
-        marketApproved: markets.includes(c.goal.market),
+        marketApproved: missingDomains.length === 0,
         modelAvailable: Boolean(c.deps.models),
         organic: organic ? { pages: organic.pages } : null,
         brand,

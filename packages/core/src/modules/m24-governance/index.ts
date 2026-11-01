@@ -1,7 +1,28 @@
 import { CAPABILITY_SEEDS } from '@futuregrow/connectors';
-import { type KillSwitchScope, type ModelArtifact, ModelArtifactSchema, type TenantPolicy, TenantPolicySchema } from '@futuregrow/contracts';
-import { actionRequests, alerts, artifactLicenses, authUser, budgetReservations, costLedger, type Db, type DbOrTx, incidents, jurisdictionRules, killSwitches, modelRegistry, platformCapabilities, setTransitionReason, systemControls, type Tx, tenantSettings, verifyAuditChain, withSystem } from '@futuregrow/db';
-import { conflict, FgError, forbidden, invalid, notFound } from '@futuregrow/observability';
+import { canonicalJson, JurisdictionApprovalSchema, type JurisdictionDomain, JurisdictionRuleDraftSchema, jurisdictionDomainOf, type KillSwitchScope, type ModelArtifact, ModelArtifactSchema, type TenantPolicy, TenantPolicySchema } from '@futuregrow/contracts';
+import {
+  actionRequests,
+  alerts,
+  artifactLicenses,
+  authUser,
+  budgetReservations,
+  costLedger,
+  type Db,
+  type DbOrTx,
+  enterTenant,
+  incidents,
+  jurisdictionRules,
+  killSwitches,
+  modelRegistry,
+  platformCapabilities,
+  setTransitionReason,
+  systemControls,
+  type Tx,
+  tenantSettings,
+  verifyAuditChain,
+  withSystem,
+} from '@futuregrow/db';
+import { conflict, FgError, forbidden, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { defaultTenantPolicy } from '@futuregrow/policies';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { type Actor, actorRef } from '../../deps.js';
@@ -365,19 +386,49 @@ export async function approveArtifact(tx: Tx, tenantId: string, actor: Actor, id
   return row!;
 }
 
-export async function approvedJurisdictions(tx: DbOrTx, tenantPolicy: TenantPolicy): Promise<string[]> {
-  if (tenantPolicy.approvedJurisdictions.length === 0) return [];
+/**
+ * Tenant-enabled jurisdictions with a legal-approved pack, by review domain (D-037). Drafts never
+ * count; a jurisdiction the tenant did not enable never appears.
+ */
+export async function approvedJurisdictionScopes(tx: DbOrTx, tenantPolicy: TenantPolicy): Promise<Record<string, JurisdictionDomain[]>> {
+  if (tenantPolicy.approvedJurisdictions.length === 0) return {};
   const rows = await tx
-    .select({ j: jurisdictionRules.jurisdiction })
+    .select({ j: jurisdictionRules.jurisdiction, domain: jurisdictionRules.domain })
     .from(jurisdictionRules)
     .where(and(eq(jurisdictionRules.approvedByLegal, true), inArray(jurisdictionRules.jurisdiction, tenantPolicy.approvedJurisdictions)));
-  return [...new Set(rows.map((r) => r.j))];
+  const out: Record<string, JurisdictionDomain[]> = {};
+  for (const r of rows) {
+    const domains = out[r.j] ?? [];
+    if (!domains.includes(r.domain as JurisdictionDomain)) domains.push(r.domain as JurisdictionDomain);
+    out[r.j] = domains;
+  }
+  return out;
 }
 
-export async function upsertJurisdictionRules(db: Db, actor: { userId: string }, input: { jurisdiction: string; domain: string; rules: Record<string, unknown>; sourceRefs: string[]; approve: boolean }) {
-  return withSystem(db, `user:${actor.userId}`, async (tx) => {
-    const [u] = await tx.select().from(authUser).where(eq(authUser.id, actor.userId));
-    if (!u?.isPlatformAdmin) throw forbidden('jurisdiction rule packs are managed by a platform administrator with legal sign-off');
+/** Jurisdictions legal-approved for this action type's review domain; none when no domain covers it. */
+export async function approvedJurisdictions(tx: DbOrTx, tenantPolicy: TenantPolicy, actionType: string): Promise<string[]> {
+  const domain = jurisdictionDomainOf(actionType);
+  if (!domain) return [];
+  const scopes = await approvedJurisdictionScopes(tx, tenantPolicy);
+  return Object.keys(scopes).filter((j) => scopes[j]!.includes(domain));
+}
+
+/** Hash of exactly what legal reviews: approval is bound to it like an action approval to its action hash. */
+export function jurisdictionRulesHash(r: { jurisdiction: string; domain: string; version: number; rules: Record<string, unknown>; sourceRefs: readonly string[] }): string {
+  return sha256Hex(canonicalJson({ jurisdiction: r.jurisdiction, domain: r.domain, version: r.version, rules: r.rules, sourceRefs: r.sourceRefs }));
+}
+
+async function requirePlatformAdmin(tx: Tx, actor: Actor, what: string) {
+  const [u] = actor.type === 'user' ? await tx.select().from(authUser).where(eq(authUser.id, actor.id)) : [];
+  if (!u?.isPlatformAdmin) throw forbidden(`${what} requires a platform administrator`);
+  return u;
+}
+
+/** Records a new draft version for legal review. A draft never approves its jurisdiction. */
+export async function draftJurisdictionRules(db: Db, tenantId: string, actor: Actor, raw: unknown) {
+  const input = JurisdictionRuleDraftSchema.parse(raw);
+  return withSystem(db, actorRef(actor), async (tx) => {
+    await requirePlatformAdmin(tx, actor, 'drafting a jurisdiction rule pack');
     const [latest] = await tx
       .select()
       .from(jurisdictionRules)
@@ -386,19 +437,51 @@ export async function upsertJurisdictionRules(db: Db, actor: { userId: string },
       .limit(1);
     const [row] = await tx
       .insert(jurisdictionRules)
-      .values({
-        jurisdiction: input.jurisdiction,
-        domain: input.domain,
-        version: (latest?.version ?? 0) + 1,
-        rules: input.rules,
-        sourceRefs: input.sourceRefs,
-        approvedByLegal: input.approve,
-        approvedBy: input.approve ? actor.userId : null,
-        approvedAt: input.approve ? new Date() : null,
-        effectiveFrom: new Date(),
-      })
+      .values({ jurisdiction: input.jurisdiction, domain: input.domain, version: (latest?.version ?? 0) + 1, rules: input.rules, sourceRefs: input.sourceRefs, approvedByLegal: false, createdBy: actor.id })
       .returning();
-    return row!;
+    const contentHash = jurisdictionRulesHash(row!);
+    await enterTenant(tx, { tenantId, actor: actorRef(actor) });
+    await audit(tx, tenantId, actor, 'governance.jurisdiction_rules.drafted', { type: 'jurisdiction_rules', id: row!.id }, { jurisdiction: row!.jurisdiction, domain: row!.domain, version: row!.version, contentHash, sourceRefs: row!.sourceRefs });
+    return { ...row!, status: 'draft' as const, contentHash };
+  });
+}
+
+/**
+ * Legal approval of one draft version (D-037): a platform administrator in an MFA session records
+ * who reviewed it, when and what they confirmed, bound to the content hash they reviewed. The
+ * approval is audited in the acting organization's chain and cannot be repeated or edited.
+ */
+export async function approveJurisdictionRules(db: Db, tenantId: string, actor: Actor, id: string, raw: unknown) {
+  requireMfa(actor, 'approving a jurisdiction rule pack');
+  const input = JurisdictionApprovalSchema.parse(raw);
+  const now = new Date();
+  if (new Date(`${input.signOff.reviewedAt}T00:00:00Z`).getTime() > now.getTime()) throw invalid('the legal review date is in the future');
+  return withSystem(db, actorRef(actor), async (tx) => {
+    const u = await requirePlatformAdmin(tx, actor, 'approving a jurisdiction rule pack');
+    if (!u.twoFactorEnabled) throw forbidden('approving a jurisdiction rule pack requires an MFA-enabled account', { code: 'MFA_REQUIRED' });
+    const [row] = await tx.select().from(jurisdictionRules).where(eq(jurisdictionRules.id, id)).for('update');
+    if (!row) throw notFound('jurisdiction rule pack');
+    if (row.approvedByLegal) throw conflict('this rule pack version is already approved; draft a new version to change it');
+    if (row.sourceRefs.length === 0) throw invalid('a rule pack needs its legal sources before approval');
+    const rulesHash = jurisdictionRulesHash(row);
+    if (rulesHash !== input.expectedRulesHash) throw conflict('the rule pack differs from the reviewed content (content hash mismatch)');
+    const [approved] = await tx
+      .update(jurisdictionRules)
+      .set({ approvedByLegal: true, approvedBy: actor.id, approvedAt: now, effectiveFrom: now, signOff: input.signOff, rulesHash })
+      .where(and(eq(jurisdictionRules.id, id), eq(jurisdictionRules.approvedByLegal, false)))
+      .returning();
+    await enterTenant(tx, { tenantId, actor: actorRef(actor) });
+    await audit(tx, tenantId, actor, 'governance.jurisdiction_rules.approved', { type: 'jurisdiction_rules', id }, { jurisdiction: row.jurisdiction, domain: row.domain, version: row.version, rulesHash, sourceRefs: row.sourceRefs, signOff: input.signOff });
+    return { ...approved!, status: 'approved' as const, contentHash: rulesHash };
+  });
+}
+
+/** Every pack version with its status and content hash (platform administrators). */
+export async function listJurisdictionRules(db: Db, actor: Actor) {
+  return withSystem(db, actorRef(actor), async (tx) => {
+    await requirePlatformAdmin(tx, actor, 'reading jurisdiction rule packs');
+    const rows = await tx.select().from(jurisdictionRules).orderBy(jurisdictionRules.jurisdiction, jurisdictionRules.domain, desc(jurisdictionRules.version));
+    return rows.map((r) => ({ ...r, status: r.approvedByLegal ? ('approved' as const) : ('draft' as const), contentHash: jurisdictionRulesHash(r) }));
   });
 }
 

@@ -5,7 +5,8 @@ import { clearGoogleTokenCache, publicFetch } from '@futuregrow/connectors';
 import { actionRequests, adBudgetHistory, adCampaigns, adDailyMetrics, alerts, appInstalls, customerEvents, evidenceRecords, kgEntities, metricPoints, metricSeries, seoPages, socialInteractions, socialPosts, spendLedger, storeListings, withTenant } from '@futuregrow/db';
 import { eq, like } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { JURISDICTION_DOMAIN_KEYS } from '../../../packages/contracts/src/index.js';
+import { approveJurisdictionPacks, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer, type RecordedRequest } from '../../../test/helpers/fixture-server.js';
 import { clearModelCache, createModelGateway } from '../src/agents.js';
 import { createConnection, setConnectionStatus } from '../src/modules/connections.js';
@@ -18,7 +19,7 @@ import * as paid from '../src/modules/m17-paid/index.js';
 import * as disc from '../src/modules/m18-discovery/index.js';
 import * as app from '../src/modules/m19-app-growth/index.js';
 import { decideApproval, executeAction, verifyAction } from '../src/modules/m23-execution/gateway.js';
-import { approveModel, seedModelRegistry, setTenantPolicy, upsertJurisdictionRules } from '../src/modules/m24-governance/index.js';
+import { approveModel, seedModelRegistry, setTenantPolicy } from '../src/modules/m24-governance/index.js';
 import { ingestWebhook, processWebhook } from '../src/modules/webhooks.js';
 
 class ScriptedProvider implements ModelProvider {
@@ -50,7 +51,7 @@ beforeAll(async () => {
   provider = new ScriptedProvider();
   h.deps.models = createModelGateway(h.deps, { anthropic: provider });
   (h.deps as unknown as { fetchPublic: PublicFetcher }).fetchPublic = (u, o) => publicFetch(u, { ...o, allowPrivateForTests: true });
-  await upsertJurisdictionRules(h.t.handle.db, { userId: h.users.owner.id }, { jurisdiction: 'US', domain: 'advertising', rules: { ftc: true }, sourceRefs: ['https://www.ftc.gov'], approve: true });
+  await approveJurisdictionPacks(h.t.handle.db, h.tenantId, h.users.owner, 'US', JURISDICTION_DOMAIN_KEYS);
   await tx((t) =>
     setTenantPolicy(t, h.tenantId, h.users.owner, {
       configured: true,

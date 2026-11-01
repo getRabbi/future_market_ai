@@ -5,7 +5,7 @@ import { actionRequests, commissionLedger, consentState, conversationMessages, c
 import { identifierHash } from '@futuregrow/observability';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { approveJurisdictionPacks, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import { clearModelCache, createModelGateway } from '../src/agents.js';
 import { createConnection } from '../src/modules/connections.js';
@@ -16,7 +16,7 @@ import * as life from '../src/modules/m20-lifecycle/index.js';
 import * as conv from '../src/modules/m21-conversations/index.js';
 import * as cre from '../src/modules/m22-creators/index.js';
 import { executeAction, verifyAction } from '../src/modules/m23-execution/gateway.js';
-import { approveModel, seedModelRegistry, setSenderIdentity, setTenantPolicy, upsertJurisdictionRules } from '../src/modules/m24-governance/index.js';
+import { approveModel, seedModelRegistry, setSenderIdentity, setTenantPolicy } from '../src/modules/m24-governance/index.js';
 import { ingestWebhook, processWebhook } from '../src/modules/webhooks.js';
 
 class ScriptedProvider implements ModelProvider {
@@ -92,7 +92,7 @@ beforeAll(async () => {
   clearModelCache();
   provider = new ScriptedProvider();
   h.deps.models = createModelGateway(h.deps, { anthropic: provider });
-  await upsertJurisdictionRules(h.t.handle.db, { userId: h.users.owner.id }, { jurisdiction: 'US', domain: 'messaging', rules: { canSpam: true }, sourceRefs: ['https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business'], approve: true });
+  await approveJurisdictionPacks(h.t.handle.db, h.tenantId, h.users.owner, 'US', ['messaging'], ['https://www.ftc.gov/business-guidance/resources/can-spam-act-compliance-guide-business']);
   await tx((t) =>
     setTenantPolicy(t, h.tenantId, h.users.owner, {
       configured: true,

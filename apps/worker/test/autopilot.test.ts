@@ -8,7 +8,8 @@ import { actionRequests, analyticsRequests, approvals, appStoreReports, auditLog
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type { JobHelpers, Task } from 'graphile-worker';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { JURISDICTION_DOMAIN_KEYS } from '../../../packages/contracts/src/index.js';
+import { approveJurisdictionPacks, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import '../src/register-modules.js';
 import { buildTaskList } from '../src/tasks.js';
@@ -250,7 +251,7 @@ beforeAll(async () => {
   h.deps.models = createModelGateway(h.deps, { anthropic: provider });
   process.env.DATABASE_URL ??= h.t.url; // the worker module registrar reads its env (no Northflank token: triggers are skipped)
   tasks = buildTaskList(h.deps, { environment: 'test' }) as Record<string, Task>;
-  await governance.upsertJurisdictionRules(h.t.handle.db, { userId: h.users.owner.id }, { jurisdiction: 'US', domain: 'advertising', rules: { ftc: true }, sourceRefs: ['https://www.ftc.gov'], approve: true });
+  await approveJurisdictionPacks(h.t.handle.db, h.tenantId, h.users.owner, 'US', JURISDICTION_DOMAIN_KEYS);
   await tx((t) =>
     governance.setTenantPolicy(t, h.tenantId, h.users.owner, {
       configured: true,
@@ -816,7 +817,7 @@ describe('Autopilot: under a pre-authorized publishing policy an exploratory Fac
     const otx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => tx(fn, org);
     await h.t.handle.db.insert(organization).values({ id: org, name: 'Unattended Page Co', slug: org });
     await otx((t) => autopilot.setAutopilotEnabled(t, org, h.users.owner, true));
-    await governance.upsertJurisdictionRules(h.t.handle.db, { userId: h.users.owner.id }, { jurisdiction: 'BD', domain: 'advertising', rules: { reviewed: true }, sourceRefs: ['https://example.org/bd'], approve: true });
+    await approveJurisdictionPacks(h.t.handle.db, org, h.users.owner, 'BD', ['organic_social'], ['https://example.org/bd']);
     const publishing = (autonomy: 'approval_required' | 'pre_authorized_within_limits') =>
       otx((t) =>
         governance.setTenantPolicy(t, org, h.users.owner, {

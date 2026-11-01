@@ -73,7 +73,7 @@ export interface PolicyFacts {
   missingEvidenceIds: readonly string[];
   claims: readonly ClaimFact[];
   missingClaimIds: readonly string[];
-  /** Jurisdictions with a legal-approved rule pack AND enabled by the tenant. */
+  /** Jurisdictions enabled by the tenant with a legal-approved rule pack for this action type's review domain (D-037). */
   approvedJurisdictions: readonly string[];
   /** Pre-authorised positive spend deltas in the trailing 24h (micros, tenant currency). */
   rollingPreAuthorizedSpendMicros: number;
@@ -251,7 +251,7 @@ function ruleJurisdiction(i: PolicyInput): Finding[] {
   }
   const unapproved = i.risk.geographies.filter((g) => !i.facts.approvedJurisdictions.includes(g));
   if (unapproved.length) {
-    return [approve('R-JURISDICTION', 'JURISDICTION_UNAPPROVED', `no legal-approved rule pack for: ${unapproved.join(', ')}`, LEGAL_GROUP)];
+    return [approve('R-JURISDICTION', 'JURISDICTION_UNAPPROVED', `no legal-approved rule pack covering ${d.type} for: ${unapproved.join(', ')}`, LEGAL_GROUP)];
   }
   return [];
 }

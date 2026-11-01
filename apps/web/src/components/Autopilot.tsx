@@ -263,6 +263,7 @@ export function AutopilotOffer({ me, onEnabled }: { me: Me; onEnabled: () => voi
 interface Readiness {
   policyConfigured: boolean;
   approvedMarkets: string[];
+  marketScopes?: Record<string, string[]>;
   categories: Record<string, string | null>;
   connections: { provider: string; status: string; displayName: string }[];
   evidence: number;
@@ -319,7 +320,9 @@ function SetupView({ me, status, onStatus }: { me: Me; status: AutopilotStatus; 
         </header>
         <ul className="ap-checks">
           <Check ok={d.policyConfigured && d.approvedMarkets.length > 0 ? true : d.policyConfigured ? 'partial' : false} title="Your rules (autonomy policy)" href="/app/governance" action="Open rules">
-            {d.policyConfigured ? `Configured. Runs on its own: ${auto.length ? auto.join(', ') : 'nothing (everything waits for approval)'}. Approved markets: ${d.approvedMarkets.join(', ') || 'none'}.` : 'Not configured: every action will wait for your approval.'}
+            {d.policyConfigured
+              ? `Configured. Runs on its own: ${auto.length ? auto.join(', ') : 'nothing (everything waits for approval)'}. Approved markets: ${d.approvedMarkets.map((m) => (d.marketScopes?.[m]?.length ? `${m} (${d.marketScopes[m]!.join(', ').replaceAll('_', ' ')})` : m)).join(', ') || 'none'}.`
+              : 'Not configured: every action will wait for your approval.'}
           </Check>
           <Check ok={active.length > 0} title="Connections" href="/app/connections" action="Connect">
             {d.connections.length ? d.connections.map((c) => `${c.displayName} (${c.provider}, ${statusLabel(c.status).toLowerCase()})`).join('; ') : 'No accounts connected. Connect App Store Connect for downloads, Meta for posts.'}

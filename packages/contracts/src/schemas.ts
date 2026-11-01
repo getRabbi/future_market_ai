@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { JURISDICTION_DOMAIN_KEYS, type JurisdictionDomain } from './action-types.js';
 import { ACTION_STATES, ARTIFACT_TYPES, CAPABILITY_FALLBACKS, DATA_PURPOSES, ESTIMATE_METHODS, EVIDENCE_KINDS, FRESHNESS_STATUSES, KILL_SWITCH_SCOPES, PII_CLASSES, POLICY_OUTCOMES, PROOF_VERDICTS, PROVIDERS, RISK_CATEGORIES, SOURCE_TYPES, TENANT_ROLES, TRI_STATE, VERIFICATION_METHODS } from './enums.js';
 
 const isoDate = z.string().datetime({ offset: true });
@@ -367,6 +368,44 @@ export const TenantPolicySchema = z.object({
     .default(null),
 });
 export type TenantPolicy = z.infer<typeof TenantPolicySchema>;
+
+/* ------------------------------------------------------------------ */
+/* Jurisdiction rule packs (D-012/B-013, D-037)                         */
+/* ------------------------------------------------------------------ */
+
+/** A draft rule pack: what legal is asked to review. Submitting it never approves it. */
+export const JurisdictionRuleDraftSchema = z
+  .object({
+    jurisdiction: z.string().regex(/^[A-Z]{2}(-[A-Z0-9]{1,3})?$/, 'ISO country code, optionally with a subdivision (BD, US-CA)'),
+    domain: z.enum(JURISDICTION_DOMAIN_KEYS as [JurisdictionDomain, ...JurisdictionDomain[]]),
+    rules: z.record(z.string(), z.unknown()),
+    sourceRefs: z
+      .array(
+        z
+          .string()
+          .url()
+          .regex(/^https?:\/\//),
+      )
+      .min(1)
+      .max(50),
+  })
+  .strict();
+export type JurisdictionRuleDraft = z.infer<typeof JurisdictionRuleDraftSchema>;
+
+/** Who reviewed a pack and what they confirmed; stored with the approval as its provenance. */
+export const JurisdictionSignOffSchema = z
+  .object({
+    reviewerName: z.string().trim().min(2).max(200),
+    reviewerRole: z.enum(['external_counsel', 'in_house_counsel', 'owner_with_legal_authority']),
+    reviewedAt: z.string().date(),
+    statement: z.string().trim().min(40).max(4000),
+    documentRef: z.string().trim().min(3).max(500),
+  })
+  .strict();
+export type JurisdictionSignOff = z.infer<typeof JurisdictionSignOffSchema>;
+
+/** Approval of one draft version, bound to the exact content reviewed (D-037). */
+export const JurisdictionApprovalSchema = z.object({ expectedRulesHash: z.string().regex(/^[a-f0-9]{64}$/), signOff: JurisdictionSignOffSchema }).strict();
 
 export const KillSwitchInputSchema = z.object({
   scope: z.enum(KILL_SWITCH_SCOPES),

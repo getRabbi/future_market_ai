@@ -71,6 +71,13 @@
       "when": 1793425867913,
       "tag": "0009_autopilot",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793555343478,
+      "tag": "0010_jurisdiction_scope",
+      "breakpoints": true
     }
   ]
 }

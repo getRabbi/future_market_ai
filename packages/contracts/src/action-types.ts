@@ -388,3 +388,28 @@ export function getActionType(type: string): ActionTypeDefinition | undefined {
 export function listActionTypes(): readonly ActionTypeDefinition[] {
   return ACTION_TYPES;
 }
+
+/**
+ * Legal review domains of jurisdiction rule packs (D-037). A legal-approved pack makes its
+ * jurisdiction approved only for the action types of its own domain; an action type outside
+ * every domain is never covered, so it keeps needing legal approval.
+ */
+export const JURISDICTION_DOMAINS = {
+  organic_social: ['social.facebook.publish_post', 'social.instagram.publish_media', 'social.tiktok.publish_video', 'social.youtube.upload_video'],
+  social_engagement: ['social.facebook.reply_comment'],
+  advertising: ['ads.google.update_campaign_budget', 'ads.google.set_campaign_status', 'ads.meta.update_campaign_budget', 'ads.meta.set_campaign_status'],
+  messaging: ['email.send', 'sms.send', 'whatsapp.send'],
+  pricing_promotions: ['commerce.shopify.create_discount'],
+  store_listing: ['store.app_store.update_localization'],
+  data_export: ['data.export_customer_data'],
+} as const satisfies Record<string, readonly ActionTypeName[]>;
+
+export type JurisdictionDomain = keyof typeof JURISDICTION_DOMAINS;
+export const JURISDICTION_DOMAIN_KEYS = Object.keys(JURISDICTION_DOMAINS) as JurisdictionDomain[];
+
+const domainByType = new Map<string, JurisdictionDomain>(JURISDICTION_DOMAIN_KEYS.flatMap((d) => JURISDICTION_DOMAINS[d].map((t) => [t, d] as const)));
+
+/** The legal review domain covering an action type, or null when no pack can approve it. */
+export function jurisdictionDomainOf(actionType: string): JurisdictionDomain | null {
+  return domainByType.get(actionType) ?? null;
+}

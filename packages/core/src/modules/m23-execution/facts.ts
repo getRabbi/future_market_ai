@@ -184,7 +184,7 @@ export async function gatherPolicyFacts(tx: Tx, deps: CoreDeps, input: FactInput
     missingEvidenceIds: input.evidenceIds.filter((id) => !evRows.some((e) => e.id === id)),
     claims: claimRows.map((c) => ({ id: c.id, status: c.status as 'approved', expiresAt: c.expiresAt, regulated: c.regulated })),
     missingClaimIds: claimIds.filter((id) => !claimRows.some((c) => c.id === id)),
-    approvedJurisdictions: await approvedJurisdictions(tx, policy),
+    approvedJurisdictions: def ? await approvedJurisdictions(tx, policy, def.type) : [],
     rollingPreAuthorizedSpendMicros: Number(total),
     messaging: def?.category === 'MESSAGING' ? await messagingFacts(tx, deps, input, policy) : null,
     persona: persona ? { id: persona.id, status: persona.status as 'approved' } : null,

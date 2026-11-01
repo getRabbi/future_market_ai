@@ -28,7 +28,7 @@ export function registerAutopilotRoutes(app: FastifyInstance, ctx: ApiContext): 
     tenantTx(ctx, req, async (tx) => {
       const tenantId = tenantOf(req);
       const policy = await governance.getTenantPolicy(tx, tenantId);
-      const markets = await governance.approvedJurisdictions(tx, policy);
+      const scopes = await governance.approvedJurisdictionScopes(tx, policy);
       const conns = await tx.select({ provider: connections.provider, status: connections.status, displayName: connections.displayName }).from(connections);
       const [ev] = await tx.select({ n: sql<number>`count(*)::int` }).from(evidenceRecords).where(eq(evidenceRecords.status, 'admitted'));
       const [claims] = await tx.execute<{ n: number }>(sql`select count(*)::int as n from claims where status = 'approved' and (expires_at is null or expires_at > now())`).then((x) => x.rows);
@@ -40,7 +40,9 @@ export function registerAutopilotRoutes(app: FastifyInstance, ctx: ApiContext): 
       const ai = await getAiBudget(tx, tenantId, deps.config);
       return {
         policyConfigured: policy.configured,
-        approvedMarkets: markets,
+        approvedMarkets: Object.keys(scopes),
+        /** Review domains each approved market is legal-approved for (D-037). */
+        marketScopes: scopes,
         categories: Object.fromEntries(Object.entries(policy.categories).map(([k, v]) => [k, v?.autonomy ?? null])),
         connections: conns,
         evidence: ev?.n ?? 0,
@@ -57,7 +59,7 @@ export function registerAutopilotRoutes(app: FastifyInstance, ctx: ApiContext): 
   r.post('/v1/autopilot/interpret', { schema: { tags: ['autopilot'], body: z.object({ text: z.string().min(3).max(2000) }) } }, async (req) =>
     tenantTx(ctx, req, async (tx) => {
       const policy = await governance.getTenantPolicy(tx, tenantOf(req));
-      const markets = await governance.approvedJurisdictions(tx, policy);
+      const markets = Object.keys(await governance.approvedJurisdictionScopes(tx, policy));
       return autopilot.interpretForTenant(tx, deps, req.body.text, markets[0] ?? policy.approvedJurisdictions[0] ?? null);
     }),
   );

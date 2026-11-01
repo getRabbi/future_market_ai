@@ -1,5 +1,5 @@
 import { LIFECYCLE_PROVIDERS } from '@futuregrow/connectors';
-import { KILL_SWITCH_SCOPES, listActionTypes, MODULES } from '@futuregrow/contracts';
+import { JurisdictionApprovalSchema, JurisdictionRuleDraftSchema, KILL_SWITCH_SCOPES, listActionTypes, MODULES } from '@futuregrow/contracts';
 import { apiLifecycle, connectionsModule, evidence, execution, getAiBudget, governance, recordApiSunset } from '@futuregrow/core';
 import { alerts, artifactLicenses, authAccount, authUser, incidents, killSwitches, member, organization, platformCapabilities, withSystem } from '@futuregrow/db';
 import type { Env } from '@futuregrow/runtime';
@@ -133,16 +133,10 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
     await governance.revokeModelApproval(deps.db, { userId: actorOf(req).id }, req.body);
     return { ok: true };
   });
-  r.post(
-    '/v1/platform/jurisdiction-rules',
-    {
-      schema: {
-        tags: ['platform'],
-        body: z.object({ jurisdiction: z.string().min(2), domain: z.string().min(2), rules: z.record(z.string(), z.unknown()), sourceRefs: z.array(z.string().url()).min(1), approve: z.boolean() }),
-      },
-    },
-    async (req, reply) => reply.status(201).send(await governance.upsertJurisdictionRules(deps.db, { userId: actorOf(req).id }, req.body)),
-  );
+  // D-037: submitting a pack only records a draft; approval is a separate, MFA-bound sign-off.
+  r.get('/v1/platform/jurisdiction-rules', { schema: { tags: ['platform'] } }, async (req) => governance.listJurisdictionRules(deps.db, actorOf(req)));
+  r.post('/v1/platform/jurisdiction-rules', { schema: { tags: ['platform'], body: JurisdictionRuleDraftSchema } }, async (req, reply) => reply.status(201).send(await governance.draftJurisdictionRules(deps.db, tenantOf(req), actorOf(req), req.body)));
+  r.post('/v1/platform/jurisdiction-rules/:id/approve', { schema: { tags: ['platform'], params: Id, body: JurisdictionApprovalSchema } }, async (req) => governance.approveJurisdictionRules(deps.db, tenantOf(req), actorOf(req), req.params.id, req.body));
 
   /* ---------------- actions (M23) ---------------- */
   r.post('/v1/actions', { schema: { tags: ['actions'], body: z.record(z.string(), z.unknown()) } }, async (req, reply) => reply.status(201).send(await execution.proposeAction(deps, tenantOf(req), actorOf(req), req.body)));

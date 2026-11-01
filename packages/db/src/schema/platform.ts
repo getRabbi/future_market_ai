@@ -1,4 +1,4 @@
-import { ACTION_STATES, CAPABILITY_FALLBACKS, KILL_SWITCH_SCOPES, PROOF_VERDICTS, PROVIDERS, TRI_STATE, VERIFICATION_METHODS } from '@futuregrow/contracts';
+import { ACTION_STATES, CAPABILITY_FALLBACKS, JURISDICTION_DOMAIN_KEYS, KILL_SWITCH_SCOPES, PROOF_VERDICTS, PROVIDERS, TRI_STATE, VERIFICATION_METHODS } from '@futuregrow/contracts';
 import { sql } from 'drizzle-orm';
 import { bigint, bigserial, boolean, index, integer, pgTable, primaryKey, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, dbl, json, micros, oneOf, pk, rawCheck, tenantId, textArray, ts, updatedAt, uuidArray } from './_common.js';
@@ -241,7 +241,11 @@ export const artifactLicenses = pgTable(
   ],
 );
 
-/** Global, versioned jurisdiction rule packs (legal must approve; D-012/B-013). */
+/**
+ * Global, versioned jurisdiction rule packs (legal must approve; D-012/B-013). A pack covers one
+ * review domain (D-037); a version starts as a draft and is approved once, with sign-off
+ * provenance bound to its content hash.
+ */
 export const jurisdictionRules = pgTable(
   'jurisdiction_rules',
   {
@@ -255,9 +259,16 @@ export const jurisdictionRules = pgTable(
     approvedAt: ts('approved_at'),
     effectiveFrom: ts('effective_from'),
     sourceRefs: textArray('source_refs').notNull().default(sql`'{}'::text[]`),
+    createdBy: text('created_by'),
+    signOff: json<Record<string, unknown>>('sign_off'),
+    rulesHash: text('rules_hash'),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex('jurisdiction_rules_uq').on(t.jurisdiction, t.domain, t.version)],
+  (t) => [
+    uniqueIndex('jurisdiction_rules_uq').on(t.jurisdiction, t.domain, t.version),
+    oneOf('jurisdiction_rules_domain_chk', t.domain, JURISDICTION_DOMAIN_KEYS),
+    rawCheck('jurisdiction_rules_approval_chk', sql`not ${t.approvedByLegal} or (${t.approvedBy} is not null and ${t.approvedAt} is not null and ${t.signOff} is not null and ${t.rulesHash} is not null and cardinality(${t.sourceRefs}) > 0)`),
+  ],
 );
 
 /** Connected external accounts. Secrets live in connection_secrets (encrypted). */

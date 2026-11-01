@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { JurisdictionDomain } from './action-types.js';
 import type { RiskCategory } from './enums.js';
 
 /**
@@ -36,6 +37,17 @@ export const CHANNEL_CATEGORIES: Record<GoalChannel, readonly RiskCategory[]> = 
   experiments: ['EXPERIMENT'],
   paid_ads: ['SPEND'],
   offers: ['PRICING'],
+};
+
+/** Legal review domains a goal's channels act in (D-037): the markets shown as approved for a goal. */
+export const CHANNEL_JURISDICTION_DOMAINS: Record<GoalChannel, readonly JurisdictionDomain[]> = {
+  organic_social: ['organic_social'],
+  app_store: ['store_listing'],
+  seo: [],
+  email: ['messaging'],
+  experiments: [],
+  paid_ads: ['advertising'],
+  offers: ['pricing_promotions'],
 };
 
 export const GoalKpiSchema = z.object({

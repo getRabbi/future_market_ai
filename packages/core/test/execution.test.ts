@@ -3,12 +3,12 @@ import { clearGoogleTokenCache } from '@futuregrow/connectors';
 import { budgetReservations, connections, evidenceRecords, executionProofs, incidents, withTenant } from '@futuregrow/db';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { agentActor, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { agentActor, approveJurisdictionPacks, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import { createConnection } from '../src/modules/connections.js';
 import { admitEvidence } from '../src/modules/m01-evidence/index.js';
 import { cancelAction, decideApproval, executeAction, getActionDetail, proposeAction, verifyAction } from '../src/modules/m23-execution/gateway.js';
-import { engageKillSwitch, setTenantPolicy, upsertJurisdictionRules } from '../src/modules/m24-governance/index.js';
+import { engageKillSwitch, setTenantPolicy } from '../src/modules/m24-governance/index.js';
 
 const server = new FixtureServer();
 let h: CoreHarness;
@@ -37,7 +37,7 @@ beforeAll(async () => {
       credentials: { clientId: 'cid', clientSecret: 'cs', refreshToken: 'rt' },
     })
   ).id;
-  await upsertJurisdictionRules(h.t.handle.db, { userId: h.users.owner.id }, { jurisdiction: 'US', domain: 'advertising', rules: { ftc: true }, sourceRefs: ['https://www.ftc.gov'], approve: true });
+  await approveJurisdictionPacks(h.t.handle.db, h.tenantId, h.users.owner, 'US', ['organic_social', 'advertising']);
   const ev = await withTenant(h.t.handle.db, { tenantId: h.tenantId, actor: 'user:test' }, (tx) =>
     admitEvidence(
       tx,
