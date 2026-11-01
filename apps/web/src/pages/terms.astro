@@ -1,0 +1,104 @@
+---
+import Base from '../layouts/Base.astro';
+import { LEGAL } from '../lib/legal.ts';
+---
+
+<Base title="Terms of Service — FUTUREGROW" description="The terms that apply to using FUTUREGROW, an invitation-only growth platform for businesses.">
+  <main class="legal" id="content">
+    <p class="eyebrow"><a href="/">FUTUREGROW</a></p>
+    <h1>Terms of Service</h1>
+    <p class="muted">Effective {LEGAL.effective}</p>
+
+    <p>
+      These terms are an agreement between you and {LEGAL.operator} ("we", "us") for the use of FUTUREGROW at <a href={LEGAL.site}>{LEGAL.site.replace('https://', '')}</a> (the "service"). If you use the service for an
+      organization, you accept these terms for it and confirm that you may do so. Our <a href="/privacy">Privacy Policy</a> explains how we handle personal data.
+    </p>
+
+    <h2 id="beta">1. Beta service</h2>
+    <p>
+      FUTUREGROW is in a controlled beta and is available by invitation only. Features may change, be limited or be removed, and the service may be interrupted. During the beta we provide the service free of charge unless we agree
+      otherwise in writing. Costs charged by third parties, such as advertising spend or fees of services you connect, are yours.
+    </p>
+
+    <h2 id="accounts">2. Accounts</h2>
+    <p>
+      You must be at least 18 and use the service for business purposes. Keep your password and two-factor device secure; two-factor authentication is required for approvals and for connecting accounts. You are responsible for
+      activity under your account and must tell us promptly at <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a> if you suspect unauthorized use. Organization owners and admins decide who can access their
+      organization and with which role.
+    </p>
+
+    <h2 id="your-content">3. Your content and data</h2>
+    <p>
+      You keep all rights to the content and data you or your organization put into the service. You give us permission to host, copy, process and transmit it only as needed to provide, secure and support the service for you. You
+      confirm that you have the rights, permissions and, where needed, the consent of the people concerned to use that content and data, including your customers' data.
+    </p>
+
+    <h2 id="connected">4. Connected services</h2>
+    <p>
+      When you connect an account such as a Facebook Page, you authorize us to access it through its official API to do what you, your approvers or your organization's policy allow. Your use of those services remains subject to
+      their own terms and policies (for example Meta's Terms, Community Standards and Advertising Standards). We are not responsible for their availability, changes to their APIs, or actions they take on your accounts. You can
+      disable a connection at any time.
+    </p>
+
+    <h2 id="automation">5. Automation, AI and approvals</h2>
+    <p>
+      FUTUREGROW uses AI models to suggest ideas and draft content. Suggestions can be wrong or incomplete, so review them before you rely on them. The service acts on connected accounts only within the policy, limits and
+      approvals your organization configures. You are responsible for that configuration, for the marketing claims you approve, and for content published under it, including content your policy pre-authorizes. We do not
+      promise rankings, revenue, engagement or any other outcome, and forecasts are estimates.
+    </p>
+
+    <h2 id="acceptable-use">6. Acceptable use</h2>
+    <p>You must not use the service to:</p>
+    <ul>
+      <li>break any law, or publish false, misleading or unsubstantiated claims;</li>
+      <li>send spam or messages to people who have not agreed to receive them;</li>
+      <li>harass, deceive or impersonate anyone, or hide that content is sponsored or synthetic where disclosure is required;</li>
+      <li>infringe anyone's intellectual property or privacy rights;</li>
+      <li>get around the service's safeguards, approvals, limits or kill switches;</li>
+      <li>probe, scan or test the service's security, reverse engineer it, or overload it, without our written permission;</li>
+      <li>access another organization's data or share your access with people who are not authorized.</li>
+    </ul>
+
+    <h2 id="ip">7. Our service</h2>
+    <p>
+      We own the service, its software and its design. These terms give you a limited, non-exclusive, non-transferable right to use it while your access lasts. If you send us feedback, we may use it without any obligation to you.
+    </p>
+
+    <h2 id="termination">8. Suspension and ending</h2>
+    <p>
+      You can stop using the service at any time and ask us to delete your data as described in the Privacy Policy. We may suspend or end access if you breach these terms, if your use creates a security or legal risk, or if we
+      end the beta, and we will give notice where reasonably possible so you can export your data. Sections 3, 7, 9, 10 and 11 continue to apply after access ends.
+    </p>
+
+    <h2 id="disclaimer">9. Disclaimer</h2>
+    <p>
+      The service is provided "as is" and "as available". To the extent the law allows, we disclaim all warranties, including that the service will be uninterrupted, error-free, or fit for a particular purpose, and that any
+      result will be achieved.
+    </p>
+
+    <h2 id="liability">10. Limitation of liability</h2>
+    <p>
+      To the extent the law allows, we are not liable for indirect, incidental, special or consequential losses, lost profits or revenue, lost data, or actions taken by connected services, and our total liability for all claims
+      relating to the service is limited to the greater of the amounts you paid us in the 12 months before the claim and USD 100. Nothing in these terms limits liability that cannot be limited by law.
+    </p>
+
+    <h2 id="indemnity">11. Your responsibility for claims</h2>
+    <p>
+      You will compensate us for reasonable losses and costs arising from third-party claims caused by your content, the claims you approve, content published under your organization's policy, or your breach of these terms or of
+      the law.
+    </p>
+
+    <h2 id="changes">12. Changes</h2>
+    <p>
+      We may update these terms. We will change the effective date above and, for significant changes, notify account owners before they take effect. Continuing to use the service after that means you accept the updated terms.
+    </p>
+
+    <h2 id="contact">13. Contact</h2>
+    <p>
+      FUTUREGROW is operated by {LEGAL.operator}.<br />
+      <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>
+    </p>
+
+    <footer class="small muted legal-foot"><a href="/privacy">Privacy Policy</a> · <a href="/data-deletion">Data deletion</a> · <a href="/">Home</a></footer>
+  </main>
+</Base>

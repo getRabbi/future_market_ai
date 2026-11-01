@@ -1,0 +1,60 @@
+---
+import Base from '../layouts/Base.astro';
+import { LEGAL } from '../lib/legal.ts';
+
+const mail = `mailto:${LEGAL.contactEmail}?subject=Data%20deletion%20request`;
+---
+
+<Base title="Data Deletion — FUTUREGROW" description="How to remove FUTUREGROW's access to your Facebook Page and ask for your data, including data received from Meta, to be deleted.">
+  <main class="legal" id="content">
+    <p class="eyebrow"><a href="/">FUTUREGROW</a></p>
+    <h1>Data deletion instructions</h1>
+    <p class="muted">Effective {LEGAL.effective}</p>
+
+    <p>
+      This page explains how to stop FUTUREGROW's access to your Facebook Page or Meta ad account and how to have your data deleted, including data FUTUREGROW received through our Meta app ({LEGAL.metaApp}). Our
+      <a href="/privacy">Privacy Policy</a> describes all the data we handle.
+    </p>
+
+    <h2 id="what">What FUTUREGROW may hold from Facebook</h2>
+    <ul>
+      <li>The Page's public profile details, and snapshots of its posts with their reaction, comment and share counts.</li>
+      <li>The ID and link of each post FUTUREGROW published to the Page.</li>
+      <li>The text of comments and mentions on the Page, with a keyed one-way hash of the author's Facebook identifier instead of their name.</li>
+      <li>The raw notifications Meta sends about comments and mentions, which include the author's name and ID; these are deleted automatically 30 days after processing.</li>
+      <li>Page insights, if a Page admin granted them, and a connected ad account's campaigns and daily spend.</li>
+      <li>Encrypted access tokens for the Page and ad account.</li>
+    </ul>
+
+    <h2 id="remove-access">1. Remove FUTUREGROW's access</h2>
+    <ol>
+      <li>On Facebook, open <strong>Settings &amp; privacy → Settings → Business integrations</strong>.</li>
+      <li>Find the app <strong>{LEGAL.metaApp}</strong> and choose <strong>Remove</strong>.</li>
+      <li>If you use FUTUREGROW, an owner or admin of your organization can also open <strong>Connections</strong> and <strong>Disable</strong> the Facebook connection.</li>
+    </ol>
+    <p>Either step stops all new access to the Page or ad account. Removing access does not by itself delete data FUTUREGROW already holds; to delete it, follow step 2.</p>
+
+    <h2 id="request">2. Ask us to delete your data</h2>
+    <p>Email <a href={mail}>{LEGAL.contactEmail}</a> with the subject "Data deletion request" and include:</p>
+    <ul>
+      <li>if you have a FUTUREGROW account: the email address of the account;</li>
+      <li>if you manage a Facebook Page or ad account connected to FUTUREGROW: the Page or ad account name or ID;</li>
+      <li>if you commented on a Facebook Page that uses FUTUREGROW: a link to your comment.</li>
+    </ul>
+    <p>
+      We may ask you to confirm that the data is yours. We confirm each request by email and delete the data within 30 days, except records we must keep for security and compliance (audit records and opt-out lists, as described
+      in the Privacy Policy). Copies in our encrypted backups are deleted when those backups expire, within 35 days.
+    </p>
+
+    <h2 id="facebook-posts">Posts on Facebook</h2>
+    <p>Deleting data in FUTUREGROW does not delete posts or replies already published on Facebook. A Page admin can delete those on Facebook at any time.</p>
+
+    <h2 id="contact">Contact</h2>
+    <p>
+      FUTUREGROW is operated by {LEGAL.operator}.<br />
+      <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>
+    </p>
+
+    <footer class="small muted legal-foot"><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a> · <a href="/">Home</a></footer>
+  </main>
+</Base>

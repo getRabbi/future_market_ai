@@ -1344,6 +1344,50 @@ button.backdrop:hover {
   }
 }
 
+/* ---------- legal pages (privacy, terms) ---------- */
+.legal {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 4rem;
+  line-height: 1.6;
+}
+.legal h2 {
+  margin-top: 2.25rem;
+  scroll-margin-top: 1rem;
+}
+.legal h3 {
+  margin-top: 1.25rem;
+}
+.legal ul,
+.legal ol {
+  padding-left: 1.25rem;
+}
+.legal li {
+  margin-top: 0.35rem;
+}
+.legal .table-wrap {
+  margin: 0.75rem 0 1rem;
+}
+.legal-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 1.5rem 0 0;
+  padding: 0.85rem 0.95rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+.legal-foot {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.landing-legal {
+  margin-top: 0.5rem;
+}
+
 /* ---------- landing ---------- */
 .landing {
   max-width: 66rem;

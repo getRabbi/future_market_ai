@@ -1,0 +1,171 @@
+---
+import Base from '../layouts/Base.astro';
+import { LEGAL, META_PERMISSIONS, SERVICE_PROVIDERS } from '../lib/legal.ts';
+---
+
+<Base title="Privacy Policy — FUTUREGROW" description="How FUTUREGROW collects, uses, shares and deletes personal data, including data from connected Facebook Pages.">
+  <main class="legal" id="content">
+    <p class="eyebrow"><a href="/">FUTUREGROW</a></p>
+    <h1>Privacy Policy</h1>
+    <p class="muted">Effective {LEGAL.effective}</p>
+
+    <p>
+      This policy explains how {LEGAL.operator} ("we", "us") handles personal data when you use FUTUREGROW at <a href={LEGAL.site}>{LEGAL.site.replace('https://', '')}</a>, an invitation-only growth platform for businesses. It also explains
+      what happens to data that FUTUREGROW receives from services you connect to it, such as a Facebook Page.
+    </p>
+    <p>
+      For account and sign-in data we decide how the data is used. For data that an organization brings into FUTUREGROW (its customers, its content, its connected accounts) we act on that organization's instructions, and the
+      organization is responsible for having a lawful basis to use it.
+    </p>
+
+    <nav class="legal-toc" aria-label="On this page">
+      <a href="#collect">What we collect</a>
+      <a href="#use">How we use it</a>
+      <a href="#meta">Facebook Page data</a>
+      <a href="#ai">AI processing</a>
+      <a href="#sharing">Who we share it with</a>
+      <a href="#retention">How long we keep it</a>
+      <a href="#security">Security</a>
+      <a href="#rights">Your rights</a>
+      <a href="#data-deletion">Deleting your data</a>
+      <a href="#contact">Contact</a>
+    </nav>
+
+    <h2 id="collect">1. What we collect</h2>
+    <h3>Account information</h3>
+    <p>Your name, email address, a hash of your password (never the password itself), your two-factor authentication settings, the organizations you belong to, your role in each, and invitations sent to you.</p>
+    <h3>Sign-in and security records</h3>
+    <p>
+      For each session we record the IP address, the browser's user-agent string and when it was created and last used. We keep an audit log of actions taken in each organization (for example who approved a post and when), which
+      identifies the account that acted.
+    </p>
+    <h3>Content your organization adds</h3>
+    <p>
+      Evidence, product facts, marketing claims, brand rules, ideas, briefs, drafts, uploaded files, policies and approvals. If your organization uses the customer features, this can include its customers' contact details, events
+      and consent records, which we process only on that organization's behalf.
+    </p>
+    <h3>Data from connected services</h3>
+    <p>
+      When an owner or admin of your organization connects an account (for example a Facebook Page, Google Ads, Search Console, App Store Connect, Google Play, Shopify, Resend, PostHog or Chatwoot), we receive the data that service
+      provides through its official API under the permissions you granted. We store access tokens encrypted (AES-256-GCM). We do not collect data from services you have not connected.
+    </p>
+    <h3>Cookies</h3>
+    <p>
+      We use only cookies that are needed to sign you in and keep your account secure: a session cookie, a short-lived cookie during two-factor sign-in and, if you choose "Remember this device", a cookie that skips the second step
+      on that device for 30 days. We do not use advertising or analytics cookies, and this site loads no third-party trackers.
+    </p>
+
+    <h2 id="use">2. How we use it</h2>
+    <ul>
+      <li>To provide the service: sign you in, show your organization's data, run the analyses, plans and automations your organization sets up, and carry out actions it approves on connected services.</li>
+      <li>To keep accounts and the service secure: two-factor authentication, rate limits, breached-password checks, fraud and abuse prevention, and the audit trail.</li>
+      <li>To measure whether actions worked, for example by reading back a published post and its engagement.</li>
+      <li>To operate and support the service, contact you about your account or important changes, and meet legal obligations.</li>
+    </ul>
+    <p>We do not sell personal data, use it for advertising, or combine data across organizations to build profiles of people.</p>
+
+    <h2 id="meta">3. Facebook Page and ad account data</h2>
+    <p>
+      If an owner or admin of your organization connects a Facebook Page or a Meta ad account through our Meta app ({LEGAL.metaApp}), FUTUREGROW uses only the permissions a Page or ad account admin granted, as follows:
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th scope="col">Meta permission</th><th scope="col">What FUTUREGROW does with it</th></tr>
+        </thead>
+        <tbody>
+          {
+            META_PERMISSIONS.map((p) => (
+              <tr>
+                <td data-label="Permission"><code>{p.scope}</code></td>
+                <td data-label="Use">{p.use}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+    <p>From Meta we store: the Page's public profile details, snapshots of its posts with their engagement counts, the ID and link of each post FUTUREGROW publishes, Page insights if granted, and ad campaigns with daily spend.</p>
+    <p>
+      For comments and mentions we store the text and a keyed one-way hash of the author's Facebook identifier, not the author's name. The raw notification Meta sends, which includes the author's name and ID, is deleted 30 days
+      after it has been processed. Page and ad account access tokens are stored encrypted. We use Meta data only to provide FUTUREGROW to the organization that connected the Page or ad account. We do not sell it, share it with
+      data brokers, or use it to target advertising.
+    </p>
+
+    <h2 id="ai">4. AI processing</h2>
+    <p>
+      FUTUREGROW uses AI models to suggest ideas and draft content. The text sent to a model includes your organization's evidence summaries, approved claims and aggregate statistics (such as post counts and reaction totals).
+      Personal details in customer text are removed before it is sent. We only use AI providers we have approved, and we do not approve providers whose terms let them train their models on the data we send. AI output is a
+      suggestion: nothing is published or changed on a connected service unless your organization's policy and approvers allow it.
+    </p>
+
+    <h2 id="sharing">5. Who we share it with</h2>
+    <p>We use these service providers to run FUTUREGROW. They process personal data only on our instructions:</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th scope="col">Provider</th><th scope="col">Purpose</th><th scope="col">Location</th></tr>
+        </thead>
+        <tbody>
+          {
+            SERVICE_PROVIDERS.map((p) => (
+              <tr>
+                <td data-label="Provider">{p.name}</td>
+                <td data-label="Purpose">{p.role}</td>
+                <td data-label="Location">{p.location}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+    <p>
+      We also send data to the services your organization connects (for example Meta) when it asks us to act there, such as publishing an approved post. We may disclose data if the law requires it, to protect people's safety or
+      our rights, or as part of a merger or sale of the business, in which case this policy continues to apply. Because our providers operate in several countries, your data may be processed outside the country where you live.
+    </p>
+
+    <h2 id="retention">6. How long we keep it</h2>
+    <ul>
+      <li>Account information: while your account exists.</li>
+      <li>Sessions: they expire after 7 days without use. A remembered device expires after 30 days.</li>
+      <li>Raw notifications from connected services: deleted 30 days after processing.</li>
+      <li>Organization content and data from connected services: until the organization deletes it, its retention settings remove it, or it asks us to delete it. A disabled connection stops all new access.</li>
+      <li>Encrypted backups: kept for 35 days, then deleted automatically.</li>
+      <li>
+        Audit records, consent history and suppression lists (so that someone who opted out stays opted out) are kept for as long as the organization exists, because they are needed for security and to prove compliance.
+      </li>
+    </ul>
+
+    <h2 id="security">7. Security</h2>
+    <p>
+      Connections use TLS. Access tokens for connected services and backups are encrypted. Each organization's data is isolated at the database level. Two-factor authentication is required for approvals and for connecting
+      accounts. No system is perfectly secure, but we work to protect your data and will notify affected users and authorities of a breach where the law requires.
+    </p>
+
+    <h2 id="rights">8. Your rights</h2>
+    <p>
+      Depending on where you live, you may have the right to access, correct, export or delete your personal data, to object to or restrict how we use it, and to complain to a data protection authority. To use these rights, email
+      <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>. We may need to verify your identity and will reply within 30 days. If your data is held by an organization that uses FUTUREGROW (for example you are one of
+      its customers), please contact that organization; we will help it respond.
+    </p>
+
+    <h2 id="data-deletion">9. Deleting your data</h2>
+    <p>
+      You can remove FUTUREGROW's access to your Facebook Page at any time and ask us to delete your data, including data we received from Meta. Step-by-step instructions are on our <a href="/data-deletion">data deletion page</a>.
+    </p>
+
+    <h2 id="children">10. Children</h2>
+    <p>FUTUREGROW is a business service and is not intended for anyone under 18. We do not knowingly collect personal data from children.</p>
+
+    <h2 id="changes">11. Changes</h2>
+    <p>When we update this policy we will change the effective date above. If the changes are significant, we will notify account owners before they take effect.</p>
+
+    <h2 id="contact">12. Contact</h2>
+    <p>
+      FUTUREGROW is operated by {LEGAL.operator}.<br />
+      <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>
+    </p>
+
+    <footer class="small muted legal-foot"><a href="/terms">Terms of Service</a> · <a href="/data-deletion">Data deletion</a> · <a href="/">Home</a></footer>
+  </main>
+</Base>
