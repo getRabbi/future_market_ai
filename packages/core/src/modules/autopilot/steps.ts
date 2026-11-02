@@ -43,6 +43,7 @@ import {
   type PostSnapshotResult,
   pageBrandScope,
   postForPublishAction,
+  resubmitWaitingPost,
   submitPostDraft,
   syncPageInsights,
   syncPageProfile,
@@ -250,7 +251,7 @@ const observe: StepExecutor = async (c) => {
         : `Facebook Page ${p.name}: post counters unavailable.`,
     );
     if (!policy.configured) warnings.push('Your autonomy policy is not configured, so every action will wait for approval.');
-    if (missingDomains.length) warnings.push(`No legal-approved ${missingDomains.join(', ')} rules for market ${c.goal.market}: those actions also need legal approval.`);
+    if (missingDomains.length) warnings.push(`No legal-approved ${missingDomains.join(', ')} rules for market ${c.goal.market}: those actions also need legal approval${missingDomains.includes('organic_social') ? ', except ordinary organic Facebook Page posts that pass the content checks' : ''}.`);
     if (!c.deps.models) warnings.push('No approved AI model is available, so ideas and decisions cannot be generated.');
     const active = conns.filter((x) => x.status === 'active');
     const detail = [
@@ -674,11 +675,27 @@ const submit: StepExecutor = async (c) => {
 /* ------------------------------------------------------------------ */
 
 const track: StepExecutor = async (c) => {
-  const actionId = (c.prior.submit?.output.actionId as string | undefined) ?? c.task.refs.actionId;
+  // The step's own ref wins: it moves to the replacement when a waiting post is resubmitted (D-039).
+  const actionId = c.task.refs.actionId ?? (c.prior.submit?.output.actionId as string | undefined);
   if (!actionId) return { kind: 'skipped', detail: 'Nothing was submitted in this cycle.' };
   const [a] = await tx(c, async (t) => (await goalActions(t, c.goal.id)).filter((x) => x.id === actionId));
   if (!a) return { kind: 'skipped', detail: 'The action is no longer visible.' };
   const refs = { actionId };
+  // D-039: a policy change while the post waits (e.g. the owner pre-authorizes publishing) applies without a person.
+  if (a.status === 'APPROVAL_REQUIRED') {
+    const next = await resubmitWaitingPost(c.deps, c.tenantId, actionId);
+    if (next) {
+      const hours = Math.min(24, Number((c.goal.limits as { cadenceHours?: number }).cadenceHours ?? 24));
+      return {
+        kind: 'waiting',
+        detail: `Your policy now pre-authorizes the waiting post, so it went to the execution gateway again as a new action (${next.status.toLowerCase().replaceAll('_', ' ')}); the waiting one is cancelled and can never publish.`,
+        recheckAt: new Date(c.now.getTime() + 60_000),
+        maxWaitHours: hours,
+        refs: { actionId: next.id, supersededActionId: actionId },
+        output: { actionId: next.id, status: next.status },
+      };
+    }
+  }
   if (a.status === 'VERIFIED') return { kind: 'completed', detail: `${a.actionType} was executed and independently verified.`, refs, output: { actionId, status: a.status } };
   if (SETTLED_ACTION_STATES.includes(a.status)) return { kind: 'completed', detail: `${a.actionType} ended as ${a.status.toLowerCase().replaceAll('_', ' ')}: ${a.statusReason ?? ''}`.trim(), refs, output: { actionId, status: a.status } };
   if (c.task.waitUntil && c.now > c.task.waitUntil) return { kind: 'completed', detail: `${a.actionType} is still ${a.status.toLowerCase().replaceAll('_', ' ')}; it stays in Pending approvals and the next cycle checks it again.`, refs, output: { actionId, status: a.status, carriedOver: true } };

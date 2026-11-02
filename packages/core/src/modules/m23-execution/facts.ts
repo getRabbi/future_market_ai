@@ -2,10 +2,11 @@ import { configuredApiVersion } from '@futuregrow/connectors';
 import type { ActionRisk, ActionTypeDefinition, PlatformCapability, TenantPolicy } from '@futuregrow/contracts';
 import { actionRequests, assets, budgetReservations, claims, connections, consentState, customerProfiles, evidenceRecords, experiments, growthDecisions, messages, platformCapabilities, suppressions, syntheticPersonas, type Tx, tenantSettings } from '@futuregrow/db';
 import { identifierHash } from '@futuregrow/observability';
-import type { DecisionFact, DisclosureFact, MessagingFact, PolicyFacts } from '@futuregrow/policies';
+import type { DecisionFact, DisclosureFact, MessagingFact, OrganicPostFact, PolicyFacts } from '@futuregrow/policies';
 import { and, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { effectiveSunset } from '../../api-lifecycle.js';
 import type { CoreDeps } from '../../deps.js';
+import { lintCopy } from '../m03-knowledge/index.js';
 import { approvedJurisdictions, engagedKillSwitchesFor, isSystemHalted, senderIdentityComplete } from '../m24-governance/index.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -193,7 +194,14 @@ export async function gatherPolicyFacts(tx: Tx, deps: CoreDeps, input: FactInput
     disclosure,
     experiment: def?.type === 'experiment.start' ? await experimentFact(tx, input.params.experimentId as string) : null,
     decision: input.decisionId ? await decisionFact(tx, input.decisionId) : null,
+    organicPost: def?.type === 'social.facebook.publish_post' && typeof input.params.message === 'string' ? await organicPostFact(tx, input.params.message, claimIds, now) : null,
   };
+}
+
+/** D-039: M23 lints the exact message itself rather than trusting the proposer's earlier lint. */
+async function organicPostFact(tx: Tx, message: string, claimIds: string[], now: Date): Promise<OrganicPostFact> {
+  const lint = await lintCopy(tx, message, { claimIds, channel: 'facebook', now });
+  return { copyLintPassed: lint.passed, lintCodes: lint.violations.filter((v) => v.severity === 'block').map((v) => v.code) };
 }
 
 /** Recorded as `decided_by` when the Autopilot accepts a decision without a person (D-033). */

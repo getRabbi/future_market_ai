@@ -5,7 +5,7 @@ import path from 'node:path';
 import { type ModelProvider, PROMPTS, type ProviderOutcome, type StructuredRequest } from '@futuregrow/agent-kernel';
 import { analytics, autopilot, brain, clearModelCache, connectionsModule, createModelGateway, evidence, execution, experimentsModule, governance, ideas, knowledge, record, social, systemActor } from '@futuregrow/core';
 import { actionRequests, analyticsRequests, approvals, appStoreReports, auditLog, creativeBriefs, forecastPoints, forecastRuns, goalCycles, goalTasks, growthDecisions, growthGoals, growthIdeas, killSwitches, metricSeries, organization, outboxEvents, socialPosts, withSystem, withTenant } from '@futuregrow/db';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobHelpers, Task } from 'graphile-worker';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { JURISDICTION_DOMAIN_KEYS } from '../../../packages/contracts/src/index.js';
@@ -971,6 +971,139 @@ describe('Autopilot: under a pre-authorized publishing policy an exploratory Fac
     // The Autopilot never offers the same draft twice.
     expect(await social.submitPostDraft(h.deps, org, back!.id, { geographies: ['BD'], evidenceIds: [] })).toMatchObject({ action: null, reason: /already offered/ });
     await otx((t) => governance.releaseKillSwitch(t, org, h.users.owner, ks.killSwitch.id));
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'));
+  }, 300_000);
+});
+
+describe('Autopilot: an ordinary organic Bangla Page post for BD needs no jurisdiction rule pack or legal sign-off (D-039)', () => {
+  it('re-evaluates the waiting post once the owner pre-authorizes publishing, publishes and verifies it with no BD pack, keeps one post a day, refuses a duplicate and denies restricted copy', async () => {
+    const org = `org_${randomUUID().slice(0, 8)}`;
+    const otx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => tx(fn, org);
+    await h.t.handle.db.insert(organization).values({ id: org, name: 'No Pack Page Co', slug: org });
+    await otx((t) => autopilot.setAutopilotEnabled(t, org, h.users.owner, true));
+    // No jurisdiction rule pack and no approved markets: only the owner's publishing pre-authorization.
+    const publishing = (autonomy: 'approval_required' | 'pre_authorized_within_limits') =>
+      otx((t) =>
+        governance.setTenantPolicy(t, org, h.users.owner, {
+          configured: true,
+          currency: 'USD',
+          approvedJurisdictions: [],
+          categories: { PUBLIC_PUBLISHING: { autonomy, approverRoles: ['approver'], requiresDistinctApprover: true, maxSpendDeltaMicrosPerAction: null, maxSpendDeltaMicrosPerDay: null, maxAudienceSize: null } },
+        }),
+      );
+    await publishing('approval_required');
+    const conn = await connectionsModule.createConnection(h.deps, org, h.users.owner, { provider: 'meta', externalAccountId: '888', displayName: 'EPS Page', grantedScopes: ['pages_manage_posts', 'pages_read_engagement'], credentials: { accessToken: 'PAGE_888' } });
+    const published: { id: string; message: string; at: string }[] = [];
+    const ago = (hours: number) => new Date(h.clock.now().getTime() - hours * 3_600_000).toISOString();
+    server.on('GET', '/v26.0/888/insights', (req) => ({ json: { data: [{ name: req.query.get('metric'), period: 'day', values: [] }] } }));
+    server.on('GET', '/v26.0/888', { json: { id: '888', name: 'EPS Page', about: 'বাংলায় কোরিয়ান ভাষা', category: 'Education', link: 'https://www.facebook.com/888', followers_count: 13 } });
+    server.on('GET', '/v26.0/888/posts', () => ({
+      json: {
+        data: [
+          ...published.map((p) => ({ id: p.id, created_time: p.at, status_type: 'mobile_status_update', message: p.message, reactions: { summary: { total_count: 2 } }, comments: { summary: { total_count: 0 } } })),
+          { id: '888_old', created_time: ago(72), status_type: 'mobile_status_update', message: 'কোরিয়ান শব্দ', reactions: { summary: { total_count: 1 } }, comments: { summary: { total_count: 0 } } },
+        ],
+      },
+    }));
+    server.on('POST', '/v26.0/888/feed', (req) => {
+      const id = `888_${published.length + 1}`;
+      published.push({ id, message: req.form!.get('message')!, at: h.clock.now().toISOString() });
+      return { json: { id } };
+    });
+    server.on('GET', /^\/v26\.0\/888_\d+$/, (req) => {
+      const p = published.find((x) => req.path === `/v26.0/${x.id}`);
+      return p ? { json: { id: p.id, message: p.message, is_published: true, permalink_url: `https://fb.example/${p.id}` } } : { status: 404, json: { error: { message: 'not found' } } };
+    });
+    const profile = await social.syncPageProfile(h.deps, org, conn.id, { actor: h.users.owner });
+    const claim = await otx((t) => knowledge.proposeClaim(t, h.deps, org, h.users.operator, { text: 'অ্যাপে হাঙ্গুল বর্ণমালা ও উচ্চারণের লেসন আছে', claimType: 'product_capability', evidenceIds: [profile.evidenceId!], entityIds: [profile.entityId!] }));
+    await otx((t) => knowledge.reviewClaim(t, org, h.users.approver, claim.id, 'approved'));
+    const first = 'অ্যাপে হাঙ্গুল বর্ণমালা ও উচ্চারণের লেসন আছে। আজ কোন অক্ষরটি শিখবেন?';
+    let text = first;
+    provider.responders.set('organicPostDrafts', (c) => {
+      const id = c.match(new RegExp(`claim (${UUID})`))?.[1];
+      return { abstain: false, abstainReason: '', title: 'হাঙ্গুল', angle: 'প্রশ্ন', hooks: ['হাঙ্গুল শিখুন'], proofPoints: [{ text: 'হাঙ্গুল বর্ণমালা ও উচ্চারণের লেসন', claimId: id }], cta: 'মন্তব্যে জানান', prohibitedClaims: [], posts: [{ text, claimIds: [id] }] };
+    });
+    const plan = autopilot.interpretGoal('Grow organic engagement on our Facebook Page over the next 30 days with $0 advertising budget.', { now: h.clock.now(), series: [], market: 'BD' });
+    const g = await otx((t) => autopilot.createGoal(t, h.deps, org, h.users.owner, { ...plan.draft, market: 'BD' }));
+    const kinds = async () => Object.fromEntries((await otx((t) => t.select().from(goalTasks).where(eq(goalTasks.goalId, g.id)).orderBy(asc(goalTasks.createdAt), asc(goalTasks.seq)))).map((x) => [x.kind, x]));
+    const runCycle = async () => {
+      for (let i = 0; i < 8; i++) {
+        await autopilot.advanceGoal(h.deps, org, g.id, { maxSteps: 20 });
+        await drain();
+        h.clock.advance(2 * 60_000);
+      }
+    };
+    const feedPosts = () => server.find('POST', '/v26.0/888/feed').length;
+    const humanAudit = async () => (await otx((t) => t.select({ n: sql<number>`count(*)::int` }).from(auditLog).where(eq(auditLog.actorType, 'user'))))[0]!.n;
+
+    // The post waits while publishing needs approval; without a pack the jurisdiction rule still applies to it.
+    await runCycle();
+    let k = await kinds();
+    expect(k.submit).toMatchObject({ status: 'completed', output: { status: 'APPROVAL_REQUIRED', actionType: 'social.facebook.publish_post' } });
+    expect(k.track!.status).toBe('waiting');
+    const actionId = k.submit!.refs.actionId!;
+    const waiting = (await otx((t) => execution.getActionDetail(t, actionId))).action;
+    expect(waiting.policyDecision!.reasons.map((r) => r.code)).toEqual(['JURISDICTION_UNAPPROVED', 'CATEGORY_REQUIRES_APPROVAL']);
+    expect(feedPosts()).toBe(0);
+
+    // The owner pre-authorizes publishing; no rule pack, legal sign-off or approval follows. Only a person can
+    // approve the waiting action, so the Autopilot cancels it and the same payload goes to M23 as a new action.
+    await publishing('pre_authorized_within_limits');
+    const humansBefore = await humanAudit();
+    await runCycle();
+    k = await kinds();
+    const replacementId = k.track!.refs.actionId!;
+    expect(replacementId).not.toBe(actionId);
+    expect(k.track).toMatchObject({ status: 'completed', refs: { supersededActionId: actionId }, output: { actionId: replacementId, status: 'VERIFIED' } });
+    expect(k.track!.detail).toMatch(/independently verified/);
+    const [old] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, actionId)));
+    expect(old).toMatchObject({ status: 'CANCELLED', statusReason: expect.stringMatching(/superseded: policy fg-policy-1\.3\.0/) });
+    await expect(execution.decideApproval(h.deps, org, h.users.approver, actionId, { decision: 'approved', expectedActionHash: waiting.actionHash })).rejects.toThrow(/CANCELLED/);
+    const [a] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, replacementId)));
+    expect(a).toMatchObject({ status: 'VERIFIED', actionHash: waiting.actionHash, proposedByType: 'agent', proposedById: 'autopilot', policyVersion: 'fg-policy-1.3.0' });
+    expect((a!.policyDecision as { outcome: string; reasons: { code: string }[] }).reasons.map((r) => r.code)).toEqual(['ORGANIC_EDUCATIONAL_POST']);
+    expect(
+      await otx((t) =>
+        t
+          .select()
+          .from(approvals)
+          .where(inArray(approvals.actionId, [actionId, replacementId])),
+      ),
+    ).toHaveLength(0);
+    expect(feedPosts()).toBe(1);
+    expect(published[0]!.message).toBe(first);
+    const [post] = await otx((t) => t.select().from(socialPosts).where(eq(socialPosts.actionId, replacementId)));
+    expect(post).toMatchObject({ status: 'published_verified', externalPostId: '888_1', externalUrl: 'https://fb.example/888_1' });
+    expect(k.learn!.detail).toMatch(/a post went to the execution gateway and is verified/);
+
+    // Same day, another cycle drafts a post about jobs in Korea, but at most one post a day goes out.
+    text = 'অ্যাপে হাঙ্গুল বর্ণমালা ও উচ্চারণের লেসন আছে। কোরিয়ায় চাকরির প্রস্তুতি আজই শুরু করুন।';
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'run_now'));
+    const humansAfterRunNow = await humanAudit();
+    h.clock.advance(61 * 60_000);
+    await runCycle();
+    k = await kinds();
+    expect(k.submit!.detail).toMatch(/already handed 1 post to the execution gateway in the last 24 hours \(limit 1\)/);
+    expect(feedPosts()).toBe(1);
+
+    // Next day that draft reaches M23, which denies it (no approval request); the draft goes back with the reason.
+    h.clock.advance(DAY);
+    await runCycle();
+    k = await kinds();
+    expect(k.submit).toMatchObject({ status: 'blocked', output: { status: 'DENIED' } });
+    expect(k.submit!.detail).toMatch(/ORGANIC_POST_RESTRICTED/);
+    expect(feedPosts()).toBe(1);
+    expect((await otx((t) => autopilot.inbox(t))).approvals).toEqual([]);
+
+    // A day later the model repeats the published text: it is never posted twice.
+    text = first;
+    h.clock.advance(DAY);
+    await runCycle();
+    k = await kinds();
+    expect(k.submit!.detail).toMatch(/same caption was already scheduled/);
+    expect(feedPosts()).toBe(1);
+    expect(await humanAudit()).toBe(humansAfterRunNow);
+    expect(humansAfterRunNow - humansBefore).toBe(1);
     await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'));
   }, 300_000);
 });

@@ -230,6 +230,83 @@ describe('policy engine', () => {
     expect(codes(evaluatePolicy(publishInput({ assets: [{ id: 'a1', publishEligible: false, reasons: ['music rights unknown'] }] })))).toContain('ASSET_NOT_ELIGIBLE');
   });
 
+  // D-039: the Autopilot's organic Bangla Page post for BD, with no BD rule pack approved.
+  const BANGLA = 'হাঙ্গুলের অক্ষর শিখুন—অ্যাপে হাঙ্গুল বর্ণমালা ও উচ্চারণের লেসন আছে। গেমের মাধ্যমে অক্ষরগুলোকে স্মরণ করুন।';
+  const fbInput = (o: { message?: string; params?: Record<string, unknown>; risk?: Partial<PolicyInput['risk']>; facts?: Partial<PolicyInput['facts']>; proposedBy?: PolicyInput['proposedBy']; tenantPolicy?: TenantPolicy } = {}) =>
+    budgetInput(
+      {
+        definition: getActionType('social.facebook.publish_post'),
+        actionType: 'social.facebook.publish_post',
+        params: { pageId: '777', message: o.message ?? BANGLA, assetIds: [], claimIds: [CLAIM], ...o.params },
+        risk: { ...budgetInput().risk, spendDeltaMicros: 0, currency: null, geographies: ['BD'], ...o.risk },
+        ...(o.proposedBy ? { proposedBy: o.proposedBy } : {}),
+        ...(o.tenantPolicy ? { tenantPolicy: o.tenantPolicy } : {}),
+      },
+      {
+        capability: cap('facebook_page_publish', 'meta', ['pages_manage_posts']),
+        connection: { provider: 'meta', status: 'active', grantedScopes: ['pages_manage_posts'], appAudited: null, accessLevel: null },
+        approvedJurisdictions: [],
+        claims: [{ id: CLAIM, status: 'approved', expiresAt: null, regulated: false }],
+        disclosure: { isAiGenerated: false, paidPartnership: false, syntheticPersonaId: null, disclosureText: null },
+        organicPost: { copyLintPassed: true, lintCodes: [] },
+        ...o.facts,
+      },
+    );
+  const USER = { type: 'user', id: 'u1', modelId: null, promptVersion: null } as const;
+
+  it('auto-allows an ordinary organic Bangla educational Page post without a jurisdiction rule pack (D-039)', () => {
+    const d = evaluatePolicy(fbInput());
+    expect(d.outcome).toBe('PRE_AUTHORIZED');
+    expect(d.reasons).toEqual([expect.objectContaining({ rule: 'R-JURISDICTION', code: 'ORGANIC_EDUCATIONAL_POST', effect: 'PRE_AUTHORIZED' })]);
+    expect(d.approvalGroups).toEqual([]);
+    // With an approved pack for the market nothing is waived, so nothing is recorded.
+    expect(evaluatePolicy(fbInput({ facts: { approvedJurisdictions: ['BD'] } })).reasons).toEqual([]);
+    // The same Page post proposed by a person is auto-allowed too.
+    expect(evaluatePolicy(fbInput({ proposedBy: USER })).outcome).toBe('PRE_AUTHORIZED');
+  });
+
+  it('blocks restricted or unsupported organic Autopilot posts instead of asking for approval (D-039)', () => {
+    for (const message of ['কোরিয়ায় চাকরির জন্য এখনই প্রস্তুতি নিন', 'ভিসা প্রসেসিংয়ে আমরা সাহায্য করি', 'EPS-TOPIK পাস নিশ্চিত!', 'HRD Korea অনুমোদিত কোর্স', 'Get a job in Korea fast', 'Our official partner for visas']) {
+      const d = evaluatePolicy(fbInput({ message }));
+      expect(d.outcome, message).toBe('DENY');
+      expect(codes(d), message).toContain('ORGANIC_POST_RESTRICTED');
+    }
+    // Both encodings of Bangla য় are caught.
+    expect(evaluatePolicy(fbInput({ message: 'নিয়োগ চলছে' })).outcome).toBe('DENY');
+    expect(evaluatePolicy(fbInput({ message: 'নিয়োগ চলছে' })).outcome).toBe('DENY');
+    const lint = evaluatePolicy(fbInput({ facts: { organicPost: { copyLintPassed: false, lintCodes: ['UNSUBSTANTIATED_SUPERLATIVE'] } } }));
+    expect(lint.outcome).toBe('DENY');
+    expect(lint.reasons.find((r) => r.code === 'ORGANIC_POST_RESTRICTED')!.message).toMatch(/UNSUBSTANTIATED_SUPERLATIVE/);
+    expect(codes(evaluatePolicy(fbInput({ facts: { claims: [{ id: CLAIM, status: 'pending_review', expiresAt: null, regulated: false }] } })))).toContain('CLAIM_NOT_APPROVED');
+    // A person's restricted post keeps the legal path (rule pack or legal approval), unchanged.
+    const human = evaluatePolicy(fbInput({ message: 'ভিসা তথ্য', proposedBy: USER }));
+    expect(human.outcome).toBe('REQUIRE_APPROVAL');
+    expect(codes(human)).toEqual(['JURISDICTION_UNAPPROVED']);
+  });
+
+  it('keeps the jurisdiction rule for everything outside the narrow organic path (D-039)', () => {
+    const legal = (i: PolicyInput) => {
+      const d = evaluatePolicy(i);
+      expect(d.outcome).toBe('REQUIRE_APPROVAL');
+      expect(codes(d)).toContain('JURISDICTION_UNAPPROVED');
+      expect(d.approvalGroups.map((g) => g.name)).toContain('legal');
+    };
+    legal(fbInput({ params: { link: 'https://example.org/apply' } }));
+    legal(fbInput({ facts: { claims: [] }, params: { claimIds: [] } }));
+    legal(fbInput({ facts: { organicPost: null } }));
+    legal(fbInput({ risk: { materialConnection: true }, facts: { disclosure: { isAiGenerated: false, paidPartnership: true, syntheticPersonaId: null, disclosureText: 'Paid partnership' } } }));
+    legal(fbInput({ tenantPolicy: { ...configured, categories: { ...configured.categories, PUBLIC_PUBLISHING: { ...configured.categories.PUBLIC_PUBLISHING!, autonomy: 'approval_required' } } } }));
+    const regulated = evaluatePolicy(fbInput({ facts: { claims: [{ id: CLAIM, status: 'approved', expiresAt: null, regulated: true }] } }));
+    expect(codes(regulated)).toEqual(expect.arrayContaining(['JURISDICTION_UNAPPROVED', 'REGULATED_CLAIM']));
+    expect(codes(evaluatePolicy(fbInput({ risk: { geographies: [] } })))).toContain('GEOGRAPHY_UNSPECIFIED');
+    // Paid advertising, other publishing channels and outreach in BD still need the legal-approved pack.
+    legal(budgetInput({ risk: { ...budgetInput().risk, geographies: ['BD'] } }));
+    legal(publishInput({}, { geographies: ['BD'] }));
+    legal({ ...emailInput(), risk: { ...emailInput().risk, geographies: ['BD'] } });
+    // Kill switches still stop the organic post.
+    expect(codes(evaluatePolicy(fbInput({ facts: { engagedKillSwitches: [{ scope: 'connector', targetRef: 'c1', reason: 'r' }] } })))).toContain('KILL_SWITCH_ENGAGED');
+  });
+
   const emailInput = (m: Partial<NonNullable<PolicyInput['facts']['messaging']>> = {}, audienceSize: number | null = 1) =>
     budgetInput(
       {

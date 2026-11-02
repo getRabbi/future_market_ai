@@ -1,6 +1,6 @@
 import { injectionSignals, PROMPTS, redactPii, untrustedBlock } from '@futuregrow/agent-kernel';
 import { fetchPageInsights, fetchPagePosts, fetchPageProfile, type PAGE_INSIGHT_METRICS, PAGE_POST_METRICS, type PagePostMetric, type PagePostObservation, type PageProfile } from '@futuregrow/connectors';
-import { assets, claims, connections, type DbOrTx, evidenceRecords, growthIdeas, kgEntities, metricPoints, metricSeries, socialInteractions, socialPosts, syntheticPersonas, type Tx, withTenant } from '@futuregrow/db';
+import { actionRequests, assets, claims, connections, type DbOrTx, evidenceRecords, growthIdeas, kgEntities, metricPoints, metricSeries, socialInteractions, socialPosts, syntheticPersonas, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, identifierHash, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { and, desc, eq, gte, inArray, like, lte, max, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -14,7 +14,7 @@ import { appendPoints, upsertSeries } from '../m08-analytics/index.js';
 import { createBrief } from '../m13-creative/index.js';
 import { personaContentCheck } from '../m15-personas/index.js';
 import { effectiveFreshness } from '../m23-execution/facts.js';
-import { type ActionView, proposeAction } from '../m23-execution/gateway.js';
+import { type ActionView, cancelAction, currentPolicyDecision, proposeAction } from '../m23-execution/gateway.js';
 import { type ActionRow, registerHooks, registerResolver } from '../m23-execution/registry.js';
 import { registerWebhookHandler } from '../webhooks.js';
 
@@ -1213,6 +1213,42 @@ export async function submitPostDraft(deps: CoreDeps, tenantId: string, postId: 
   const denied = view.status === 'DENIED';
   await setPost(denied ? { status: 'draft', actionId: view.id, statusReason: `Not published automatically: ${view.statusReason ?? 'denied by policy'}`.slice(0, 2000) } : { actionId: view.id }, { actionId: view.id, status: view.status });
   return { postId, action: view, reason: denied ? (view.statusReason ?? 'denied by policy') : null };
+}
+
+/**
+ * D-039: an Autopilot post waiting for approval goes to M23 again once the current policy would
+ * pre-authorize it (for example after the owner pre-authorized publishing). Only a person can
+ * approve a waiting action, so it is cancelled first and can never publish; the same payload is
+ * then proposed as a new action, which the post follows. Otherwise nothing changes.
+ */
+export async function resubmitWaitingPost(deps: CoreDeps, tenantId: string, actionId: string): Promise<ActionView | null> {
+  const actor = systemActor('autopilot');
+  const tctx = { tenantId, actor: actorRef(actor) };
+  const waiting = await withTenant(deps.db, tctx, async (tx) => {
+    const [a] = await tx.select().from(actionRequests).where(eq(actionRequests.id, actionId));
+    if (!a || a.status !== 'APPROVAL_REQUIRED' || a.proposedByType !== 'agent' || a.proposedById !== 'autopilot' || !PUBLISH_PLATFORM[a.actionType]) return null;
+    const [post] = await tx
+      .select()
+      .from(socialPosts)
+      .where(eq(socialPosts.id, String(a.params.postId ?? '')));
+    if (!post || post.actionId !== a.id || post.status !== 'submitted') return null;
+    const { decision } = await currentPolicyDecision(tx, deps, tenantId, a, deps.clock.now());
+    return decision.outcome === 'PRE_AUTHORIZED' ? { a, post, policyVersion: decision.policyVersion } : null;
+  });
+  if (!waiting) return null;
+  const { a, post } = waiting;
+  await cancelAction(deps, tenantId, actor, a.id, `superseded: policy ${waiting.policyVersion} now pre-authorizes this post, which is proposed again as a new action`);
+  const proposer: Actor = { type: 'agent', id: 'autopilot', roles: [], mfaVerified: false, promptVersion: a.proposerPromptVersion ?? PROMPTS.organicPostDrafts.version };
+  const view = await proposeAction(deps, tenantId, proposer, { actionType: a.actionType, connectionId: a.connectionId, target: a.target, params: a.params, evidenceIds: a.evidenceIds, risk: a.risk, idempotencyKey: `autopilot-post:${post.id}:after:${a.id}` });
+  const denied = view.status === 'DENIED';
+  await withTenant(deps.db, tctx, async (tx) => {
+    await tx
+      .update(socialPosts)
+      .set(denied ? { status: 'draft', actionId: view.id, statusReason: `Not published automatically: ${view.statusReason ?? 'denied by policy'}`.slice(0, 2000) } : { status: 'submitted', actionId: view.id, statusReason: null })
+      .where(eq(socialPosts.id, post.id));
+    await audit(tx, tenantId, actor, 'social.post.resubmitted', { type: 'social_post', id: post.id }, { supersededActionId: a.id, actionId: view.id, status: view.status });
+  });
+  return view;
 }
 
 export interface PostResult {

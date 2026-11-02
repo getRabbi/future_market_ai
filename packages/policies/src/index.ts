@@ -1,6 +1,6 @@
 import type { ActionRisk, ActionTypeDefinition, ApprovalGroup, CategoryPolicy, DataPurpose, PlatformCapability, PolicyDecision, PolicyOutcome, Proposer, RiskCategory, TenantPolicy, TenantRole } from '@futuregrow/contracts';
 
-export const POLICY_VERSION = 'fg-policy-1.2.0';
+export const POLICY_VERSION = 'fg-policy-1.3.0';
 
 /* ------------------------------------------------------------------ */
 /* Inputs: facts are gathered by the caller from the database; the      */
@@ -90,6 +90,14 @@ export interface PolicyFacts {
    * binds the action.
    */
   decision?: DecisionFact | null;
+  /** Present for social.facebook.publish_post: M23's own copy lint of the exact message (D-039). */
+  organicPost?: OrganicPostFact | null;
+}
+
+export interface OrganicPostFact {
+  copyLintPassed: boolean;
+  /** Codes of the blocking lint violations. */
+  lintCodes: readonly string[];
 }
 
 export interface DecisionFact {
@@ -241,15 +249,80 @@ function ruleProtectedPopulations(i: PolicyInput): Finding[] {
   return out;
 }
 
+/*
+ * D-039: topics an organic Page post may never cover without a legal-approved rule pack, in English
+ * and Bangla, independent of the tenant's own brand rules. Text and patterns are compared in NFC
+ * because Bangla য় has two encodings.
+ */
+const RESTRICTED_ORGANIC_TOPICS: readonly [string, RegExp][] = (
+  [
+    ['recruitment or jobs', String.raw`চাকরি|চাকুরি|নিয়োগ|রিক্রুট|এজেন্সি|দালাল|কাজের সুযোগ|বেতন|\b(?:jobs?|recruit\w*|hiring|vacanc(?:y|ies)|salar(?:y|ies))\b`],
+    ['migration or visas', String.raw`ভিসা|অভিবাসন|বিদেশে|প্রবাস|কোরিয়ায় যা|কোরিয়া যা|ওয়ার্ক পারমিট|\b(?:visas?|immigra\w*|migra\w*|(?:work|employment) permits?|(?:work|move|go|travel)(?:ing)? (?:to|in) korea)\b`],
+    ['government or official affiliation', String.raw`সরকারি|অফিসিয়াল|মন্ত্রণালয়|BOESL|BMET|HRD ?Korea|\b(?:official|government|ministry)\b`],
+    ['guaranteed outcomes', String.raw`গ্যারান্টি|নিশ্চিত পাস|পাস নিশ্চিত|১০০ ?%|100 ?%|\b(?:guarantee\w*|assured)\b`],
+  ] as const
+).map(([topic, src]) => [topic, new RegExp(src.normalize('NFC'), 'iu')]);
+
+export function restrictedOrganicTopics(text: string): string[] {
+  const t = text.normalize('NFC');
+  return RESTRICTED_ORGANIC_TOPICS.filter(([, re]) => re.test(t)).map(([topic]) => topic);
+}
+
+/**
+ * D-039: an ordinary organic educational post on a connected Facebook Page needs no jurisdiction
+ * rule pack or legal sign-off when the owner pre-authorized publishing, it cites only approved,
+ * unregulated claims, M23's own copy lint passed, it covers no restricted topic, and it carries no
+ * spend, link, paid partnership, synthetic persona or protected population. An Autopilot post that
+ * fails the content checks is denied, so it is redrafted instead of waiting for a person; anything
+ * else keeps the jurisdiction rule below.
+ */
+function organicPostScreen(i: PolicyInput): { eligible: boolean; deny: Finding | null } | null {
+  const d = i.definition;
+  if (!d || i.actionType !== 'social.facebook.publish_post') return null;
+  const r = i.risk;
+  const f = i.facts;
+  const restricted = restrictedOrganicTopics(typeof i.params.message === 'string' ? i.params.message : '');
+  const lintFailed = f.organicPost ? !f.organicPost.copyLintPassed : false;
+  if (i.proposedBy.type !== 'user' && (restricted.length || lintFailed)) {
+    const why = restricted.length ? `covers restricted topics (${restricted.join(', ')})` : `failed copy lint (${f.organicPost!.lintCodes.join(', ')})`;
+    return { eligible: false, deny: deny('R-JURISDICTION', 'ORGANIC_POST_RESTRICTED', `organic post ${why}; it is not published automatically and needs a new draft`) };
+  }
+  const claimsOk = f.claims.length > 0 && f.missingClaimIds.length === 0 && f.claims.every((c) => c.status === 'approved' && !c.regulated && (!c.expiresAt || c.expiresAt.getTime() > i.now.getTime()));
+  const eligible =
+    categoryPolicy(i.tenantPolicy, d.category)?.autonomy === 'pre_authorized_within_limits' &&
+    !d.affectsSpend &&
+    !d.contactsPeople &&
+    r.spendDeltaMicros <= 0 &&
+    !r.materialConnection &&
+    !r.syntheticPersonaId &&
+    !r.regulatedClaim &&
+    !r.involvesChildren &&
+    !r.usesSensitiveAttributes &&
+    r.geographies.length > 0 &&
+    !i.params.link &&
+    !f.disclosure?.paidPartnership &&
+    !f.disclosure?.syntheticPersonaId &&
+    claimsOk &&
+    f.organicPost?.copyLintPassed === true &&
+    restricted.length === 0;
+  return { eligible, deny: null };
+}
+
 function ruleJurisdiction(i: PolicyInput): Finding[] {
   const d = i.definition;
   if (!d) return [];
   const needs = d.publicFacing || d.contactsPeople || d.category === 'SPEND' || d.category === 'PRICING' || d.category === 'DATA_EXPORT';
   if (!needs) return [];
+  const organic = organicPostScreen(i);
+  if (organic?.deny) return [organic.deny];
   if (i.risk.geographies.length === 0) {
     return [approve('R-JURISDICTION', 'GEOGRAPHY_UNSPECIFIED', 'target geography unspecified; legal interpretation required', LEGAL_GROUP)];
   }
   const unapproved = i.risk.geographies.filter((g) => !i.facts.approvedJurisdictions.includes(g));
+  if (unapproved.length && organic?.eligible) {
+    // Recorded with the decision so the audit shows why no legal approval was asked for.
+    return [{ rule: 'R-JURISDICTION', code: 'ORGANIC_EDUCATIONAL_POST', message: `ordinary organic Page post for ${unapproved.join(', ')}: approved claims, copy lint and restricted-topic screen passed; no rule pack needed`, effect: 'PRE_AUTHORIZED' }];
+  }
   if (unapproved.length) {
     return [approve('R-JURISDICTION', 'JURISDICTION_UNAPPROVED', `no legal-approved rule pack covering ${d.type} for: ${unapproved.join(', ')}`, LEGAL_GROUP)];
   }

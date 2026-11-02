@@ -143,7 +143,8 @@ export async function proposeAction(deps: CoreDeps, tenantId: string, actor: Act
   });
 }
 
-async function evaluate(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, a: ActionRow): Promise<ActionRow> {
+/** M23 policy for an action as it stands now: current tenant policy and freshly gathered facts. Writes nothing. */
+export async function currentPolicyDecision(tx: Tx, deps: CoreDeps, tenantId: string, a: ActionRow, now: Date) {
   const def = getActionType(a.actionType);
   const policy = await getTenantPolicy(tx, tenantId);
   const facts = await gatherPolicyFacts(
@@ -172,8 +173,13 @@ async function evaluate(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, 
     evidenceIds: a.evidenceIds,
     tenantPolicy: policy,
     facts,
-    now: deps.clock.now(),
+    now,
   });
+  return { facts, decision };
+}
+
+async function evaluate(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, a: ActionRow): Promise<ActionRow> {
+  const { decision } = await currentPolicyDecision(tx, deps, tenantId, a, deps.clock.now());
   const summary = (filter: (r: PolicyDecision['reasons'][number]) => boolean) =>
     decision.reasons
       .filter(filter)
@@ -350,35 +356,7 @@ export async function executeAction(deps: CoreDeps, tenantId: string, actionId: 
       return { kind: 'stopped', status: u.status, reason: 'expired' };
     }
     const def = getActionType(a.actionType)!;
-    const policy = await getTenantPolicy(tx, tenantId);
-    const facts = await gatherPolicyFacts(
-      tx,
-      deps,
-      {
-        tenantId,
-        actionId: a.id,
-        definition: def,
-        params: a.params,
-        target: a.target,
-        connectionId: a.connectionId,
-        evidenceIds: a.evidenceIds,
-        risk: a.risk as ActionRisk,
-        proposer: { type: a.proposedByType, id: a.proposedById, modelId: a.proposerModelId },
-        decisionId: a.decisionId,
-      },
-      policy,
-    );
-    const decision = evaluatePolicy({
-      definition: def,
-      actionType: a.actionType,
-      params: a.params,
-      risk: a.risk as ActionRisk,
-      proposedBy: { type: a.proposedByType as Actor['type'], id: a.proposedById, modelId: a.proposerModelId, promptVersion: a.proposerPromptVersion },
-      evidenceIds: a.evidenceIds,
-      tenantPolicy: policy,
-      facts,
-      now,
-    });
+    const { facts, decision } = await currentPolicyDecision(tx, deps, tenantId, a, now);
     await audit(tx, tenantId, GATEWAY, 'action.preflight.evaluated', { type: 'action', id: a.id }, { outcome: decision.outcome, reasons: decision.reasons });
 
     const denials = decision.reasons.filter((r) => r.effect === 'DENY');
