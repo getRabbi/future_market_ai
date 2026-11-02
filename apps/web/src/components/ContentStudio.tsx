@@ -48,6 +48,7 @@ interface PlanItem {
   statusReason: string | null;
   postId: string | null;
   engagement: number | null;
+  learningEligible: boolean;
   metrics: { reactions?: number | null; comments?: number | null; shares?: number | null; url?: string | null; observedAt?: string };
   unit: { korean: string } | null;
 }
@@ -233,7 +234,7 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
         <header>
           <h2>Published lessons and what they achieved</h2>
           <span className="small muted">
-            {o.measurement.publishedPosts} published · {o.measurement.measuredPosts} measured
+            {o.measurement.publishedPosts} published · {o.measurement.measuredPosts} comparable observations
           </span>
         </header>
         {o.history.length ? (
@@ -250,7 +251,11 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
                     </a>
                   </>
                 ) : null}
-                {i.engagement !== null ? ` · reactions ${i.metrics.reactions ?? '—'}, comments ${i.metrics.comments ?? '—'}, shares ${i.metrics.shares ?? 'not returned'} (read ${i.metrics.observedAt ? relativeTime(i.metrics.observedAt) : '—'})` : ''}
+                {i.metrics.observedAt
+                  ? ` · reactions ${i.metrics.reactions ?? 'unavailable'}, comments ${i.metrics.comments ?? 'unavailable'}, shares ${i.metrics.shares ?? 'unavailable'} (read ${relativeTime(i.metrics.observedAt)}) · ${i.engagement === null ? 'score unavailable' : i.learningEligible ? 'comparable score' : 'provisional score'}`
+                  : i.status === 'published'
+                    ? ' · awaiting measurement'
+                    : ''}
                 {i.statusReason ? <span className="muted"> · {i.statusReason}</span> : null}
               </li>
             ))}

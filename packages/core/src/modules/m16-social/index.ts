@@ -315,7 +315,7 @@ for (const t of ['social.facebook.publish_post', 'social.instagram.publish_media
       const observed = (proof.observed ?? {}) as { permalink_url?: string; permalink?: string };
       await tx
         .update(socialPosts)
-        .set({ status: 'published_verified', externalPostId: receipt.providerObjectId, externalUrl: observed.permalink_url ?? observed.permalink ?? null, verifiedAt: new Date() })
+        .set({ status: 'published_verified', externalPostId: receipt.providerObjectId, externalUrl: observed.permalink_url ?? observed.permalink ?? null, verifiedAt: new Date(proof.checkedAt) })
         .where(eq(socialPosts.id, postId));
     },
     async onTerminalFailure(tx, action, status, reason) {
@@ -1322,7 +1322,7 @@ export async function postResults(t: DbOrTx, filter: { goalId?: string; postIds?
       verifiedAt: p.verifiedAt?.toISOString() ?? null,
       observedAt: obs ? snap!.content.observedAt : null,
       evidenceId: obs ? snap!.id : null,
-      metrics: Object.fromEntries(POST_METRICS.map((m) => [m, obs?.metrics[m].status === 'ok' ? (obs.metrics[m].value ?? null) : null])) as Record<PagePostMetric, number | null>,
+      metrics: Object.fromEntries(POST_METRICS.map((m) => [m, obs?.metrics?.[m]?.status === 'ok' ? (obs.metrics[m].value ?? null) : null])) as Record<PagePostMetric, number | null>,
     };
   });
 }

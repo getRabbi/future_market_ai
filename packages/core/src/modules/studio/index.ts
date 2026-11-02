@@ -12,6 +12,7 @@ import { recomputeEligibility } from '../m14-assets/index.js';
 import { pageBrandScope, postResults } from '../m16-social/index.js';
 import { type ClaimRef, type Composition, compose, type Objective } from './compose.js';
 import { PACKS, packVersion, unitById, verifyCurriculumText } from './curriculum.js';
+import { engagementScore, learningScore, measurePost } from './measurement.js';
 import { dayOffset, type HistoryItem, learnFrom, localDay, type PlanKind, planDays } from './planner.js';
 
 export * from './community.js';
@@ -32,8 +33,6 @@ const ACTOR_REF = actorRef(AUTOPILOT);
 const PLAN_DAYS = 7;
 const NEAR_DUPLICATE_BITS = 6;
 const MAX_RENDER_ATTEMPTS = 4;
-const MEASURE_AFTER_MS = 24 * 3_600_000;
-const FREEZE_AFTER_MS = 7 * 86_400_000;
 const PLAY_PREFIX = 'https://play.google.com/store/apps/details?id=';
 
 export const STUDIO_DRAFT_NOTE = 'Studio draft from the verified curriculum: published only through the execution gateway (M23) under the publishing policy, or when a person schedules it.';
@@ -121,7 +120,7 @@ async function brandInputs(t: DbOrTx, pageId: string, now: Date): Promise<{ clai
 
 type PlanRow = typeof contentPlanItems.$inferSelect;
 
-const toHistory = (r: PlanRow): HistoryItem => ({ day: r.day, kind: r.kind as PlanKind, unitId: r.unitId, objective: r.objective as Objective, template: r.template, palette: r.palette, variant: r.variant, hookId: r.hookId, promptId: r.promptId, status: r.status, engagement: r.engagement });
+const toHistory = (r: PlanRow): HistoryItem => ({ day: r.day, kind: r.kind as PlanKind, unitId: r.unitId, objective: r.objective as Objective, template: r.template, palette: r.palette, variant: r.variant, hookId: r.hookId, promptId: r.promptId, status: r.status, engagement: learningScore(r.metrics) });
 
 /**
  * Plans the next seven days (Bangladesh calendar days) and returns them. Only days still 'planned'
@@ -314,8 +313,9 @@ export type DraftResult =
 export async function draftPlannedPost(deps: CoreDeps, tenantId: string, args: { programId: string; goalId: string; cycleId: string; market: string; now?: Date }): Promise<DraftResult> {
   const now = args.now ?? deps.clock.now();
   const plan = await refreshPlan(deps, tenantId, args.programId, { goalId: args.goalId, now });
-  const item = plan.items.find((i) => i.day === plan.today);
-  if (!item) return { kind: 'skipped', detail: 'Nothing is planned for today.' };
+  const plannedItem = plan.items.find((i) => i.day === plan.today);
+  if (!plannedItem) return { kind: 'skipped', detail: 'Nothing is planned for today.' };
+  let item = plannedItem;
   if (item.status !== 'planned') {
     const [post] = item.postId ? await tx(deps, tenantId, (t) => t.select().from(socialPosts).where(eq(socialPosts.id, item.postId!))) : [];
     if (post?.status === 'draft') {
@@ -331,11 +331,23 @@ export async function draftPlannedPost(deps: CoreDeps, tenantId: string, args: {
       await t
         .update(contentPlanItems)
         .set({ status: 'failed', statusReason: reason.slice(0, 2000), metrics: { attempts }, updatedAt: now })
-        .where(eq(contentPlanItems.id, item.id));
+        .where(and(eq(contentPlanItems.id, item.id), eq(contentPlanItems.status, 'planned')));
       await audit(t, tenantId, AUTOPILOT, 'studio.post.failed', { type: 'content_plan_item', id: item.id }, { reason: reason.slice(0, 500) });
     });
 
   const result = await tx(deps, tenantId, async (t) => {
+    // Different goals or a recovered worker can reach the same day concurrently. Lock and
+    // re-read before rendering; the calendar's unique day alone does not deduplicate posts.
+    const [current] = await t.select().from(contentPlanItems).where(eq(contentPlanItems.id, item.id)).for('update');
+    if (!current) throw notFound('plan item');
+    if (current.status !== 'planned') {
+      const [post] = current.postId ? await t.select().from(socialPosts).where(eq(socialPosts.id, current.postId)) : [];
+      const review = post?.disclosure as { review?: { evidenceIds?: string[] } } | undefined;
+      const existing: DraftResult =
+        post?.status === 'draft' ? { kind: 'existing', postId: post.id, planItemId: current.id, evidenceIds: review?.review?.evidenceIds ?? [], detail: `Today's ${current.kind} post was already drafted.` } : { kind: 'skipped', planItemId: current.id, detail: `Today's planned post is ${current.status}.` };
+      return { existing };
+    }
+    item = current;
     const [conn] = await t.select().from(connections).where(eq(connections.id, program.connectionId));
     if (!conn) throw notFound('connection');
     const prepared = await prepare(t, deps, item, program, conn.externalAccountId, now);
@@ -465,6 +477,7 @@ export async function draftPlannedPost(deps: CoreDeps, tenantId: string, args: {
     await audit(t, tenantId, AUTOPILOT, 'studio.post.drafted', { type: 'content_plan_item', id: item.id }, { postId: post!.id, assetId: asset.id, kind: item.kind, unitId: item.unitId, objective: item.objective, claimIds: composition.claimIds, attempts: attempts.length });
     return { ok: true as const, postId: post!.id, assetId: asset.id, evidenceIds, template: composition.card.template };
   });
+  if (result.existing) return result.existing;
   if (!result.ok) {
     await failItem(result.reason, result.attempts);
     return { kind: 'blocked', needs: /claim/.test(result.reason) ? 'claims' : 'configuration', planItemId: item.id, detail: `Today's ${item.kind} post was not drafted: ${result.reason}` };
@@ -487,7 +500,9 @@ export async function syncPlanResults(deps: CoreDeps, tenantId: string, programI
     const items = await t
       .select()
       .from(contentPlanItems)
-      .where(and(eq(contentPlanItems.programId, programId), isNotNull(contentPlanItems.postId), inArray(contentPlanItems.status, ['drafted', 'submitted', 'published'])));
+      .where(and(eq(contentPlanItems.programId, programId), isNotNull(contentPlanItems.postId), inArray(contentPlanItems.status, ['drafted', 'submitted', 'published'])))
+      .orderBy(contentPlanItems.id)
+      .for('update');
     if (!items.length) return { updated: 0 };
     const posts = await t
       .select()
@@ -509,14 +524,8 @@ export async function syncPlanResults(deps: CoreDeps, tenantId: string, programI
         set.status = 'published';
         set.publishedAt = post.verifiedAt;
         const r = results.find((x) => x.postId === post.id);
-        const metrics = it.metrics as { frozenAt?: string };
-        const age = post.verifiedAt ? now.getTime() - post.verifiedAt.getTime() : 0;
-        if (r?.observedAt && !metrics.frozenAt && age >= MEASURE_AFTER_MS) {
-          const m = r.metrics;
-          const engagement = m.reactions !== null && m.comments !== null ? m.reactions + 2 * m.comments + 3 * (m.shares ?? 0) : null;
-          set.metrics = { ...metrics, reactions: m.reactions, comments: m.comments, shares: m.shares, observedAt: r.observedAt, evidenceId: r.evidenceId, url: r.url, ageHours: Math.round(age / 3_600_000), ...(age >= FREEZE_AFTER_MS ? { frozenAt: now.toISOString() } : {}) };
-          set.engagement = engagement;
-        }
+        const measurement = measurePost(it.metrics, r, post.verifiedAt, now);
+        if (measurement) Object.assign(set, measurement);
       }
       if (['failed', 'cancelled', 'blocked'].includes(post.status) || (post.status === 'draft' && it.status === 'submitted')) {
         set.status = 'failed';
@@ -557,7 +566,7 @@ export async function overview(deps: CoreDeps, tenantId: string, programId: stri
       .limit(60);
     const learning = learnFrom([...history, ...plan.items.filter((i) => i.status !== 'planned')].map(toHistory));
     const pack = PACKS[plan.program.pack]!;
-    const describe = (r: PlanRow) => ({ ...r, unit: r.unitId ? summarizeUnit(pack, r.unitId) : null });
+    const describe = (r: PlanRow) => ({ ...r, engagement: engagementScore(r.metrics), learningEligible: learningScore(r.metrics) !== null, unit: r.unitId ? summarizeUnit(pack, r.unitId) : null });
     const published = [...history, ...plan.items].filter((h) => h.status === 'published');
     return {
       program: plan.program,
@@ -571,6 +580,7 @@ export async function overview(deps: CoreDeps, tenantId: string, programId: stri
         measuredPosts: learning.measuredPosts,
         linkPosts: published.filter((h) => h.objective === 'VISIT_APP' || h.objective === 'INSTALL_APP').length,
         notes: [
+          'Missing counters are unavailable, never zero. Scores require observed reactions, comments and shares with evidence. Learning uses only frozen seven-day windows observed at age 144–168 hours; provisional, incomplete and legacy scores are excluded. Comparisons are descriptive, not causal or statistical winners.',
           'Reactions, top-level comments and shares are read from the Page once a day; reach, impressions and link clicks need the read_insights permission, which the Page token does not have.',
           'Store links carry a Google Play referrer (utm_source=facebook, utm_medium=organic_social, utm_campaign, utm_content = lesson and post number). Installs by campaign appear in Play Console acquisition reports; they are not imported, so no install or conversion figure is shown here.',
         ],
