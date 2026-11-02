@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { appInstalls, customerEvents, customerProfiles, evidenceRecords, organization, withTenant } from '@futuregrow/db';
+import { sha256Hex } from '@futuregrow/observability';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { createDsar, executeDsarDeletion, ingestEvents, verifyDsarIdentity } from '../src/modules/m02-customers/index.js';
-import { campaignConversions, recordAppEvent, recordInstall } from '../src/modules/m19-app-growth/index.js';
+import { campaignConversions, recordAppEvent, recordAppEventCoverage, recordInstall } from '../src/modules/m19-app-growth/index.js';
 
 let h: CoreHarness;
 const tx = <T>(fn: Parameters<typeof withTenant<T>>[2], tenantId = h.tenantId) => withTenant(h.deps.db, { tenantId, actor: 'test:conversions' }, fn);
@@ -12,6 +13,21 @@ const day = 86_400_000;
 const ago = (days: number) => new Date(h.clock.now().getTime() - days * day).toISOString();
 const install = (appId = 'com.example.lessons', installId: string = randomUUID()) => ({ appId, platform: 'android' as const, installId, installedAt: ago(20), installReferrer: 'utm_source=facebook&utm_medium=organic_social&utm_campaign=lessons&utm_content=lesson-1&gclid=discard', consent: { analytics: true } });
 const report = (appId: string, tenantId = h.tenantId) => tx((t) => campaignConversions(t, { appId, platform: 'android', from: ago(30), to: h.clock.now().toISOString() }, h.clock.now()), tenantId);
+const coverage = (input: ReturnType<typeof install>, event = 'activation', events: { eventId: string; occurredAt: string }[] = [], through = ago(6)) => ({
+  appId: input.appId,
+  platform: input.platform,
+  installId: input.installId,
+  event,
+  through,
+  consent: { analytics: true },
+  eventCount: events.length,
+  digest: sha256Hex(
+    events
+      .map((e) => `${sha256Hex(e.eventId)}:${new Date(e.occurredAt).toISOString()}`)
+      .sort()
+      .join('\n'),
+  ),
+});
 
 beforeAll(async () => {
   h = await createCoreHarness();
@@ -21,6 +37,99 @@ afterAll(async () => {
 });
 
 describe('application-scoped conversion evidence', () => {
+  it('keeps missing coverage unavailable and reports true zero only for reconciled mature windows', async () => {
+    const input = install('com.example.coverage-zero');
+    await recordInstall(h.deps, h.tenantId, 'key:backend', input);
+    expect((await report(input.appId)).campaigns[0]!.reconciledWindows.activations7d).toMatchObject({ complete: false, value: null, eligibleInstalls: 1, reconciledInstalls: 0 });
+    for (const event of ['activation', 'first_open', 'session']) await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, event));
+    const campaign = (await report(input.appId)).campaigns[0]!;
+    for (const window of Object.values(campaign.reconciledWindows)) expect(window).toMatchObject({ complete: true, value: 0, eligibleInstalls: 1, reconciledInstalls: 1 });
+    expect(campaign.metrics.activations).toBeNull(); // lifetime-as-of observations still have no complete window
+    const replay = await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input));
+    expect(replay).toMatchObject({ recorded: false, evidenceId: expect.any(String) });
+  });
+
+  it('reconciles exact event identities/timestamps and uses fixed seven-day outcome windows', async () => {
+    const input = install('com.example.coverage-digest');
+    await recordInstall(h.deps, h.tenantId, 'key:backend', input);
+    const first = { appId: input.appId, platform: input.platform, installId: input.installId, eventId: randomUUID(), event: 'first_open', occurredAt: ago(19), consent: { analytics: true } };
+    const activation = { ...first, eventId: randomUUID(), event: 'activation', occurredAt: ago(12) };
+    await recordAppEvent(h.deps, h.tenantId, 'key:backend', first);
+    await recordAppEvent(h.deps, h.tenantId, 'key:backend', activation);
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'first_open'))).rejects.toThrow(/digest/);
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'first_open', [{ ...first, eventId: randomUUID() }]))).rejects.toThrow(/digest/);
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'first_open', [{ ...first, occurredAt: ago(18) }]))).rejects.toThrow(/digest/);
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'first_open', [first]));
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'activation', [activation]));
+    const campaign = (await report(input.appId)).campaigns[0]!;
+    expect(campaign.reconciledWindows.firstOpens7d.value).toBe(1);
+    expect(campaign.reconciledWindows.activations7d.value).toBe(0);
+    expect(campaign.metrics.activations).toBe(1); // occurred after the seven-day comparison window
+    expect(campaign.reconciledWindows.retainedWeek1.value).toBeNull();
+  });
+
+  it('invalidates only the affected declaration for late events, then accepts a corrected reconciliation', async () => {
+    const input = install('com.example.coverage-late');
+    await recordInstall(h.deps, h.tenantId, 'key:backend', input);
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input));
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'session'));
+    const event = { appId: input.appId, platform: input.platform, installId: input.installId, eventId: randomUUID(), event: 'activation', occurredAt: ago(19), consent: { analytics: true } };
+    const recorded = await recordAppEvent(h.deps, h.tenantId, 'key:backend', event);
+    let campaign = (await report(input.appId)).campaigns[0]!;
+    expect(campaign.reconciledWindows.activations7d.value).toBeNull();
+    expect(campaign.reconciledWindows.retainedWeek1.value).toBe(0);
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input))).rejects.toThrow(/digest/);
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'activation', [event]));
+    await recordAppEvent(h.deps, h.tenantId, 'key:backend', event); // replay cannot invalidate the corrected declaration
+    campaign = (await report(input.appId)).campaigns[0]!;
+    expect(campaign.reconciledWindows.activations7d.value).toBe(1);
+    await recordAppEvent(h.deps, h.tenantId, 'key:backend', { ...event, eventId: randomUUID(), occurredAt: coverage(input).through });
+    expect((await report(input.appId)).campaigns[0]!.reconciledWindows.activations7d.value).toBe(1); // exclusive interval end
+    // Revoking underlying evidence must also make the reconciled window unavailable.
+    if (typeof recorded.evidenceId !== 'string') throw new Error('expected event evidence');
+    const eventEvidenceId = recorded.evidenceId;
+    await tx((t) => t.update(evidenceRecords).set({ content: null }).where(eq(evidenceRecords.id, eventEvidenceId)));
+    expect((await report(input.appId)).campaigns[0]!.reconciledWindows.activations7d.value).toBeNull();
+  });
+
+  it('does not claim complete cohorts from partial declarations or immature intervals', async () => {
+    const input = install('com.example.coverage-partial');
+    await recordInstall(h.deps, h.tenantId, 'key:backend', input);
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input));
+    await recordInstall(h.deps, h.tenantId, 'key:backend', install(input.appId));
+    expect((await report(input.appId)).campaigns[0]!.reconciledWindows.activations7d).toMatchObject({ complete: false, value: null, eligibleInstalls: 2, reconciledInstalls: 1 });
+    const early = { ...install('com.example.coverage-early'), installedAt: ago(3) };
+    await recordInstall(h.deps, h.tenantId, 'key:backend', early);
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(early, 'activation', [], ago(1)));
+    expect((await report(early.appId)).campaigns[0]!.reconciledWindows.activations7d).toMatchObject({ complete: false, value: null, eligibleInstalls: 0 });
+  });
+
+  it('serializes event arrival against a conflicting completeness declaration', async () => {
+    const input = install('com.example.coverage-race');
+    await recordInstall(h.deps, h.tenantId, 'key:backend', input);
+    const event = { appId: input.appId, platform: input.platform, installId: input.installId, eventId: randomUUID(), event: 'activation', occurredAt: ago(19), consent: { analytics: true } };
+    const outcomes = await Promise.allSettled([recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input)), recordAppEvent(h.deps, h.tenantId, 'key:backend', event)]);
+    expect(outcomes[1]).toMatchObject({ status: 'fulfilled', value: { recorded: true } });
+    if (outcomes[0]!.status === 'rejected') expect(String(outcomes[0]!.reason)).toMatch(/digest/);
+    expect((await report(input.appId)).campaigns[0]!.reconciledWindows.activations7d.value).toBeNull();
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'activation', [event]));
+    expect((await report(input.appId)).campaigns[0]!.reconciledWindows.activations7d.value).toBe(1);
+  });
+
+  it('rejects future, reversed, backwards, nonconsented and differently scoped coverage', async () => {
+    const input = install('com.example.coverage-validation');
+    await recordInstall(h.deps, h.tenantId, 'key:backend', input);
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'activation', [], ago(-1)))).rejects.toThrow(/future/);
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'activation', [], ago(21)))).rejects.toThrow(/after installation/);
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', { ...coverage(input), consent: { analytics: false } })).rejects.toThrow(/consent/);
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', { ...coverage(input), appId: 'com.example.other' })).rejects.toThrow(/installation/);
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input));
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input, 'activation', [], ago(7)))).rejects.toThrow(/backwards/);
+    const [row] = await tx((t) => t.select().from(appInstalls).where(eq(appInstalls.appId, input.appId)));
+    await tx((t) => t.update(evidenceRecords).set({ content: null }).where(eq(evidenceRecords.id, row!.eventCoverage.activation!.evidenceId)));
+    expect((await report(input.appId)).campaigns[0]!.reconciledWindows.activations7d.value).toBeNull();
+  });
+
   it('accepts maximum-length app and installation IDs without dropping the underlying event', async () => {
     const input = install('a'.repeat(200), 'i'.repeat(200));
     expect(await recordInstall(h.deps, h.tenantId, 'key:backend', input)).toMatchObject({ recorded: true, profileLinked: true });
@@ -135,13 +244,14 @@ describe('application-scoped conversion evidence', () => {
     const input = { ...install('com.example.deletion'), userId: 'conversion-delete-subject' };
     await recordInstall(h.deps, h.tenantId, 'key:backend', input);
     await recordAppEvent(h.deps, h.tenantId, 'key:backend', { appId: input.appId, platform: input.platform, installId: input.installId, eventId: randomUUID(), event: 'first_open', occurredAt: ago(19), consent: { analytics: true } });
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input));
     expect((await report(input.appId)).campaigns[0]!.metrics.firstOpens).toBe(1);
     const request = await tx((t) => createDsar(t, h.deps, h.tenantId, h.users.owner, { kind: 'delete', identifier: { kind: 'user_id', value: input.userId } }));
     await tx((t) => verifyDsarIdentity(t, h.tenantId, h.users.owner, request.id, 'fixture identity verified'));
     await executeDsarDeletion(h.deps, h.tenantId, h.users.owner, request.id);
     expect((await report(input.appId)).campaigns).toEqual([]);
     const [row] = await tx((t) => t.select().from(appInstalls).where(eq(appInstalls.appId, input.appId)));
-    expect(row).toMatchObject({ profileId: null, evidenceId: null, referrer: {}, campaignRef: null, sourceRef: null, consentAnalytics: false });
+    expect(row).toMatchObject({ profileId: null, evidenceId: null, referrer: {}, campaignRef: null, sourceRef: null, consentAnalytics: false, eventCoverage: {} });
     expect(await recordAppEvent(h.deps, h.tenantId, 'key:backend', { appId: input.appId, platform: input.platform, installId: input.installId, eventId: randomUUID(), event: 'session', occurredAt: ago(1), consent: { analytics: true } })).toMatchObject({ recorded: false });
   });
 });

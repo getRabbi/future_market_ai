@@ -442,6 +442,7 @@ export const appInstalls = pgTable(
     appId: text('app_id'),
     ingestionSource: text('ingestion_source'),
     evidenceId: uuid('evidence_id'),
+    eventCoverage: json<Record<string, { through: string; eventCount: number; digest: string; evidenceId: string }>>('event_coverage').notNull().default({}),
     installId: text('install_id').notNull(),
     profileId: uuid('profile_id'),
     installedAt: ts('installed_at').notNull(),

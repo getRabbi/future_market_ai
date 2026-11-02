@@ -467,7 +467,7 @@ export async function executeDsarDeletion(deps: CoreDeps, tenantId: string, acto
           .where(and(inArray(journeyEnrollments.profileId, ids), eq(journeyEnrollments.state, 'active')))
           .returning({ id: journeyEnrollments.id }),
       );
-      await del('app_installs', tx.update(appInstalls).set({ profileId: null, referrer: {}, campaignRef: null, sourceRef: null, consentAnalytics: false, evidenceId: null }).where(inArray(appInstalls.profileId, ids)).returning({ id: appInstalls.id }));
+      await del('app_installs', tx.update(appInstalls).set({ profileId: null, referrer: {}, campaignRef: null, sourceRef: null, consentAnalytics: false, evidenceId: null, eventCoverage: {} }).where(inArray(appInstalls.profileId, ids)).returning({ id: appInstalls.id }));
       const convs = await tx.select({ id: conversations.id }).from(conversations).where(inArray(conversations.profileId, ids));
       if (convs.length) {
         await del(

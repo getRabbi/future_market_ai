@@ -92,6 +92,13 @@
       "when": 1793646011216,
       "tag": "0012_app_conversion_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793649360424,
+      "tag": "0013_app_event_coverage",
+      "breakpoints": true
     }
   ]
 }

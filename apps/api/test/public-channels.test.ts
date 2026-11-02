@@ -113,6 +113,14 @@ describe('public channel endpoints', () => {
     expect(accepted.json()).toMatchObject({ recorded: true, evidenceId: expect.any(String) });
     const replay = await app.inject({ method: 'POST', url: '/ingest/v1/app-events', headers, payload: event });
     expect(replay.json()).toMatchObject({ recorded: false, evidenceId: accepted.json().evidenceId });
+    const coverage = { appId: body.appId, platform: body.platform, installId: body.installId, event: 'activation', through: body.installedAt, eventCount: 0, digest: sha256Hex(''), consent: { analytics: true } };
+    expect((await app.inject({ method: 'POST', url: '/ingest/v1/app-event-coverage', headers: { 'x-fg-write-key': browser.key, origin: 'https://shop.acme.test' }, payload: coverage })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/ingest/v1/app-event-coverage', payload: coverage })).statusCode).toBe(401);
+    h.clock.advance(1_000);
+    coverage.through = h.clock.now().toISOString();
+    const complete = await app.inject({ method: 'POST', url: '/ingest/v1/app-event-coverage', headers, payload: coverage });
+    expect(complete.statusCode).toBe(202);
+    expect(complete.json()).toMatchObject({ recorded: true, evidenceId: expect.any(String) });
     const query = new URLSearchParams({ appId: body.appId, platform: body.platform, from: new Date(h.clock.now().getTime() - 86_400_000).toISOString(), to: h.clock.now().toISOString() });
     expect((await app.inject({ method: 'GET', url: `/v1/app/campaigns?${query}` })).statusCode).toBe(401);
   });

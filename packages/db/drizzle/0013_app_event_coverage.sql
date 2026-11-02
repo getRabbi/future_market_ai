@@ -1,0 +1,1 @@
+ALTER TABLE "app_installs" ADD COLUMN "event_coverage" jsonb DEFAULT '{}'::jsonb NOT NULL;

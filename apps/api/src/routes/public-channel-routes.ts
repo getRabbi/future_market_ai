@@ -75,6 +75,12 @@ export function registerPublicChannelRoutes(app: FastifyInstance, ctx: ApiContex
     return reply.status(202).send(await appGrowth.recordAppEvent(deps, tenantId, `key:${keyId}`, req.body));
   });
 
+  app.post('/ingest/v1/app-event-coverage', { config: { public: true, rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { tenantId, keyId } = await resolveIngestionKey(ctx, req);
+    if (!(req.headers.authorization ?? '').startsWith('Bearer fgk_sk_')) throw new FgError('FORBIDDEN', 'app coverage ingestion requires a server key', 403);
+    return reply.status(202).send(await appGrowth.recordAppEventCoverage(deps, tenantId, `key:${keyId}`, req.body));
+  });
+
   /* ---------- M21: chat widget (CORS is resolved per widget key in app.ts) ---------- */
   app.post('/chat/v1/w/:key/conversations', { config: { public: true, rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => reply.status(201).send(await conversationsModule.startConversation(deps, widgetKey(req), req.headers.origin)));
   app.post('/chat/v1/w/:key/conversations/:id/messages', { config: { public: true, rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req) => {

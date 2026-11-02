@@ -1,6 +1,6 @@
 # Existing Android install ingestion contract
 
-Status: FUTUREGROW supports application-scoped, evidence-backed backend install and conversion-event ingestion and campaign reports. No mobile repository was inspected or modified. Play Console import, verified tracking-coverage declarations and conversion-driven Studio optimization remain unfinished.
+Status: FUTUREGROW supports application-scoped, evidence-backed backend installs, conversion events, completeness reconciliation and campaign reports. No mobile repository was inspected or modified. Play Console import, account/program mapping and conversion-driven Studio optimization remain unfinished. Backend declarations do not independently verify device instrumentation or total store coverage.
 
 ## Trust boundary
 
@@ -68,11 +68,44 @@ Allowed events are `first_open`, `activation` and `session`. The application bac
 
 The authenticated control-plane endpoints are `GET /v1/app/applications` and `GET /v1/app/campaigns?appId=...&platform=android&from=<ISO>&to=<ISO>`. Dates form a half-open install interval, limited to 366 days. Reports group campaign, source, medium, content and attribution method within one application/platform/tenant. Evidence references include installs and representative supporting events for at most 50 installations per campaign group; `evidenceReferencesTruncated` identifies larger groups while counts still cover every supported install. Generic event ingestion cannot manufacture a conversion by attaching an unrelated evidence ID: the report checks matching observation content, timestamp and source.
 
-The App growth screen presents the last 90 days of supported observations. Counts are observed backend events, not total Play acquisitions. Clicks and outcomes without evidence remain null/unavailable. No rate or winner is inferred without tracking-coverage evidence. Deletion erases profile events and evidence content, detaches install evidence and attribution, and prevents new linked events from reviving that deleted installation.
+The App growth screen presents the last 90 days of supported observations. Counts are observed backend events, not total Play acquisitions. Clicks and outcomes without evidence remain null/unavailable. No rate or winner is inferred. Deletion erases profile events and evidence content, detaches install evidence, attribution and coverage, and prevents new linked events from reviving that deleted installation.
+
+## Backend completeness reconciliation
+
+`POST /ingest/v1/app-event-coverage` requires the same server key, consent and 600-request/minute limit. Send a declaration only after all events for that installation/event kind in `[installedAt, through)` have been durably delivered and acknowledged. The source backend must actually track that event and know that its interval is complete. Silence, missing device telemetry, disabled tracking and lack of consent are not declarations of zero.
+
+```json
+{
+  "appId": "com.rabbi.eps_topik_bangla",
+  "platform": "android",
+  "installId": "installation-random-uuid",
+  "event": "activation",
+  "through": "2026-11-09T08:10:00Z",
+  "eventCount": 0,
+  "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "consent": { "analytics": true }
+}
+```
+
+The example is a fixture, usable only after its `through` time has elapsed. Each declaration concerns one of `first_open`, `activation`, or `session`. `through` is exclusive, must be later than installation and no later than FUTUREGROW's current time, and cannot move backwards while a declaration remains valid. Include all distinct event IDs of that kind in the interval, at most 10,000; do not count retries. Compute `digest` as follows (UTF-8 SHA-256, lowercase hex):
+
+```js
+// Runs in the application's backend, using the acknowledged original event payloads.
+import { createHash } from 'node:crypto';
+const sha256 = (value) => createHash('sha256').update(value, 'utf8').digest('hex');
+const lines = intervalEvents.map(({ eventId, occurredAt }) =>
+  `${sha256(eventId)}:${new Date(occurredAt).toISOString()}`
+).sort();
+const declaration = { eventCount: lines.length, digest: sha256(lines.join('\n')) };
+```
+
+FUTUREGROW compares both count and digest against admitted observations for the exact application/platform/installation, event kind and interval. Mismatches return conflict (HTTP 409). Identical retries return `recorded: false` and the same evidence ID. A newly arrived event inside a declared interval invalidates that event kind's declaration atomically; deliver the remaining events and reconcile again. Events at or after `through` leave the earlier declaration intact. Cleared/revoked supporting evidence makes the reported window unavailable. Declarations and invalidations are audited.
+
+Campaign reports add `reconciledWindows.firstOpens7d`, `activations7d` and `retainedWeek1`. First opens and activation use installation age `[0,7 days)`; retention requires a session at age `[7,14 days)`. Each includes `eligibleInstalls` (fully elapsed windows), `reconciledInstalls`, `complete`, `value`, and `basis: reconciled_backend_declaration`. A value, including a real zero, is available only if there is at least one mature install and **every** mature install in the group has the matching valid declaration. Incomplete and immature windows remain null. Existing `metrics` retain as-of observed-event semantics and are not silently reinterpreted. Coverage does not establish that every installation was reported, that instrumentation works correctly, or that a campaign caused an outcome; no conversion rate or statistical winner is produced.
 
 ## Remaining FUTUREGROW work
 
-- Add verified tracking-coverage declarations so an observed zero can be distinguished from incomplete reporting, and event-aware denominators can support conversion rates.
+- Backend interval reconciliation is implemented. Independent store coverage, device instrumentation verification and account-qualified comparable rates still need genuine connected sources and explicit mappings.
 - Add explicit program/channel-account mappings; the new reports isolate application/platform/campaign dimensions but do not infer which Page or account owns an arbitrary campaign label. Legacy cohorts remain separate historical summaries.
 - Build a supported, credential-gated Play Console report adapter, with source verification and honest availability labels. Existing `syncAppStoreSales()` imports Apple's reports, not Google Play reports.
 - The supported source to evaluate is the account's private Google Cloud Storage reporting bucket, using a service account granted the appropriate Play Console access. Google documents monthly CSV exports, delayed daily updates and UTF-16 conversion requirements; this is a separate source from device referrers. See [Google's report-export documentation](https://support.google.com/googleplay/android-developer/answer/6135870?hl=en). No credentials, reports or access permission were fabricated or connected here.
@@ -80,4 +113,4 @@ The App growth screen presents the last 90 days of supported observations. Count
 
 Code anchors: `packages/core/src/modules/m19-app-growth/index.ts` (`InstallSchema`, `recordInstall`, `acquisitionCohorts`), `apps/api/src/routes/public-channel-routes.ts`, `apps/api/src/routes/public-routes.ts`, and `apps/api/test/public-channels.test.ts`.
 
-Deployment uses the normal migration-on-start process for additive migration `0012_app_conversion_evidence.sql`. Existing callers may omit `appId`; their records remain legacy observations. Rolling back to the previous application binary does not require dropping the new nullable columns. Do not delete collected evidence or reassign legacy installs as part of rollback.
+Deployment uses the normal migration-on-start process for additive migrations `0012_app_conversion_evidence.sql` and `0013_app_event_coverage.sql`. The latter defaults existing installations to unknown coverage (`{}`). Existing callers may omit `appId`; their records remain legacy observations. Rolling back to the previous application binary does not require dropping the new columns. Do not delete collected evidence or reassign legacy installs as part of rollback.

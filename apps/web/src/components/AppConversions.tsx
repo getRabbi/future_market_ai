@@ -11,7 +11,14 @@ interface Application {
   platform: string;
 }
 interface CampaignReport {
-  campaigns: { campaign: string | null; source: string | null; content: string | null; attributionMethod: string; metrics: { linkClicks: number | null; installs: number | null; firstOpens: number | null; activations: number | null; retainedWeek1: number | null } }[];
+  campaigns: {
+    campaign: string | null;
+    source: string | null;
+    content: string | null;
+    attributionMethod: string;
+    metrics: { linkClicks: number | null; installs: number | null; firstOpens: number | null; activations: number | null; retainedWeek1: number | null };
+    reconciledWindows: Record<'firstOpens7d' | 'activations7d' | 'retainedWeek1', { value: number | null; eligibleInstalls: number; reconciledInstalls: number }>;
+  }[];
   notes: string[];
 }
 
@@ -72,6 +79,23 @@ function Campaigns({ app }: { app: Application }) {
         columns={['campaign', 'source', 'content', 'method', 'installs', 'firstOpens', 'activations', 'retainedWeek1', 'linkClicks']}
         labels={{ firstOpens: 'Observed first opens', activations: 'Observed activations', retainedWeek1: 'Observed week-one retention', installs: 'Observed installs', linkClicks: 'Link clicks' }}
         empty="No evidence-backed campaign observations in this interval."
+      />
+      <h3>Reconciled measurement windows</h3>
+      <p className="small muted">A value, including zero, appears only when your backend's event declarations match stored observations for every mature installation in the campaign. These declarations do not verify device tracking or total store acquisitions.</p>
+      <DataTable
+        rows={result.data.campaigns.map((c) => ({
+          campaign: c.campaign ?? 'Unattributed',
+          source: c.source ?? 'Unavailable',
+          content: c.content ?? 'Unavailable',
+          method: c.attributionMethod,
+          firstOpens7d: count(c.reconciledWindows.firstOpens7d.value),
+          activations7d: count(c.reconciledWindows.activations7d.value),
+          retainedWeek1: count(c.reconciledWindows.retainedWeek1.value),
+          activationCoverage: `${c.reconciledWindows.activations7d.reconciledInstalls} / ${c.reconciledWindows.activations7d.eligibleInstalls} mature installs`,
+        }))}
+        columns={['campaign', 'source', 'content', 'method', 'firstOpens7d', 'activations7d', 'retainedWeek1', 'activationCoverage']}
+        labels={{ firstOpens7d: 'First opens within 7 days', activations7d: 'Activations within 7 days', retainedWeek1: 'Retention at 7–14 days', activationCoverage: 'Activation coverage' }}
+        empty="No reconciled measurement windows available."
       />
       <ul className="small muted">
         {result.data.notes.map((note) => (

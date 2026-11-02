@@ -5,7 +5,7 @@ import { tenantKey } from '@futuregrow/storage';
 import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { actorRef, type CoreDeps, systemActor } from '../../deps.js';
-import { record } from '../../util.js';
+import { audit, record } from '../../util.js';
 import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { ingestEventsInTransaction } from '../m02-customers/index.js';
@@ -200,6 +200,91 @@ export async function recordAppEvent(deps: CoreDeps, tenantId: string, source: s
       },
     ]);
     if (result.accepted !== 1) throw invalid('application event was not accepted');
+    // A late event disproves the previous completeness declaration. Keep the real event,
+    // invalidate just that outcome, and require the backend to reconcile again.
+    const coverage = install.eventCoverage[input.event];
+    if (coverage && occurredAt < new Date(coverage.through)) {
+      await tx
+        .update(appInstalls)
+        .set({ eventCoverage: sql`${appInstalls.eventCoverage} - ${input.event}` })
+        .where(eq(appInstalls.id, install.id));
+      await audit(tx, tenantId, actor, 'app.coverage.invalidated', { type: 'app_install', id: install.id }, { event: input.event, priorEvidenceId: coverage.evidenceId, eventEvidenceId: evidence.evidenceId });
+    }
+    return { recorded: true, evidenceId: evidence.evidenceId };
+  });
+}
+
+export const AppCoverageSchema = AppEventSchema.omit({ eventId: true, occurredAt: true }).extend({
+  /** Exclusive end of a complete interval starting at installation. */
+  through: z.string().datetime({ offset: true }),
+  eventCount: z.number().int().min(0).max(10_000),
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+/** Reconcile a backend's explicit completeness declaration; never infer completeness from silence. */
+export async function recordAppEventCoverage(deps: CoreDeps, tenantId: string, source: string, raw: unknown) {
+  const input = AppCoverageSchema.parse(raw);
+  if (!input.consent.analytics) throw invalid('analytics consent is required for coverage');
+  const now = deps.clock.now();
+  const through = new Date(input.through);
+  if (through > now) throw invalid('coverage cannot include future time');
+  const installHash = sha256Hex(`${tenantId}:${input.platform}:${input.appId}:${input.installId}`);
+  const actor = systemActor('app-growth');
+  return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${tenantId}:${input.platform}:${installHash}`}, 0))`);
+    const [install] = await tx
+      .select()
+      .from(appInstalls)
+      .where(and(eq(appInstalls.appId, input.appId), eq(appInstalls.platform, input.platform), eq(appInstalls.installId, installHash)))
+      .for('update');
+    if (!install?.consentAnalytics || !install.profileId || !install.evidenceId) throw invalid('coverage requires a consented application installation');
+    if (through <= install.installedAt) throw invalid('coverage must end after installation');
+    const previous = install.eventCoverage[input.event];
+    if (previous && through < new Date(previous.through)) throw conflict('coverage cannot move backwards');
+    const events = await tx.execute<{ message_id: string; occurred_at: string }>(sql`
+      select e.message_id, e.occurred_at from customer_events e
+      join evidence_records ep on ep.id::text = e.properties->>'evidenceId'
+      where e.profile_id = ${install.profileId} and e.event_name = ${`app_${input.event}`}
+        and e.properties->>'appId' = ${input.appId} and e.properties->>'platform' = ${input.platform}
+        and e.properties->>'installHash' = ${installHash}
+        and e.message_id like ${`app-event:${installHash}:%`}
+        and e.occurred_at >= ${install.installedAt} and e.occurred_at < ${through}
+        and ep.status = 'admitted' and ep.content is not null
+        and ep.content->>'appId' = ${input.appId} and ep.content->>'installHash' = ${installHash}
+        and ep.content->>'event' = ${input.event} and ep.content->>'verification' = 'authenticated_backend_report'
+        and ep.observed_at = e.occurred_at and ep.source_owner = e.source
+      limit 10001`);
+    const digest = sha256Hex(
+      events.rows
+        .map((e) => `${e.message_id.split(':').at(-1)}:${new Date(e.occurred_at).toISOString()}`)
+        .sort()
+        .join('\n'),
+    );
+    if (events.rows.length !== input.eventCount || digest !== input.digest) throw conflict('coverage event count or digest does not match stored observations');
+    if (previous?.through === through.toISOString() && previous.eventCount === input.eventCount && previous.digest === digest) {
+      const [proof] = await tx.select().from(evidenceRecords).where(eq(evidenceRecords.id, previous.evidenceId));
+      if (proof?.status === 'admitted' && proof.content) return { recorded: false, evidenceId: previous.evidenceId };
+    }
+    const evidence = await admitInternalEvidence(tx, tenantId, actor, {
+      kind: 'observation',
+      owner: source,
+      uri: `app-coverage://${installHash}/${input.event}/${through.toISOString()}`,
+      content: { appId: input.appId, platform: input.platform, installHash, profileId: install.profileId, event: input.event, from: install.installedAt.toISOString(), through: through.toISOString(), eventCount: input.eventCount, digest, verification: 'reconciled_backend_declaration' },
+      summary: 'Backend-declared event completeness reconciled against stored event identities and timestamps; not independent store verification',
+      confidence: 0.8,
+      license: 'tenant first-party telemetry with analytics consent',
+      pii: 'pseudonymous',
+      lawfulBasis: 'consent',
+      permittedUses: ['analytics'],
+      parents: [install.evidenceId],
+      observedAt: through,
+      now,
+    });
+    await tx
+      .update(appInstalls)
+      .set({ eventCoverage: { ...install.eventCoverage, [input.event]: { through: through.toISOString(), eventCount: input.eventCount, digest, evidenceId: evidence.evidenceId } } })
+      .where(eq(appInstalls.id, install.id));
+    await audit(tx, tenantId, actor, 'app.coverage.reconciled', { type: 'app_install', id: install.id }, { event: input.event, through: through.toISOString(), evidenceId: evidence.evidenceId });
     return { recorded: true, evidenceId: evidence.evidenceId };
   });
 }
@@ -234,6 +319,13 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
     activations: number;
     retained_w1: number;
     mature_w1: number;
+    mature_7d: number;
+    covered_open: number;
+    covered_activation: number;
+    covered_retention: number;
+    complete_open: number;
+    complete_activation: number;
+    complete_retention: number;
     proofs: { install: string; events: string[] }[];
   }>(sql`
     with installs as (
@@ -242,11 +334,20 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
         and i.installed_at >= ${from} and i.installed_at < ${to} and i.installed_at <= ${now}
         and i.consent_analytics and i.profile_id is not null and proof.status = 'admitted' and proof.content is not null
     ), observed as (
-      select i.*, events.first_open, events.activation, events.retained, events.event_evidence_ids
+      select i.*, events.first_open, events.activation, events.retained, events.first_open_7d, events.activation_7d,
+        coverage.open and events.open_count = (i.event_coverage->'first_open'->>'eventCount')::int as open_complete,
+        coverage.activation and events.activation_count = (i.event_coverage->'activation'->>'eventCount')::int as activation_complete,
+        coverage.retention and events.session_count = (i.event_coverage->'session'->>'eventCount')::int as retention_complete,
+        events.event_evidence_ids || coverage.evidence_ids as event_evidence_ids
       from installs i left join lateral (
         select bool_or(e.event_name = 'app_first_open') as first_open,
           bool_or(e.event_name = 'app_activation') as activation,
+          bool_or(e.event_name = 'app_first_open' and e.occurred_at < i.installed_at + interval '7 days') as first_open_7d,
+          bool_or(e.event_name = 'app_activation' and e.occurred_at < i.installed_at + interval '7 days') as activation_7d,
           bool_or(e.event_name = 'app_session' and e.occurred_at >= i.installed_at + interval '7 days' and e.occurred_at < i.installed_at + interval '14 days') as retained,
+          count(*) filter (where e.event_name = 'app_first_open' and e.occurred_at < (i.event_coverage->'first_open'->>'through')::timestamptz) as open_count,
+          count(*) filter (where e.event_name = 'app_activation' and e.occurred_at < (i.event_coverage->'activation'->>'through')::timestamptz) as activation_count,
+          count(*) filter (where e.event_name = 'app_session' and e.occurred_at < (i.event_coverage->'session'->>'through')::timestamptz) as session_count,
           array_remove(ARRAY[
             min(ep.id::text) filter (where e.event_name = 'app_first_open'),
             min(ep.id::text) filter (where e.event_name = 'app_activation'),
@@ -259,9 +360,22 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
           and ep.status = 'admitted' and ep.content is not null
           and ep.content->>'installHash' = i.install_id and ep.content->>'appId' = i.app_id
           and ep.content->>'event' = substring(e.event_name from 5)
+          and ep.content->>'verification' = 'authenticated_backend_report'
           and ep.observed_at = e.occurred_at
           and ep.source_owner = e.source
       ) events on true
+      left join lateral (
+        select bool_or(c.key = 'first_open' and p.observed_at >= i.installed_at + interval '7 days') as open,
+          bool_or(c.key = 'activation' and p.observed_at >= i.installed_at + interval '7 days') as activation,
+          bool_or(c.key = 'session' and p.observed_at >= i.installed_at + interval '14 days') as retention,
+          coalesce(array_agg(p.id::text), ARRAY[]::text[]) as evidence_ids
+        from jsonb_each(i.event_coverage) c join evidence_records p on p.id::text = c.value->>'evidenceId'
+        where p.status = 'admitted' and p.content is not null
+          and p.content->>'appId' = i.app_id and p.content->>'installHash' = i.install_id
+          and p.content->>'event' = c.key and p.content->>'verification' = 'reconciled_backend_declaration'
+          and p.content->>'digest' = c.value->>'digest' and p.content->>'eventCount' = c.value->>'eventCount'
+          and p.observed_at = (c.value->>'through')::timestamptz and p.observed_at <= ${now}
+      ) coverage on true
     ), ranked as (
       select *, row_number() over (partition by campaign_ref, source_ref, referrer->>'utm_medium', referrer->>'utm_content', attribution_method order by installed_at, id) as proof_rank from observed
     )
@@ -271,6 +385,13 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
       count(*) filter (where activation)::int as activations,
       count(*) filter (where installed_at + interval '14 days' <= ${now})::int as mature_w1,
       count(*) filter (where retained and installed_at + interval '14 days' <= ${now})::int as retained_w1,
+      count(*) filter (where installed_at + interval '7 days' <= ${now})::int as mature_7d,
+      count(*) filter (where open_complete and installed_at + interval '7 days' <= ${now})::int as covered_open,
+      count(*) filter (where activation_complete and installed_at + interval '7 days' <= ${now})::int as covered_activation,
+      count(*) filter (where retention_complete and installed_at + interval '14 days' <= ${now})::int as covered_retention,
+      count(*) filter (where open_complete and first_open_7d and installed_at + interval '7 days' <= ${now})::int as complete_open,
+      count(*) filter (where activation_complete and activation_7d and installed_at + interval '7 days' <= ${now})::int as complete_activation,
+      count(*) filter (where retention_complete and retained and installed_at + interval '14 days' <= ${now})::int as complete_retention,
       jsonb_agg(jsonb_build_object('install', evidence_id, 'events', coalesce(event_evidence_ids, ARRAY[]::text[]))) filter (where proof_rank <= 50) as proofs
     from ranked group by 1,2,3,4,5 order by 1,2,3,4,5`);
   return {
@@ -287,16 +408,26 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
       attributionMethod: r.method,
       metrics: { linkClicks: null, installs: r.installs, firstOpens: r.first_opens || null, activations: r.activations || null, retainedWeek1: r.retained_w1 || null },
       matureWeek1Installs: r.mature_w1,
+      reconciledWindows: {
+        firstOpens7d: reconciledWindow(r.mature_7d, r.covered_open, r.complete_open),
+        activations7d: reconciledWindow(r.mature_7d, r.covered_activation, r.complete_activation),
+        retainedWeek1: reconciledWindow(r.mature_w1, r.covered_retention, r.complete_retention),
+      },
       evidenceIds: [...new Set(r.proofs.flatMap((proof) => [proof.install, ...proof.events]))],
       evidenceReferencesTruncated: r.installs > 50,
       coverage: 'observed_events_only',
     })),
     notes: [
       'Counts are consented, evidence-backed backend observations. An authenticated sender is not independent Google Play verification. Attribution describes the supplied campaign, not causal impact.',
-      'Tracking coverage has not been verified: unobserved outcomes are unavailable, not zero. First opens and activation use actual events as of the report time; week-one retention requires a session at age 7–14 days and a fully elapsed 14-day window. No conversion rates or statistical winners are inferred.',
+      'Unobserved outcomes are unavailable, not zero. Reconciled windows report a value only when every mature install has a matching backend completeness declaration; these declarations do not prove device instrumentation or total store coverage. Late events invalidate affected declarations. No conversion rates or statistical winners are inferred.',
       'Clicks, unscoped legacy installs, non-consented records and other applications are excluded. Empty campaigns mean no supported observations, not zero store acquisitions.',
     ],
   };
+}
+
+function reconciledWindow(eligibleInstalls: number, reconciledInstalls: number, positives: number) {
+  const complete = eligibleInstalls > 0 && reconciledInstalls === eligibleInstalls;
+  return { eligibleInstalls, reconciledInstalls, complete, value: complete ? positives : null, basis: 'reconciled_backend_declaration' };
 }
 
 /* ------------------------------------------------------------------ */
