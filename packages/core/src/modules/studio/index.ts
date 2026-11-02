@@ -156,6 +156,7 @@ export async function refreshPlan(deps: CoreDeps, tenantId: string, programId: s
           eq(socialPosts.connectionId, program.connectionId),
           inArray(socialPosts.status, ['submitted', 'published_verified']),
           gte(sql`coalesce(${socialPosts.verifiedAt}, ${socialPosts.scheduledAt})`, new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 3_600_000)),
+          lt(sql`coalesce(${socialPosts.verifiedAt}, ${socialPosts.scheduledAt})`, new Date(Date.parse(`${dayOffset(today, 1)}T00:00:00Z`) - 6 * 3_600_000)),
           ownPosts.length ? notInArray(socialPosts.id, ownPosts) : undefined,
         ),
       )

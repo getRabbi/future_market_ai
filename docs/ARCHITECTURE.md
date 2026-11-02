@@ -40,7 +40,7 @@ The Sandbox is for development and a controlled beta only; a public production l
 |---|---|
 | `packages/contracts` | Zod schemas and enums shared everywhere: action allowlist, state machine, evidence, events, 24-module registry, canonical JSON. |
 | `packages/db` | Drizzle schema, SQL migrations (`drizzle/`), RLS/role application, hash-chained audit, tenancy helpers (`withTenant`, `withSystem`, `sequential`). |
-| `packages/policies` | Deterministic policy engine `fg-policy-1.3.0` and approval-group matching. |
+| `packages/policies` | Deterministic policy engine `fg-policy-1.4.0` and approval-group matching. |
 | `packages/connectors` | Official-API executors (execute / verify / rollback), read connectors, SSRF-guarded public fetch, robots.txt, webhook signature verifiers, capability seeds. |
 | `packages/agent-kernel` | Model gateway (registry-gated, circuit breaker, schema re-validation, secret scan, served-by check), Anthropic and OpenAI-compatible adapters, versioned prompts, safety utilities. |
 | `packages/core` | All 24 modules: `m01-evidence` … `m24-governance`, connections, webhooks, agents; `modules/autopilot` is the M23 goal orchestrator (D-033). |
@@ -125,6 +125,14 @@ M06 M10"] --> NEXT["next cycle
 * The Autopilot never bypasses M23: pre-authorized actions run, others wait for approval, denials become blockers with the reason. R-DECISION keeps the Brain's approval requirement binding for decisions nobody accepted by hand.
 * Limits per goal: cycles per day, model calls per day, open actions, advertising budget; AI steps 90 s apart; event-triggered replans at most hourly. Pause, goal cancel, tenant/agent kill switches and the system halt stop every step.
 * The web home (`/app/`) shows Business setup, Growth goals, AI activity, Pending approvals and Results from these rows when the Autopilot is enabled for the organization; all 24 module screens remain in the Advanced workspace (`/app/advanced`).
+
+## 4b. Content Studio reliability (D-040)
+
+The existing curriculum Studio composes and renders branded lesson cards, validates curriculum text, copy, rights and visual QA, then submits through M23. D-039 ordinary educational publishing remains subject to policy, tenant limits and independent verification. A calendar-item row lock prevents simultaneous workers from creating separate daily drafts. A restarted submission step recovers its existing action before applying limits for new submissions. Social publication timestamps come from the independent verification proof.
+
+Studio counters retain missing values explicitly. A version-2 engagement score requires observed reactions, top-level comments and shares plus an evidence reference; a real zero remains zero. Observation time, rather than sync time, determines eligibility in the 24-hour through seven-day window. Windows freeze after seven days, and learning compares only complete frozen observations taken at age 144–168 hours. Older stored records remain intact; unversioned scores are excluded from current comparisons. These are descriptive observations, not causal impact or statistically established winners.
+
+This behavior is covered by local provider fixtures and worker integration tests. It does not establish current production deployment or live provider availability. See [implementation checkpoint](IMPLEMENTATION_CHECKPOINT.md) for validation and remaining work.
 
 ## 5. Evidence (M01)
 

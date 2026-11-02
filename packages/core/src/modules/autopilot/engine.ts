@@ -105,6 +105,10 @@ async function startCycle(deps: CoreDeps, tenantId: string, goalId: string, now:
   return withTenant(deps.db, tctx(tenantId), async (tx) => {
     const [g] = await tx.select().from(growthGoals).where(eq(growthGoals.id, goalId)).for('update');
     if (!g || g.status !== 'active') return { started: false, reason: 'goal not active' };
+    // The schedule can change after advanceGoal's initial read while this worker waits for
+    // the goal lock (another cycle finishing, or an owner command). Honor the locked value.
+    if (!g.nextRunAt || g.nextRunAt > now) return { started: false, reason: 'next cycle not due', ...(g.nextRunAt ? { nextAt: g.nextRunAt } : {}) };
+    if (g.targetDate <= now) return { started: false, reason: 'target date reached', nextAt: now };
     const [open] = await tx
       .select({ id: goalCycles.id })
       .from(goalCycles)

@@ -1226,6 +1226,49 @@ describe('Autopilot: budgets, controls and loop prevention', () => {
     expect(replay.id).toBe(withAction.actionId);
   }, 180_000);
 
+  it('rechecks a mutable nextRunAt after acquiring the goal lock', async () => {
+    const g = await goal({ title: 'Rescheduled while starting', kpi: { metricKey: 'kpi.retained', label: 'Retained', unit: 'count' }, channels: ['experiments'] });
+    const nextAt = new Date(h.clock.now().getTime() + DAY);
+    let acquiredResolve!: (pid: number) => void;
+    let releaseResolve!: () => void;
+    const acquired = new Promise<number>((resolve) => {
+      acquiredResolve = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseResolve = resolve;
+    });
+    const holding = tx(async (t) => {
+      await t.select().from(growthGoals).where(eq(growthGoals.id, g.id)).for('update');
+      const backend = await t.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+      acquiredResolve(backend.rows[0]!.pid);
+      await release;
+      await t.update(growthGoals).set({ nextRunAt: nextAt }).where(eq(growthGoals.id, g.id));
+    });
+    const pid = await acquired;
+    const advancing = autopilot.advanceGoal(h.deps, h.tenantId, g.id);
+    let blocked = false;
+    try {
+      // Wait for the actual SQL lock, not a timing guess: advanceGoal has read the old due
+      // schedule but startCycle cannot acquire its row yet.
+      for (let i = 0; i < 100; i++) {
+        const waiters = await h.t.handle.db.execute(sql`select pid from pg_stat_activity where ${pid} = any(pg_blocking_pids(pid)) and query like '%growth_goals%'`);
+        if (waiters.rows.length) {
+          blocked = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    } finally {
+      releaseResolve();
+      await holding;
+    }
+    const result = await advancing;
+    expect(blocked).toBe(true);
+    expect(result).toMatchObject({ idle: 'next cycle not due', nextAt });
+    expect(await tx((t) => t.select().from(goalCycles).where(eq(goalCycles.goalId, g.id)))).toHaveLength(0);
+    await tx((t) => autopilot.commandGoal(t, h.deps, h.tenantId, h.users.owner, g.id, 'cancel'));
+  }, 60_000);
+
   it('completes the goal at its target date with a final measurement from recorded values', async () => {
     const key = 'kpi.final';
     const sid = await series(key, 20, 50);
@@ -1340,6 +1383,11 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     const [cycle] = await otx((t) => t.select().from(goalCycles).where(eq(goalCycles.id, k.submit!.cycleId)));
     const resumedSubmit = await EXECUTORS.submit({ deps: h.deps, tenantId: org, goal: g, cycle: cycle!, task: k.submit!, prior: k, aiCallsLeft: 0, now: h.clock.now() });
     expect(resumedSubmit).toMatchObject({ kind: 'completed', refs: { actionId: action!.id }, output: { postId: post!.id, status: 'VERIFIED' } });
+    await otx((t) => t.update(socialPosts).set({ actionId: null }).where(eq(socialPosts.id, post!.id)));
+    const unlinkedSubmit = await EXECUTORS.submit({ deps: h.deps, tenantId: org, goal: g, cycle: cycle!, task: k.submit!, prior: k, aiCallsLeft: 0, now: h.clock.now() });
+    expect(unlinkedSubmit).toMatchObject({ kind: 'completed', refs: { actionId: action!.id } });
+    const [relinked] = await otx((t) => t.select().from(socialPosts).where(eq(socialPosts.id, post!.id)));
+    expect(relinked!.actionId).toBe(action!.id);
     expect(published).toHaveLength(1);
     const reasons = (action!.policyDecision as { reasons: { code: string; message: string }[] }).reasons;
     expect(reasons.map((r) => r.code)).toEqual(['ORGANIC_EDUCATIONAL_POST']);
@@ -1380,6 +1428,16 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(overview.measurement.notes.join(' ')).toMatch(/no install or conversion figure is shown/);
     // A post the Page made without the studio uses that day's slot: the calendar plans around it.
     h.clock.advance(DAY);
+    // A submitted post scheduled for a future Dhaka date must not consume today's calendar slot.
+    const [futurePost] = await otx((t) =>
+      t
+        .insert(socialPosts)
+        .values({ tenantId: org, connectionId: conn.id, platform: 'facebook', caption: 'future scheduled post', assetIds: [], claimIds: [], disclosure: {}, status: 'submitted', scheduledAt: new Date(h.clock.now().getTime() + DAY), createdBy: 'user:someone' })
+        .returning(),
+    );
+    const beforeToday = await contentStudio.refreshPlan(h.deps, org, program.id);
+    expect(beforeToday.items[0]).toMatchObject({ day: beforeToday.today, status: 'planned' });
+    await otx((t) => t.update(socialPosts).set({ status: 'cancelled' }).where(eq(socialPosts.id, futurePost!.id)));
     await otx((t) => t.insert(socialPosts).values({ tenantId: org, connectionId: conn.id, platform: 'facebook', caption: 'posted by hand', assetIds: [], claimIds: [], disclosure: {}, status: 'published_verified', scheduledAt: h.clock.now(), verifiedAt: h.clock.now(), createdBy: 'user:someone' }));
     const replanned = await contentStudio.refreshPlan(h.deps, org, program.id);
     expect(replanned.items[0]).toMatchObject({ day: replanned.today, status: 'skipped', statusReason: expect.stringMatching(/already has a post today/) });
