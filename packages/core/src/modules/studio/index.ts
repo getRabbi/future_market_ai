@@ -274,7 +274,10 @@ export async function previewPlanItem(deps: CoreDeps, tenantId: string, itemId: 
     if (item.assetId) {
       const [a] = await t.select().from(assets).where(eq(assets.id, item.assetId));
       const bytes = a ? await deps.store.get(a.objectKey) : null;
-      if (a && bytes) return { png: bytes, caption: null as string | null, qa: (a.qa as { technical?: unknown }).technical ?? null, stored: true, checks: null };
+      if (a && bytes) {
+        const [post] = item.postId ? await t.select({ caption: socialPosts.caption }).from(socialPosts).where(eq(socialPosts.id, item.postId)) : [];
+        return { png: bytes, caption: post?.caption ?? null, qa: (a.qa as { technical?: unknown }).technical ?? null, stored: true, checks: null };
+      }
     }
     const [program] = await t.select().from(studioPrograms).where(eq(studioPrograms.id, item.programId));
     const [conn] = await t.select().from(connections).where(eq(connections.id, program!.connectionId));
@@ -555,7 +558,7 @@ export async function overview(deps: CoreDeps, tenantId: string, programId: stri
     const learning = learnFrom([...history, ...plan.items.filter((i) => i.status !== 'planned')].map(toHistory));
     const pack = PACKS[plan.program.pack]!;
     const describe = (r: PlanRow) => ({ ...r, unit: r.unitId ? summarizeUnit(pack, r.unitId) : null });
-    const published = history.filter((h) => h.status === 'published');
+    const published = [...history, ...plan.items].filter((h) => h.status === 'published');
     return {
       program: plan.program,
       today: plan.today,

@@ -193,6 +193,7 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
           </span>
         </header>
         <ErrorNotice error={error} />
+        <p className="small muted">Image source: branded lesson templates with licensed Korean and Bangla fonts. The studio uses these templates while no approved image provider is configured.</p>
         <div className="studio-grid">
           {o.calendar.map((i) => (
             <article key={i.id} className="studio-day">
