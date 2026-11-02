@@ -1364,6 +1364,12 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(first).toMatchObject({ status: 'published', engagement: 3 + 2 * 1 + 0 });
     expect(first.metrics).toMatchObject({ reactions: 3, comments: 1 });
     expect(overview.measurement.notes.join(' ')).toMatch(/no install or conversion figure is shown/);
+    // A post the Page made without the studio uses that day's slot: the calendar plans around it.
+    h.clock.advance(DAY);
+    await otx((t) => t.insert(socialPosts).values({ tenantId: org, connectionId: conn.id, platform: 'facebook', caption: 'posted by hand', assetIds: [], claimIds: [], disclosure: {}, status: 'published_verified', scheduledAt: h.clock.now(), verifiedAt: h.clock.now(), createdBy: 'user:someone' }));
+    const replanned = await contentStudio.refreshPlan(h.deps, org, program.id);
+    expect(replanned.items[0]).toMatchObject({ day: replanned.today, status: 'skipped', statusReason: expect.stringMatching(/already has a post today/) });
+    expect(replanned.items.slice(1).every((i) => i.status === 'planned' && i.day > replanned.today)).toBe(true);
     await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'));
   }, 300_000);
 });

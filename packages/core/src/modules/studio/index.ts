@@ -2,7 +2,7 @@ import { assetRights, assets, claims, connections, contentPlanItems, type DbOrTx
 import { conflict, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
 import { type CardSpec, FONT_SOURCES, hammingDistance, PALETTE_IDS, type PaletteId, renderCard } from '@futuregrow/visuals';
-import { and, desc, eq, gte, inArray, isNotNull, like, lt, ne } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, like, lt, ne, notInArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, requireRole } from '../../util.js';
@@ -142,8 +142,33 @@ export async function refreshPlan(deps: CoreDeps, tenantId: string, programId: s
       .update(contentPlanItems)
       .set({ status: 'skipped', statusReason: 'the day passed before the post was drafted', updatedAt: now })
       .where(and(eq(contentPlanItems.programId, programId), eq(contentPlanItems.status, 'planned'), lt(contentPlanItems.day, today)));
+    // One post a day per Page: a post that went out (or is going out) today without the studio uses today's slot.
+    const ownPosts = (
+      await t
+        .select({ postId: contentPlanItems.postId })
+        .from(contentPlanItems)
+        .where(and(eq(contentPlanItems.programId, programId), isNotNull(contentPlanItems.postId)))
+    ).map((r) => r.postId!);
+    const [other] = await t
+      .select({ id: socialPosts.id })
+      .from(socialPosts)
+      .where(
+        and(
+          eq(socialPosts.connectionId, program.connectionId),
+          inArray(socialPosts.status, ['submitted', 'published_verified']),
+          gte(sql`coalesce(${socialPosts.verifiedAt}, ${socialPosts.scheduledAt})`, new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 3_600_000)),
+          ownPosts.length ? notInArray(socialPosts.id, ownPosts) : undefined,
+        ),
+      )
+      .limit(1);
+    if (other) {
+      await t
+        .update(contentPlanItems)
+        .set({ status: 'skipped', statusReason: `the Page already has a post today (${other.id}); one post a day`, updatedAt: now })
+        .where(and(eq(contentPlanItems.programId, programId), eq(contentPlanItems.status, 'planned'), eq(contentPlanItems.day, today)));
+    }
     const rows = await t.select().from(contentPlanItems).where(eq(contentPlanItems.programId, programId)).orderBy(contentPlanItems.day);
-    const days = [...Array(PLAN_DAYS).keys()].map((i) => dayOffset(today, i));
+    const days = [...Array(PLAN_DAYS).keys()].map((i) => dayOffset(today, i)).filter((d) => !(other && d === today));
     const fixed = new Map(rows.filter((r) => days.includes(r.day) && r.status !== 'planned').map((r) => [r.day, r]));
     const history = rows.filter((r) => r.day < today || fixed.has(r.day)).map(toHistory);
     const brand = await brandInputs(t, conn.externalAccountId, now);
