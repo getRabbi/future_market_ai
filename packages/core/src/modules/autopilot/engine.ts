@@ -6,7 +6,7 @@ import { registerEventHandlers } from '../../event-handlers.js';
 import { record } from '../../util.js';
 import { isSystemHalted } from '../m24-governance/index.js';
 import { autopilotAvailable, type GoalRow, goalKpi, limitsOf } from './goals.js';
-import { AI_CALLS, AUTOPILOT, type CycleRow, EXECUTORS, measureGoal, type StepContext, type StepResult, type TaskRow } from './steps.js';
+import { AUTOPILOT, aiCallsFor, type CycleRow, EXECUTORS, measureGoal, type StepContext, type StepResult, type TaskRow } from './steps.js';
 
 const ACTOR_REF = 'system:autopilot';
 const MINUTE = 60_000;
@@ -358,7 +358,7 @@ async function runStep(deps: CoreDeps, tenantId: string, claim: Extract<Claim, {
   for (const p of claim.prior) prior[p.kind as TaskKind] = p;
   const lim = limitsOf(goal);
   const used = await withTenant(deps.db, tctx(tenantId), (tx) => aiCallsUsed(tx, goal.id, now));
-  const need = AI_CALLS[task.kind as TaskKind] ?? 0;
+  const need = aiCallsFor(task.kind as TaskKind, prior);
   if (need > 0) {
     if (!deps.models) return { kind: 'blocked', needs: 'model', detail: 'No approved AI model is available (an administrator approves models in Governance).' };
     if (used + need > lim.maxAiCallsPerDay) return { kind: 'skipped', detail: `Today's AI allowance for this goal is used (${used} of ${lim.maxAiCallsPerDay} model calls in 24 h); this continues in a later cycle.` };

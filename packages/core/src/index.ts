@@ -35,3 +35,4 @@ export * as appGrowth from './modules/m19-app-growth/index.js';
 export * as lifecycle from './modules/m20-lifecycle/index.js';
 export * as conversationsModule from './modules/m21-conversations/index.js';
 export * as creatorsModule from './modules/m22-creators/index.js';
+export * as contentStudio from './modules/studio/index.js';

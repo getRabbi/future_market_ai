@@ -1,0 +1,13 @@
+{
+  "name": "@futuregrow/visuals",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@resvg/resvg-wasm": "2.6.2",
+    "harfbuzzjs": "1.6.3"
+  }
+}

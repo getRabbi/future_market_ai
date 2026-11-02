@@ -2462,3 +2462,41 @@ button.pager-link.next {
     justify-self: start;
   }
 }
+
+/* Content studio (D-040) */
+.studio-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.studio-day {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.studio-day p {
+  margin: 4px 0;
+}
+.studio-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  margin-top: 12px;
+}
+.studio-preview img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+.studio-caption {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 520px;
+  font-size: 0.85rem;
+  margin: 0;
+}

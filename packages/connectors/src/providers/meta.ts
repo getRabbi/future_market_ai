@@ -82,12 +82,85 @@ interface FbPostParams {
   pageId: string;
   message: string;
   link?: string;
+  /** D-040: images in order with the content hash the approved action bound. */
+  media?: { assetId: string; sha256: string }[];
+}
+
+/** multipart/form-data body for a Graph photo upload (the image travels with the request). */
+function multipart(fields: Record<string, string>, file: { name: string; mime: string; bytes: Uint8Array }): { body: Uint8Array; contentType: string } {
+  const boundary = `----fg${crypto.randomUUID().replaceAll('-', '')}`;
+  const enc = new TextEncoder();
+  const parts: Uint8Array[] = [];
+  for (const [k, v] of Object.entries(fields)) parts.push(enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+  parts.push(enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="source"; filename="${file.name}"\r\nContent-Type: ${file.mime}\r\n\r\n`), file.bytes, enc.encode(`\r\n--${boundary}--\r\n`));
+  const body = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0));
+  let o = 0;
+  for (const p of parts) {
+    body.set(p, o);
+    o += p.byteLength;
+  }
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+/** Uploads one image to the Page; `published: false` keeps it out of the feed until a post attaches it. */
+async function uploadPhoto(ctx: ConnectorContext, pageId: string, m: { assetId: string; sha256: string }, fields: Record<string, string>) {
+  const a = await ctx.loadAsset(m.assetId);
+  // The bytes sent must be exactly the bytes approved (content-addressed asset, re-hashed here).
+  if (a.sha256 !== m.sha256) throw new ProviderHttpError(`asset ${m.assetId} content hash ${a.sha256} differs from the approved ${m.sha256}`, { status: null, phase: 'before_send' });
+  if (!a.mime.startsWith('image/')) throw new ProviderHttpError(`asset ${m.assetId} is ${a.mime}, not an image`, { status: null, phase: 'before_send' });
+  const { body, contentType } = multipart(fields, { name: `${m.sha256.slice(0, 16)}.${a.mime.split('/')[1]}`, mime: a.mime, bytes: a.bytes });
+  const token = tokenFor(ctx, 'page');
+  try {
+    return await ctx.http.request<{ id: string; post_id?: string }>({ method: 'POST', url: graphUrl(ctx, `${pageId}/photos`, {}, token), headers: { authorization: `Bearer ${token}`, 'content-type': contentType }, body, idempotent: false, timeoutMs: 120_000 });
+  } catch (err) {
+    if (err instanceof ProviderHttpError && (err.body as { error?: { code?: number } } | undefined)?.error?.code === 190) throw new ProviderHttpError('meta token invalid', { status: 401, phase: 'rejected', body: err.body });
+    throw err;
+  }
+}
+
+interface FbPostRead {
+  id: string;
+  message?: string;
+  is_published?: boolean;
+  permalink_url?: string;
+  attachments?: { data?: { media_type?: string; type?: string; subattachments?: { data?: { media_type?: string }[] } }[] };
+}
+
+/** Photos attached to a post as Graph reports them (a single photo, or an album's sub-attachments). */
+function photoCount(post: FbPostRead): number {
+  const a = post.attachments?.data?.[0];
+  if (!a) return 0;
+  const subs = a.subattachments?.data?.filter((s) => s.media_type === 'photo').length ?? 0;
+  return subs || (a.media_type === 'photo' ? 1 : 0);
 }
 
 export const facebookPublishPost: ActionExecutor<FbPostParams> = {
   actionType: 'social.facebook.publish_post',
   provider: 'meta',
   async execute(ctx, p) {
+    const media = p.media ?? [];
+    if (media.length === 1) {
+      const res = await uploadPhoto(ctx, p.pageId, media[0]!, { message: p.message, published: 'true' });
+      const postId = res.data?.post_id ?? null;
+      if (!res.data?.id || !postId) throw new ProviderHttpError('meta returned no photo post id', { status: res.status, phase: 'ambiguous', body: res.data });
+      return { receipt: receiptOf(ctx, res, postId, { photoIds: [res.data.id] }), beforeState: null, rawResponse: res.data };
+    }
+    if (media.length > 1) {
+      // Unpublished uploads first, then one feed post attaching them (Graph multi-photo post).
+      const photoIds: string[] = [];
+      for (const m of media) {
+        const up = await uploadPhoto(ctx, p.pageId, m, { published: 'false' });
+        if (!up.data?.id) throw new ProviderHttpError('meta returned no photo id', { status: up.status, phase: 'ambiguous', body: up.data });
+        photoIds.push(up.data.id);
+      }
+      const form: Record<string, string> = { message: p.message };
+      photoIds.forEach((id, i) => {
+        form[`attached_media[${i}]`] = JSON.stringify({ media_fbid: id });
+      });
+      const res = await graph<{ id: string }>(ctx, 'POST', `${p.pageId}/feed`, { form });
+      if (!res.data?.id) throw new ProviderHttpError('meta returned no post id', { status: res.status, phase: 'ambiguous', body: res.data });
+      return { receipt: receiptOf(ctx, res, res.data.id, { photoIds }), beforeState: null, rawResponse: res.data };
+    }
     const form: Record<string, string> = { message: p.message };
     if (p.link) form.link = p.link;
     const res = await graph<{ id: string }>(ctx, 'POST', `${p.pageId}/feed`, { form });
@@ -95,14 +168,25 @@ export const facebookPublishPost: ActionExecutor<FbPostParams> = {
     return { receipt: receiptOf(ctx, res, res.data.id), beforeState: null, rawResponse: res.data };
   },
   async verify(ctx, p, receipt) {
-    const post = await graphOrNull<{ id: string; message?: string; is_published?: boolean; permalink_url?: string }>(ctx, receipt.providerObjectId!, {
-      fields: 'id,message,is_published,permalink_url,created_time',
+    const photos = p.media?.length ?? 0;
+    const post = await graphOrNull<FbPostRead>(ctx, receipt.providerObjectId!, {
+      fields: photos ? 'id,message,is_published,permalink_url,created_time,attachments{media_type,type,subattachments.limit(10){media_type}}' : 'id,message,is_published,permalink_url,created_time',
     });
     if (!post) return proof('PENDING', 'read_after_write', { exists: true }, { exists: false }, ctx.now(), 'post not yet readable (eventual consistency)');
-    return compareProof('read_after_write', { id: receipt.providerObjectId, message: p.message, is_published: true }, { id: post.id, message: post.message, is_published: post.is_published, permalink_url: post.permalink_url }, ctx.now());
+    const expected: Record<string, unknown> = { id: receipt.providerObjectId, message: p.message, is_published: true };
+    const observed: Record<string, unknown> = { id: post.id, message: post.message, is_published: post.is_published, permalink_url: post.permalink_url };
+    if (photos) {
+      expected.photos = photos;
+      observed.photos = photoCount(post);
+    }
+    return compareProof('read_after_write', expected, observed, ctx.now());
   },
   async rollback(ctx, _p, receipt) {
     const res = await graph<{ success: boolean }>(ctx, 'DELETE', receipt.providerObjectId!);
+    // Deleting a photo post can leave the photo in the Page's album; remove uploaded photos too.
+    for (const id of (receipt.details as { photoIds?: string[] } | undefined)?.photoIds ?? []) {
+      await graph<{ success: boolean }>(ctx, 'DELETE', id).catch(() => undefined);
+    }
     return { receipt: receiptOf(ctx, res, receipt.providerObjectId, { deleted: res.data?.success === true }), beforeState: null, rawResponse: res.data };
   },
   async verifyRollback(ctx, _p, receipt) {

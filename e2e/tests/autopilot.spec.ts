@@ -47,7 +47,7 @@ test('an owner turns the Autopilot on and starts a goal from one sentence; the w
   // Off by default: the classic home offers it.
   await page.getByRole('button', { name: 'Turn on the Autopilot' }).click();
   await expect(page.getByRole('navigation', { name: 'Autopilot' })).toBeVisible();
-  for (const name of ['Business setup', 'Growth goals', 'AI activity', 'Pending approvals', 'Results']) await expect(page.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+  for (const name of ['Business setup', 'Growth goals', 'Content studio', 'AI activity', 'Pending approvals', 'Results']) await expect(page.getByRole('button', { name: new RegExp(name) })).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: 'Growth goals' })).toBeVisible();
 
   await page.getByLabel('What do you want to achieve?').fill(SENTENCE);
@@ -75,6 +75,10 @@ test('an owner turns the Autopilot on and starts a goal from one sentence; the w
   await page.getByRole('button', { name: /Results/ }).click();
   await expect(page.getByText(/No measured results yet/)).toBeVisible();
   await expect(page.getByText(/Cycle 1/)).toBeVisible();
+  // D-040: the content studio offers daily lessons once a Page is connected, and the community workspace.
+  await page.getByRole('button', { name: /Content studio/ }).click();
+  await expect(page.getByRole('heading', { name: 'Daily lessons for your Facebook Page' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Community groups' })).toBeVisible();
   await page.getByRole('button', { name: /Business setup/ }).click();
   await expect(page.getByText('No KPI data yet', { exact: false })).toBeVisible();
 

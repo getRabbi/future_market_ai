@@ -6,6 +6,7 @@ import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.
 import { buildApp } from '../../api/src/app.js';
 import { AUTOPILOT_CALLS } from '../src/components/Autopilot.js';
 import { CONNECTION_CALLS } from '../src/components/Connections.js';
+import { CONTENT_CALLS } from '../src/components/ContentStudio.js';
 import { REGISTRIES } from '../src/components/Governance.js';
 import { GROUND_TRUTH_CALLS } from '../src/components/GroundTruth.js';
 import { allForms, SECTION_GROUPS, SECTIONS } from '../src/lib/catalog.js';
@@ -66,6 +67,7 @@ function calls() {
   for (const c of CONNECTION_CALLS) out.push({ where: 'connections screen', method: c.method, path: c.path });
   for (const c of GROUND_TRUTH_CALLS) out.push({ where: 'ground-truth screen', method: c.method, path: c.path });
   for (const c of AUTOPILOT_CALLS) out.push({ where: 'autopilot screen', method: c.method, path: c.path });
+  for (const c of CONTENT_CALLS) out.push({ where: 'content studio screen', method: c.method, path: c.path });
   return out;
 }
 

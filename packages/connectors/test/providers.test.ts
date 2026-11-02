@@ -1,4 +1,4 @@
-import { createPublicKey, verify as cryptoVerify, generateKeyPairSync } from 'node:crypto';
+import { createHash, createPublicKey, verify as cryptoVerify, generateKeyPairSync } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { hmacSha256Hex } from '@futuregrow/observability';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -51,6 +51,73 @@ describe('Meta Graph API', () => {
 
     await e.rollback!(ctx(), p, r.receipt, null);
     expect((await e.verifyRollback!(ctx(), p, r.receipt, null)).verdict).toBe('VERIFIED');
+  });
+
+  describe('photo posts (D-040)', () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...new TextEncoder().encode('studio-card-bytes')]);
+    const sha = createHash('sha256').update(png).digest('hex');
+    const photoCtx = () => ({ ...ctx(), loadAsset: async () => ({ bytes: png, mime: 'image/png', sha256: sha, publicUrl: null }) });
+    const assetId = '00000000-0000-4000-8000-0000000000a1';
+
+    it('uploads the exact approved image with the caption, verifies the photo by read-back, and deletes post and photo on rollback', async () => {
+      server.on('POST', '/v26.0/123/photos', { json: { id: '777', post_id: '123_900' } });
+      let deleted = false;
+      server.on('GET', '/v26.0/123_900', () => (deleted ? { status: 400, json: { error: { code: 100, message: 'gone' } } } : { json: { id: '123_900', message: '안전모 — হেলমেট', is_published: true, permalink_url: 'https://facebook.com/123_900', attachments: { data: [{ media_type: 'photo', type: 'photo' }] } } }));
+      server.on('DELETE', /^\/v26\.0\/(123_900|777)$/, () => {
+        deleted = true;
+        return { json: { success: true } };
+      });
+      const e = exec('social.facebook.publish_post');
+      const p = { pageId: '123', message: '안전모 — হেলমেট', media: [{ assetId, sha256: sha }] };
+      const r = await e.execute(photoCtx(), p, meta);
+      expect(r.receipt).toMatchObject({ providerObjectId: '123_900', details: { photoIds: ['777'] } });
+      const up = server.find('POST', '/v26.0/123/photos')[0]!;
+      expect(up.headers['content-type']).toMatch(/^multipart\/form-data; boundary=/);
+      expect(up.headers.authorization).toBe('Bearer PAGE_TOKEN');
+      expect(up.query.get('appsecret_proof')).toMatch(/^[a-f0-9]{64}$/);
+      expect(up.raw.includes(Buffer.from(png))).toBe(true);
+      expect(up.body).toContain('name="message"\r\n\r\n안전모 — হেলমেট\r\n');
+      expect(up.body).toContain('name="published"\r\n\r\ntrue');
+      expect(server.find('POST', '/v26.0/123/feed')).toHaveLength(0);
+      expect((await e.verify(photoCtx(), p, r.receipt)).verdict).toBe('VERIFIED');
+      // A text-only read-back (no photo attached) is a mismatch, not a success.
+      server.on('GET', '/v26.0/123_900', { json: { id: '123_900', message: '안전모 — হেলমেট', is_published: true, permalink_url: 'https://facebook.com/123_900' } });
+      const v = await e.verify(photoCtx(), p, r.receipt);
+      expect(v.verdict).toBe('MISMATCH');
+      expect(v.diff.map((d: { path: string }) => d.path)).toEqual(['photos']);
+      await e.rollback!(photoCtx(), p, r.receipt, null);
+      expect(server.find('DELETE', /^\/v26\.0\/(123_900|777)$/)).toHaveLength(2);
+    });
+
+    it('posts several images as one album post and refuses bytes that differ from the approved hash', async () => {
+      let n = 0;
+      server.on('POST', '/v26.0/123/photos', () => ({ json: { id: `p${++n}` } }));
+      server.on('POST', '/v26.0/123/feed', { json: { id: '123_901' } });
+      server.on('GET', '/v26.0/123_901', { json: { id: '123_901', message: 'two cards', is_published: true, attachments: { data: [{ media_type: 'album', subattachments: { data: [{ media_type: 'photo' }, { media_type: 'photo' }] } }] } } });
+      const e = exec('social.facebook.publish_post');
+      const p = {
+        pageId: '123',
+        message: 'two cards',
+        media: [
+          { assetId, sha256: sha },
+          { assetId, sha256: sha },
+        ],
+      };
+      const r = await e.execute(photoCtx(), p, meta);
+      const uploads = server.find('POST', '/v26.0/123/photos');
+      expect(uploads).toHaveLength(2);
+      expect(uploads.every((u) => u.body.includes('name="published"\r\n\r\nfalse'))).toBe(true);
+      const feed = server.find('POST', '/v26.0/123/feed')[0]!;
+      expect(feed.form?.get('attached_media[0]')).toBe('{"media_fbid":"p1"}');
+      expect(feed.form?.get('attached_media[1]')).toBe('{"media_fbid":"p2"}');
+      expect((await e.verify(photoCtx(), p, r.receipt)).verdict).toBe('VERIFIED');
+
+      server.reset();
+      server.on('POST', '/v26.0/123/photos', { json: { id: 'x' } });
+      const err = await e.execute(photoCtx(), { ...p, media: [{ assetId, sha256: 'f'.repeat(64) }] }, meta).catch((x) => x);
+      expect(String(err.message)).toMatch(/differs from the approved/);
+      expect(server.find('POST', '/v26.0/123/photos')).toHaveLength(0);
+    });
   });
 
   it('refuses a budget change when the live budget differs from the proposal (no write sent)', async () => {

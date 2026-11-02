@@ -8,6 +8,7 @@ import { effectiveSunset } from '../../api-lifecycle.js';
 import type { CoreDeps } from '../../deps.js';
 import { lintCopy } from '../m03-knowledge/index.js';
 import { approvedJurisdictions, engagedKillSwitchesFor, isSystemHalted, senderIdentityComplete } from '../m24-governance/index.js';
+import { type CurriculumRef, verifyCurriculumText } from '../studio/curriculum.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -194,14 +195,55 @@ export async function gatherPolicyFacts(tx: Tx, deps: CoreDeps, input: FactInput
     disclosure,
     experiment: def?.type === 'experiment.start' ? await experimentFact(tx, input.params.experimentId as string) : null,
     decision: input.decisionId ? await decisionFact(tx, input.decisionId) : null,
-    organicPost: def?.type === 'social.facebook.publish_post' && typeof input.params.message === 'string' ? await organicPostFact(tx, input.params.message, claimIds, now) : null,
+    organicPost: def?.type === 'social.facebook.publish_post' && typeof input.params.message === 'string' ? await organicPostFact(tx, input.params, claimIds, now) : null,
   };
 }
 
-/** D-039: M23 lints the exact message itself rather than trusting the proposer's earlier lint. */
-async function organicPostFact(tx: Tx, message: string, claimIds: string[], now: Date): Promise<OrganicPostFact> {
+const URL_RE = /https?:\/\/[^\s<>()"']+/giu;
+const PRODUCT_MENTION = new RegExp('অ্যাপ|\\bapps?\\b|play\\.google|google play|প্লে স্টোর|ডাউনলোড|\\bdownload|ইনস্টল|\\binstall'.normalize('NFC'), 'iu');
+const PLAY_DETAILS = 'https://play.google.com/store/apps/details?id=';
+
+/**
+ * D-040: a link may only lead to the store listing of the Page's own product, i.e. a Google Play
+ * listing that admitted, unexpired evidence of this tenant was read from (extra query parameters
+ * limited to the referrer and locale).
+ */
+async function ownListing(tx: Tx, url: string, now: Date): Promise<boolean> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const pkg = u.searchParams.get('id');
+  if (u.protocol !== 'https:' || u.host !== 'play.google.com' || u.pathname !== '/store/apps/details' || !pkg || !/^[a-zA-Z0-9_.]+$/.test(pkg)) return false;
+  if ([...u.searchParams.keys()].some((k) => !['id', 'referrer', 'hl', 'gl'].includes(k))) return false;
+  const rows = await tx
+    .select({ status: evidenceRecords.status, expiresAt: evidenceRecords.expiresAt })
+    .from(evidenceRecords)
+    .where(sql`${evidenceRecords.sourceUriOrObjectId} like ${`${PLAY_DETAILS}${pkg}%`}`);
+  return rows.some((r) => r.status === 'admitted' && (!r.expiresAt || r.expiresAt > now));
+}
+
+/**
+ * D-039/D-040: M23 lints the exact message itself rather than trusting the proposer's earlier lint,
+ * finds every link (in the link field and in the text), and checks curriculum content against the
+ * verified lesson bank.
+ */
+async function organicPostFact(tx: Tx, params: Record<string, unknown>, claimIds: string[], now: Date): Promise<OrganicPostFact> {
+  const message = String(params.message);
   const lint = await lintCopy(tx, message, { claimIds, channel: 'facebook', now });
-  return { copyLintPassed: lint.passed, lintCodes: lint.violations.filter((v) => v.severity === 'block').map((v) => v.code) };
+  const urls = [...new Set([...(typeof params.link === 'string' ? [params.link] : []), ...[...message.matchAll(URL_RE)].map((m) => m[0].replace(/[.,!?।]+$/u, ''))])];
+  const links: { url: string; ownListing: boolean }[] = [];
+  for (const url of urls) links.push({ url, ownListing: await ownListing(tx, url, now) });
+  const ref = params.curriculum as CurriculumRef | undefined;
+  return {
+    copyLintPassed: lint.passed,
+    lintCodes: lint.violations.filter((v) => v.severity === 'block').map((v) => v.code),
+    links,
+    mentionsProduct: PRODUCT_MENTION.test(message.normalize('NFC')),
+    curriculum: ref ? verifyCurriculumText(message, ref) : null,
+  };
 }
 
 /** Recorded as `decided_by` when the Autopilot accepts a decision without a person (D-033). */

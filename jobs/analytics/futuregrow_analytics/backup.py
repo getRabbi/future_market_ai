@@ -343,16 +343,23 @@ def _open_archive(store: ObjectStore, object_key: str) -> tuple[dict, dict, dict
         problems.append("archive SHA-256 does not match the sidecar manifest")
     members: dict[str, bytes] = {}
     inner: dict = {}
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r") as tar:
-        for m in tar.getmembers():
-            if not m.isfile() or m.name.startswith("/") or ".." in m.name.split("/"):
-                problems.append(f"unexpected archive member {m.name}")
-                continue
-            data = tar.extractfile(m).read()  # type: ignore[union-attr]
-            if m.name == "manifest.json":
-                inner = json.loads(data)
-            else:
-                members[m.name] = data
+    # A damaged archive is reported as a problem, never as a crash (wherever the damage lands).
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r") as tar:
+            for m in tar.getmembers():
+                if not m.isfile() or m.name.startswith("/") or ".." in m.name.split("/"):
+                    problems.append(f"unexpected archive member {m.name}")
+                    continue
+                data = tar.extractfile(m).read()  # type: ignore[union-attr]
+                if m.name == "manifest.json":
+                    try:
+                        inner = json.loads(data)
+                    except (ValueError, UnicodeDecodeError) as exc:
+                        problems.append(f"internal manifest is unreadable ({type(exc).__name__})")
+                else:
+                    members[m.name] = data
+    except tarfile.TarError as exc:
+        problems.append(f"archive is unreadable ({type(exc).__name__})")
     if inner.get("format") != FORMAT or inner.get("version") != VERSION:
         problems.append("unsupported or missing internal manifest")
     if inner.get("tables") != sidecar.get("tables"):

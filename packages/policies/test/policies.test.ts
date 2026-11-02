@@ -307,6 +307,55 @@ describe('policy engine', () => {
     expect(codes(evaluatePolicy(fbInput({ facts: { engagedKillSwitches: [{ scope: 'connector', targetRef: 'c1', reason: 'r' }] } })))).toContain('KILL_SWITCH_ENGAGED');
   });
 
+  // D-040: lessons from the verified curriculum, links to the product's own store listing.
+  const LESSON = '오늘의 단어: 안전모 — হেলমেট। কমেন্টে একটা বাক্য লিখুন।';
+  const lessonFacts = (o: Partial<NonNullable<PolicyInput['facts']['organicPost']>> = {}) => ({
+    claims: [],
+    organicPost: { copyLintPassed: true, lintCodes: [], links: [], mentionsProduct: false, curriculum: { verified: true, problems: [] }, ...o },
+  });
+
+  it('auto-allows a curriculum lesson that cites no claim only when M23 verified it and it does not mention the product (D-040)', () => {
+    const ok = evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, facts: lessonFacts() }));
+    expect(ok.outcome).toBe('PRE_AUTHORIZED');
+    expect(ok.reasons).toEqual([expect.objectContaining({ code: 'ORGANIC_EDUCATIONAL_POST', message: expect.stringMatching(/verified curriculum content/) })]);
+    expect(ok.policyVersion).toBe('fg-policy-1.4.0');
+    // Mentioning the app without an approved claim, or citing no curriculum unit at all: back to the legal path.
+    expect(evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, facts: lessonFacts({ mentionsProduct: true }) })).outcome).toBe('REQUIRE_APPROVAL');
+    expect(evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, facts: lessonFacts({ curriculum: null }) })).outcome).toBe('REQUIRE_APPROVAL');
+    // An Autopilot lesson whose Korean does not match its unit is denied and redrafted, never queued for approval.
+    const off = evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, facts: lessonFacts({ curriculum: { verified: false, problems: ['Korean not in the verified unit: 비자'] } }) }));
+    expect(off.outcome).toBe('DENY');
+    expect(off.reasons.find((r) => r.code === 'ORGANIC_POST_RESTRICTED')!.message).toMatch(/does not match its curriculum unit/);
+    // A person's post keeps the legal path rather than a denial.
+    expect(evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, proposedBy: USER, facts: lessonFacts({ curriculum: { verified: false, problems: ['x'] } }) })).outcome).toBe('REQUIRE_APPROVAL');
+  });
+
+  it('allows a link only to the Page product’s own verified store listing, wherever it appears (D-040)', () => {
+    const listing = 'https://play.google.com/store/apps/details?id=com.example.app&referrer=utm_source%3Dfacebook';
+    expect(evaluatePolicy(fbInput({ facts: { organicPost: { copyLintPassed: true, lintCodes: [], links: [{ url: listing, ownListing: true }], mentionsProduct: true, curriculum: null } } })).outcome).toBe('PRE_AUTHORIZED');
+    // Any other link, including one written into the text, needs the legal path.
+    const other = evaluatePolicy(
+      fbInput({
+        facts: {
+          organicPost: {
+            copyLintPassed: true,
+            lintCodes: [],
+            links: [
+              { url: listing, ownListing: true },
+              { url: 'https://example.org/apply', ownListing: false },
+            ],
+            mentionsProduct: true,
+            curriculum: null,
+          },
+        },
+      }),
+    );
+    expect(other.outcome).toBe('REQUIRE_APPROVAL');
+    expect(codes(other)).toContain('JURISDICTION_UNAPPROVED');
+    // A curriculum-only lesson never carries a link, even to the listing (that needs an approved claim).
+    expect(evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, facts: lessonFacts({ links: [{ url: listing, ownListing: true }] }) })).outcome).toBe('REQUIRE_APPROVAL');
+  });
+
   const emailInput = (m: Partial<NonNullable<PolicyInput['facts']['messaging']>> = {}, audienceSize: number | null = 1) =>
     budgetInput(
       {

@@ -43,22 +43,32 @@ export const ACTION_TYPES = [
     provider: 'meta',
     capability: 'facebook_page_publish',
     category: 'PUBLIC_PUBLISHING',
-    description: 'Publish a text/link post to an authorized Facebook Page.',
+    description: 'Publish a text, link or photo post (up to 10 images) to an authorized Facebook Page.',
     affectsSpend: false,
     publicFacing: true,
     contactsPeople: false,
     verification: 'read_after_write',
     rollback: 'supported',
     supported: true,
-    paramsSchema: z.object({
-      pageId: z.string().min(1),
-      message: z.string().min(1).max(63206),
-      link: z.string().url().optional(),
-      postId: z.string().uuid(),
-      assetIds: z.array(z.string().uuid()).max(0).default([]),
-      claimIds: z.array(z.string().uuid()).default([]),
-      disclosure,
-    }),
+    paramsSchema: z
+      .object({
+        pageId: z.string().min(1),
+        message: z.string().min(1).max(63206),
+        link: z.string().url().optional(),
+        postId: z.string().uuid(),
+        assetIds: z.array(z.string().uuid()).max(10).default([]),
+        /** D-040: each image's content hash, so the action binds the exact bytes that are uploaded. */
+        media: z
+          .array(z.object({ assetId: z.string().uuid(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }))
+          .max(10)
+          .optional(),
+        /** D-040: the verified curriculum unit the post teaches (M23 checks the message against it). */
+        curriculum: z.object({ pack: z.string().min(1), version: z.string().min(1), unitId: z.string().min(1) }).optional(),
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => (p.media?.length ?? 0) === p.assetIds.length && (p.media ?? []).every((m, i) => m.assetId === p.assetIds[i]), 'media must list the assetIds in order with their content hashes')
+      .refine((p) => !(p.link && p.assetIds.length), 'a photo post cannot also carry a link preview'),
   },
   {
     type: 'social.instagram.publish_media',

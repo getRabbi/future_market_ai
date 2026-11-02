@@ -1,10 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { type ModelProvider, PROMPTS, type ProviderOutcome, type StructuredRequest } from '@futuregrow/agent-kernel';
-import { analytics, autopilot, brain, clearModelCache, connectionsModule, createModelGateway, evidence, execution, experimentsModule, governance, ideas, knowledge, record, social, systemActor } from '@futuregrow/core';
-import { actionRequests, analyticsRequests, approvals, appStoreReports, auditLog, creativeBriefs, forecastPoints, forecastRuns, goalCycles, goalTasks, growthDecisions, growthGoals, growthIdeas, killSwitches, metricSeries, organization, outboxEvents, socialPosts, withSystem, withTenant } from '@futuregrow/db';
+import { analytics, autopilot, brain, clearModelCache, connectionsModule, contentStudio, createModelGateway, evidence, execution, experimentsModule, governance, ideas, knowledge, record, social, systemActor } from '@futuregrow/core';
+import { actionRequests, analyticsRequests, approvals, appStoreReports, assets, auditLog, creativeBriefs, forecastPoints, forecastRuns, goalCycles, goalTasks, growthDecisions, growthGoals, growthIdeas, killSwitches, metricSeries, organization, outboxEvents, socialPosts, withSystem, withTenant } from '@futuregrow/db';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobHelpers, Task } from 'graphile-worker';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -1057,10 +1057,10 @@ describe('Autopilot: an ordinary organic Bangla Page post for BD needs no jurisd
     expect(k.track).toMatchObject({ status: 'completed', refs: { supersededActionId: actionId }, output: { actionId: replacementId, status: 'VERIFIED' } });
     expect(k.track!.detail).toMatch(/independently verified/);
     const [old] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, actionId)));
-    expect(old).toMatchObject({ status: 'CANCELLED', statusReason: expect.stringMatching(/superseded: policy fg-policy-1\.3\.0/) });
+    expect(old).toMatchObject({ status: 'CANCELLED', statusReason: expect.stringMatching(/superseded: policy fg-policy-1\.4\.0/) });
     await expect(execution.decideApproval(h.deps, org, h.users.approver, actionId, { decision: 'approved', expectedActionHash: waiting.actionHash })).rejects.toThrow(/CANCELLED/);
     const [a] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, replacementId)));
-    expect(a).toMatchObject({ status: 'VERIFIED', actionHash: waiting.actionHash, proposedByType: 'agent', proposedById: 'autopilot', policyVersion: 'fg-policy-1.3.0' });
+    expect(a).toMatchObject({ status: 'VERIFIED', actionHash: waiting.actionHash, proposedByType: 'agent', proposedById: 'autopilot', policyVersion: 'fg-policy-1.4.0' });
     expect((a!.policyDecision as { outcome: string; reasons: { code: string }[] }).reasons.map((r) => r.code)).toEqual(['ORGANIC_EDUCATIONAL_POST']);
     expect(
       await otx((t) =>
@@ -1250,4 +1250,120 @@ describe('Autopilot: budgets, controls and loop prevention', () => {
     expect(m.target).not.toBeNull();
     expect(m.baselinePerDay).not.toBeNull();
   }, 60_000);
+});
+
+describe('Autopilot: a content studio Page publishes one verified visual lesson a day with no model call (D-040)', () => {
+  it('plans seven days, renders a branded card from the verified curriculum, publishes it as a photo through M23, verifies it by read-back, keeps one post a day and copies the observed counters into its calendar', async () => {
+    const org = `org_${randomUUID().slice(0, 8)}`;
+    const otx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => tx(fn, org);
+    await h.t.handle.db.insert(organization).values({ id: org, name: 'Studio Page Co', slug: org });
+    await otx((t) => autopilot.setAutopilotEnabled(t, org, h.users.owner, true));
+    await otx((t) =>
+      governance.setTenantPolicy(t, org, h.users.owner, {
+        configured: true,
+        currency: 'USD',
+        approvedJurisdictions: [],
+        categories: { PUBLIC_PUBLISHING: { autonomy: 'pre_authorized_within_limits', approverRoles: ['approver'], requiresDistinctApprover: true, maxSpendDeltaMicrosPerAction: null, maxSpendDeltaMicrosPerDay: null, maxAudienceSize: null } },
+      }),
+    );
+    const conn = await connectionsModule.createConnection(h.deps, org, h.users.owner, { provider: 'meta', externalAccountId: '999', displayName: 'EPS Studio Page', grantedScopes: ['pages_manage_posts', 'pages_read_engagement'], credentials: { accessToken: 'PAGE_999' } });
+    const published: { id: string; message: string; at: string; png: Buffer }[] = [];
+    server.on('GET', '/v26.0/999/insights', (req) => ({ json: { data: [{ name: req.query.get('metric'), period: 'day', values: [] }] } }));
+    server.on('GET', '/v26.0/999', { json: { id: '999', name: 'EPS Studio Page', about: 'বাংলায় কোরিয়ান ভাষা', category: 'Education', link: 'https://www.facebook.com/999', followers_count: 13 } });
+    server.on('GET', '/v26.0/999/posts', () => ({
+      json: { data: published.map((p) => ({ id: p.id, created_time: p.at, status_type: 'added_photos', message: p.message, reactions: { summary: { total_count: 3 } }, comments: { summary: { total_count: 1 } } })) },
+    }));
+    server.on('POST', '/v26.0/999/photos', (req) => {
+      const id = `999_${published.length + 1}`;
+      const message = /name="message"\r\n\r\n([\s\S]*?)\r\n--/.exec(req.body)?.[1] ?? '';
+      const start = req.raw.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      const end = req.raw.lastIndexOf(Buffer.from('\r\n--'));
+      published.push({ id, message, at: h.clock.now().toISOString(), png: req.raw.subarray(start, end) });
+      return { json: { id: `photo_${published.length}`, post_id: id } };
+    });
+    server.on('GET', /^\/v26\.0\/999_\d+$/, (req) => {
+      const p = published.find((x) => req.path === `/v26.0/${x.id}`);
+      return p ? { json: { id: p.id, message: p.message, is_published: true, permalink_url: `https://fb.example/${p.id}`, attachments: { data: [{ media_type: 'photo', type: 'photo' }] } } } : { status: 404, json: { error: { message: 'not found' } } };
+    });
+    const profile = await social.syncPageProfile(h.deps, org, conn.id, { actor: h.users.owner });
+    for (const text of ['কোরিয়ান শব্দ ও বাক্যের অডিও শুনে উচ্চারণ অনুশীলন করা যায়।', 'অ্যাপে হাঙ্গুল বর্ণমালা ও উচ্চারণ শেখার লেসন আছে।', 'EPS Topik Bangla অ্যাপে বাংলা ব্যাখ্যাসহ কোরিয়ান গ্রামার শেখা যায়।']) {
+      const claim = await otx((t) => knowledge.proposeClaim(t, h.deps, org, h.users.operator, { text, claimType: 'product_capability', evidenceIds: [profile.evidenceId!], entityIds: [profile.entityId!] }));
+      await otx((t) => knowledge.reviewClaim(t, org, h.users.approver, claim.id, 'approved'));
+    }
+    const program = await otx((t) => contentStudio.upsertProgram(t, org, h.users.owner, { connectionId: conn.id, pack: 'eps-topik-bn' }));
+    const plan = autopilot.interpretGoal('Grow organic engagement on our Facebook Page over the next 30 days with $0 advertising budget.', { now: h.clock.now(), series: [], market: 'BD' });
+    const g = await otx((t) => autopilot.createGoal(t, h.deps, org, h.users.owner, { ...plan.draft, market: 'BD' }));
+    const kinds = async () => Object.fromEntries((await otx((t) => t.select().from(goalTasks).where(eq(goalTasks.goalId, g.id)).orderBy(asc(goalTasks.createdAt), asc(goalTasks.seq)))).map((x) => [x.kind, x]));
+    const runCycle = async () => {
+      for (let i = 0; i < 8; i++) {
+        await autopilot.advanceGoal(h.deps, org, g.id, { maxSteps: 20 });
+        await drain();
+        h.clock.advance(2 * 60_000);
+      }
+    };
+    const modelCalls = provider.calls.length;
+
+    await runCycle();
+    let k = await kinds();
+    expect(k.observe!.output.studio).toMatchObject({ programId: program.id, pack: 'eps-topik-bn' });
+    expect(k.ideas).toMatchObject({ status: 'skipped', detail: expect.stringMatching(/content studio/) });
+    expect(k.content).toMatchObject({ status: 'completed', output: { studio: true } });
+    expect(k.content!.detail).toMatch(/card that passed QA, copy lint and the asset rights check/);
+    expect(k.submit, String(k.submit!.detail)).toMatchObject({ status: 'completed', output: { actionType: 'social.facebook.publish_post' } });
+    expect(k.track).toMatchObject({ status: 'completed', output: { status: 'VERIFIED' } });
+    expect(provider.calls.length).toBe(modelCalls);
+
+    // The exact rendered card went to Meta as a photo with the caption, and the read-back matched.
+    expect(published).toHaveLength(1);
+    expect(server.find('POST', '/v26.0/999/feed')).toHaveLength(0);
+    const [post] = await otx((t) =>
+      t
+        .select()
+        .from(socialPosts)
+        .where(eq(socialPosts.id, (k.content!.output.postIds as string[])[0]!)),
+    );
+    expect(post).toMatchObject({ status: 'published_verified', externalPostId: '999_1', externalUrl: 'https://fb.example/999_1' });
+    expect(published[0]!.message).toBe(post!.caption);
+    const [card] = await otx((t) => t.select().from(assets).where(eq(assets.id, post!.assetIds[0]!)));
+    expect(card).toMatchObject({ kind: 'image', mime: 'image/png', width: 1080, height: 1350, origin: 'render', publishEligible: true });
+    expect(createHash('sha256').update(published[0]!.png).digest('hex')).toBe(card!.sha256);
+    const [action] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, post!.actionId!)));
+    const params = action!.params as { media: { assetId: string; sha256: string }[]; curriculum?: { pack: string } };
+    expect(params.media).toEqual([{ assetId: card!.id, sha256: card!.sha256 }]);
+    expect(params.curriculum?.pack).toBe('eps-topik-bn');
+    expect(action).toMatchObject({ status: 'VERIFIED', proposedById: 'autopilot', policyVersion: 'fg-policy-1.4.0' });
+    const reasons = (action!.policyDecision as { reasons: { code: string; message: string }[] }).reasons;
+    expect(reasons.map((r) => r.code)).toEqual(['ORGANIC_EDUCATIONAL_POST']);
+    expect(reasons[0]!.message).toMatch(post!.claimIds.length ? /approved claims/ : /verified curriculum content/);
+
+    // The seven-day calendar exists; today's item is published (after the learn step synced it).
+    let overview = await contentStudio.overview(h.deps, org, program.id);
+    expect(overview.calendar).toHaveLength(7);
+    expect(overview.calendar[0]).toMatchObject({ status: 'published', postId: post!.id, assetId: card!.id });
+    expect(new Set(overview.calendar.map((i) => i.kind)).size).toBeGreaterThanOrEqual(4);
+
+    // Same day: run now again; nothing new is drafted or posted.
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'run_now'));
+    h.clock.advance(61 * 60_000);
+    await runCycle();
+    k = await kinds();
+    expect(k.content!.detail).toMatch(/Today's planned post is (published|submitted)/);
+    expect(published).toHaveLength(1);
+
+    // Next day: a different lesson and a different card go out; the first post's counters (a day old) feed the calendar.
+    h.clock.advance(DAY);
+    await runCycle();
+    k = await kinds();
+    expect(k.track).toMatchObject({ status: 'completed', output: { status: 'VERIFIED' } });
+    expect(published).toHaveLength(2);
+    expect(Buffer.compare(published[0]!.png, published[1]!.png)).not.toBe(0);
+    expect(published[1]!.message).not.toBe(published[0]!.message);
+    expect(provider.calls.length).toBe(modelCalls);
+    overview = await contentStudio.overview(h.deps, org, program.id);
+    const first = overview.history.find((i) => i.postId === post!.id)!;
+    expect(first).toMatchObject({ status: 'published', engagement: 3 + 2 * 1 + 0 });
+    expect(first.metrics).toMatchObject({ reactions: 3, comments: 1 });
+    expect(overview.measurement.notes.join(' ')).toMatch(/no install or conversion figure is shown/);
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'));
+  }, 300_000);
 });

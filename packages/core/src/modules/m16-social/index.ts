@@ -54,7 +54,7 @@ export async function schedulePost(tx: Tx, deps: CoreDeps, tenantId: string, act
   if (!conn) throw notFound('connection');
   if (conn.provider !== PLATFORM_PROVIDER[p.platform]) throw invalid(`connection is ${conn.provider}, platform ${p.platform} needs ${PLATFORM_PROVIDER[p.platform]}`);
   if ((p.platform === 'instagram' || p.platform === 'tiktok' || p.platform === 'youtube') && p.assetIds.length === 0) throw invalid(`${p.platform} posts need media`);
-  if (p.platform === 'facebook' && p.assetIds.length > 0) throw invalid('facebook page posts here are text/link only');
+
   let caption = p.caption;
   const disclosure = { ...p.disclosure, syntheticPersonaId: p.personaId };
   if (p.personaId) {
@@ -78,8 +78,8 @@ export async function schedulePost(tx: Tx, deps: CoreDeps, tenantId: string, act
     );
   if (p.assetIds.length) {
     const rows = await tx.select().from(assets).where(inArray(assets.id, p.assetIds));
-    const bad = rows.filter((a) => !a.publishEligible);
-    if (rows.length !== p.assetIds.length || bad.length) throw invalid(`assets not publish-eligible: ${bad.map((b) => b.id).join(', ') || 'missing'}`);
+    const bad = rows.filter((a) => !a.publishEligible || (p.platform === 'facebook' && a.kind !== 'image'));
+    if (rows.length !== p.assetIds.length || bad.length) throw invalid(`assets not publish-eligible${p.platform === 'facebook' ? ' images' : ''}: ${bad.map((b) => b.id).join(', ') || 'missing'}`);
   }
   const at = new Date(p.scheduledAt);
   await assertNotSpam(tx, p.connectionId, caption, at);
@@ -184,13 +184,30 @@ export async function postForPublishAction(tx: Tx, deps: CoreDeps, tenantId: str
   return { ...input.params, postId: row!.id };
 }
 
-function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connections.$inferSelect, assetKinds: Record<string, string>) {
-  const d = post.disclosure as { isAiGenerated: boolean; paidPartnership: boolean; disclosureText: string | null; syntheticPersonaId: string | null; options: Record<string, string>; geographies: string[] };
+type AssetFacts = Record<string, { kind: string; sha256: string }>;
+
+function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connections.$inferSelect, assetFacts: AssetFacts) {
+  const d = post.disclosure as { isAiGenerated: boolean; paidPartnership: boolean; disclosureText: string | null; syntheticPersonaId: string | null; options: Record<string, string>; geographies: string[]; review?: { curriculum?: unknown } };
   const disclosure = { isAiGenerated: d.isAiGenerated, paidPartnership: d.paidPartnership, syntheticPersonaId: d.syntheticPersonaId, disclosureText: d.disclosureText };
   const first = post.assetIds[0];
+  const assetKinds = Object.fromEntries(Object.entries(assetFacts).map(([id, a]) => [id, a.kind]));
   switch (post.platform as Platform) {
     case 'facebook':
-      return { actionType: 'social.facebook.publish_post', params: { pageId: conn.externalAccountId, message: post.caption, ...(post.link ? { link: post.link } : {}), postId: post.id, assetIds: [], claimIds: post.claimIds, disclosure } };
+      // D-040: photo posts carry each image's content hash, so the approved action binds the exact bytes.
+      return {
+        actionType: 'social.facebook.publish_post',
+        params: {
+          pageId: conn.externalAccountId,
+          message: post.caption,
+          ...(post.link ? { link: post.link } : {}),
+          postId: post.id,
+          assetIds: post.assetIds,
+          ...(post.assetIds.length ? { media: post.assetIds.map((id) => ({ assetId: id, sha256: assetFacts[id]?.sha256 ?? '' })) } : {}),
+          ...(d.review?.curriculum ? { curriculum: d.review.curriculum } : {}),
+          claimIds: post.claimIds,
+          disclosure,
+        },
+      };
     case 'instagram':
       return {
         actionType: 'social.instagram.publish_media',
@@ -246,8 +263,8 @@ export async function dispatchDuePosts(deps: CoreDeps, tenantId: string) {
   for (const post of due) {
     const { conn, kinds } = await withTenant(deps.db, { tenantId, actor: 'system:social-scheduler' }, async (tx) => {
       const [c] = await tx.select().from(connections).where(eq(connections.id, post.connectionId));
-      const rows = post.assetIds.length ? await tx.select({ id: assets.id, kind: assets.kind }).from(assets).where(inArray(assets.id, post.assetIds)) : [];
-      return { conn: c!, kinds: Object.fromEntries(rows.map((r) => [r.id, r.kind])) };
+      const rows = post.assetIds.length ? await tx.select({ id: assets.id, kind: assets.kind, sha256: assets.sha256 }).from(assets).where(inArray(assets.id, post.assetIds)) : [];
+      return { conn: c!, kinds: Object.fromEntries(rows.map((r) => [r.id, { kind: r.kind, sha256: r.sha256 }])) };
     });
     const a = postAction(post, conn, kinds);
     const userId = post.createdBy.replace(/^user:/, '');
@@ -1183,8 +1200,8 @@ export async function submitPostDraft(deps: CoreDeps, tenantId: string, postId: 
     }
     const [conn] = await tx.select().from(connections).where(eq(connections.id, post.connectionId));
     if (!conn) throw notFound('connection');
-    const rows = post.assetIds.length ? await tx.select({ id: assets.id, kind: assets.kind }).from(assets).where(inArray(assets.id, post.assetIds)) : [];
-    return { post, offer: offer!, action: postAction(post, conn, Object.fromEntries(rows.map((r) => [r.id, r.kind]))) };
+    const rows = post.assetIds.length ? await tx.select({ id: assets.id, kind: assets.kind, sha256: assets.sha256 }).from(assets).where(inArray(assets.id, post.assetIds)) : [];
+    return { post, offer: offer!, action: postAction(post, conn, Object.fromEntries(rows.map((r) => [r.id, { kind: r.kind, sha256: r.sha256 }]))) };
   });
   if (prepared.action === undefined) return { postId, action: null, reason: prepared.reason };
   const { post, offer, action } = prepared;
@@ -1268,12 +1285,18 @@ export interface PostResult {
  * its Page's newest daily snapshot. Observed values only; nothing is estimated or zero-filled.
  */
 export async function goalPostResults(t: DbOrTx, goalId: string): Promise<PostResult[]> {
+  return postResults(t, { goalId });
+}
+
+/** Verified posts of a goal, or the given posts, with their newest observed counters. */
+export async function postResults(t: DbOrTx, filter: { goalId?: string; postIds?: string[] }): Promise<PostResult[]> {
+  if (filter.postIds && !filter.postIds.length) return [];
   const posts = await t
     .select({ id: socialPosts.id, connectionId: socialPosts.connectionId, externalPostId: socialPosts.externalPostId, externalUrl: socialPosts.externalUrl, verifiedAt: socialPosts.verifiedAt })
     .from(socialPosts)
-    .where(and(eq(socialPosts.status, 'published_verified'), sql`${socialPosts.disclosure}->'review'->>'goalId' = ${goalId}`))
+    .where(and(eq(socialPosts.status, 'published_verified'), filter.goalId ? sql`${socialPosts.disclosure}->'review'->>'goalId' = ${filter.goalId}` : undefined, filter.postIds ? inArray(socialPosts.id, filter.postIds) : undefined))
     .orderBy(desc(socialPosts.verifiedAt))
-    .limit(20);
+    .limit(filter.postIds ? 200 : 20);
   if (!posts.length) return [];
   const conns = await t
     .select({ id: connections.id, pageId: connections.externalAccountId })

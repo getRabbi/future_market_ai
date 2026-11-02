@@ -51,6 +51,7 @@ import {
 import { keywordOpportunities, queueSeoAudit } from '../m18-discovery/index.js';
 import { DOWNLOADS_SERIES_KEY, syncDownloadsSeries } from '../m19-app-growth/index.js';
 import { approvedJurisdictionScopes, getTenantPolicy } from '../m24-governance/index.js';
+import { draftPlannedPost, learnFrom, programForConnection, programHistory, syncPlanResults } from '../studio/index.js';
 import { type GoalRow, goalActions, goalCategories, goalKpi, limitsOf } from './goals.js';
 
 export type CycleRow = typeof goalCycles.$inferSelect;
@@ -92,6 +93,17 @@ export type StepExecutor = (c: StepContext) => Promise<StepResult>;
 
 /** Model calls each AI step may make (checked against the goal's daily allowance first). */
 export const AI_CALLS: Partial<Record<TaskKind, number>> = { ideas: 1, decide: 2, content: 1 };
+
+/** The Page's content studio program, when this cycle's observe step found an active one (D-040). */
+export function studioOf(prior: Partial<Record<TaskKind, TaskRow>>): { programId: string; pack: string; connectionId: string } | null {
+  return (prior.observe?.output.studio as { programId: string; pack: string; connectionId: string } | null | undefined) ?? null;
+}
+
+/** Model calls a step needs: the studio composes from its lesson bank, so ideas and content need none. */
+export function aiCallsFor(kind: TaskKind, prior: Partial<Record<TaskKind, TaskRow>>): number {
+  if (studioOf(prior) && (kind === 'ideas' || kind === 'content')) return 0;
+  return AI_CALLS[kind] ?? 0;
+}
 
 const tx = <T>(c: StepContext, fn: (t: Tx) => Promise<T>) => withTenant(c.deps.db, { tenantId: c.tenantId, actor: ACTOR_REF }, fn);
 const daysLeft = (c: StepContext) => Math.max(1, Math.ceil((c.goal.targetDate.getTime() - c.now.getTime()) / DAY));
@@ -238,6 +250,9 @@ const observe: StepExecutor = async (c) => {
     const points = stats?.n ?? 0;
     const warnings: string[] = [...(insights?.notes ?? []), ...(organic?.notes ?? [])];
     const bootstrap = organic?.pages.length && points < MIN_KPI_POINTS ? { active: true, reason: `${kpi.label} has ${points} of the ${MIN_KPI_POINTS} daily values a forecast needs` } : { active: false, reason: null };
+    const firstPage = organic?.pages[0];
+    const program = firstPage ? await programForConnection(t, firstPage.connectionId) : null;
+    const studio = program?.status === 'active' ? { programId: program.id, pack: program.pack, connectionId: program.connectionId } : null;
     const brand: BrandScope | null = organic
       ? await pageBrandScope(
           t,
@@ -260,6 +275,7 @@ const observe: StepExecutor = async (c) => {
       `${ev?.n ?? 0} admitted evidence records, ${cl?.n ?? 0} approved claims, ${ideas?.n ?? 0} open ideas for this KPI, ${open.length} open action${open.length === 1 ? '' : 's'}.`,
       ...pageLines,
       brand && organic?.pages.length ? `About the Page's product: ${brand.evidenceIds.length} current evidence records, ${brand.approvedClaimIds.length} approved claims, ${brand.pendingClaims} claims awaiting review.` : '',
+      studio ? `Content studio: today's post comes from the ${studio.pack} lesson bank and its seven-day calendar.` : '',
       bootstrap.active ? `Bootstrap mode: ${bootstrap.reason}, so this cycle prepares exploratory ideas and posts (not forecast-validated)${c.goal.autoSubmit ? '; your publishing policy decides whether a post publishes on its own or waits for approval' : ' for your review only'}.` : '',
       ...warnings,
     ]
@@ -286,6 +302,7 @@ const observe: StepExecutor = async (c) => {
         organic: organic ? { pages: organic.pages } : null,
         brand,
         bootstrap,
+        studio,
         warnings,
       },
     };
@@ -410,6 +427,7 @@ async function openIdeas(c: StepContext) {
 
 const ideas: StepExecutor = async (c) => {
   const kpi = goalKpi(c.goal);
+  if (studioOf(c.prior)) return { kind: 'skipped', detail: "The content studio plans this Page's posts from its verified lesson bank and seven-day calendar, so no Idea Lab call is needed." };
   const open = await openIdeas(c);
   if (open.length >= 2) return { kind: 'skipped', detail: `${open.length} untried ideas for ${kpi.label} are already waiting; no new ones needed.`, output: { open: open.length } };
   const boot = bootstrapOf(c);
@@ -555,7 +573,21 @@ async function bootstrapContent(c: StepContext): Promise<StepResult> {
   };
 }
 
+/**
+ * D-040: with an active content program, today's planned post is composed from the verified lesson
+ * bank, rendered as a branded card, checked and drafted with its image; no model call is made.
+ */
+async function studioContent(c: StepContext): Promise<StepResult> {
+  const studio = studioOf(c.prior)!;
+  const r = await draftPlannedPost(c.deps, c.tenantId, { programId: studio.programId, goalId: c.goal.id, cycleId: c.cycle.id, market: c.goal.market, now: c.now });
+  if (r.kind === 'blocked') return { kind: 'blocked', needs: r.needs, detail: r.detail, refs: { planItemId: r.planItemId } };
+  if (r.kind === 'skipped') return { kind: 'skipped', detail: r.detail, refs: { planItemId: r.planItemId } };
+  const next = c.goal.autoSubmit ? ' The submit step hands it to the execution gateway (M23); your publishing policy decides whether it publishes now or waits for approval.' : ' This goal is set to suggest only, so it waits for your review in Pending approvals.';
+  return { kind: 'completed', detail: `${r.detail}${next}`, refs: { planItemId: r.planItemId, postId: r.postId }, output: { postIds: [r.postId], planItemId: r.planItemId, evidenceIds: r.evidenceIds, studio: true, ...(r.kind === 'drafted' ? { assetId: r.assetId } : {}) } };
+}
+
 const content: StepExecutor = async (c) => {
+  if (studioOf(c.prior)) return studioContent(c);
   if (bootstrapOf(c).active) return bootstrapContent(c);
   const ideaId = (c.prior.decide?.output.ideaId as string | undefined) ?? (await openIdeas(c))[0]?.id;
   if (!ideaId) return { kind: 'skipped', detail: 'No idea to write content for in this cycle.' };
@@ -612,7 +644,8 @@ async function submitPost(c: StepContext): Promise<StepResult> {
   const ideaId = c.prior.content?.output.ideaId as string | undefined;
   const page = ((c.prior.observe?.output.organic as { pages: OrganicPage[] } | null | undefined)?.pages ?? [])[0];
   const [idea] = ideaId ? await tx(c, (t) => t.select({ evidenceIds: growthIdeas.evidenceIds }).from(growthIdeas).where(eq(growthIdeas.id, ideaId))) : [];
-  const evidenceIds = [...new Set([...(idea?.evidenceIds ?? []), ...(page?.snapshot?.evidenceId ? [page.snapshot.evidenceId] : [])])];
+  const drafted = (c.prior.content?.output.evidenceIds as string[] | undefined) ?? [];
+  const evidenceIds = [...new Set([...(idea?.evidenceIds ?? []), ...drafted, ...(page?.snapshot?.evidenceId ? [page.snapshot.evidenceId] : [])])];
   const refused: string[] = [];
   for (const postId of postIds) {
     const r = await submitPostDraft(c.deps, c.tenantId, postId, { geographies: [c.goal.market], evidenceIds });
@@ -634,7 +667,7 @@ async function submitPost(c: StepContext): Promise<StepResult> {
 }
 
 const submit: StepExecutor = async (c) => {
-  if (bootstrapOf(c).active) return submitPost(c);
+  if (studioOf(c.prior) || bootstrapOf(c).active) return submitPost(c);
   const decisionId = c.prior.decide?.output.decisionId as string | undefined;
   if (!decisionId) return { kind: 'skipped', detail: 'No decision was made in this cycle.' };
   const [d] = await tx(c, (t) => t.select().from(growthDecisions).where(eq(growthDecisions.id, decisionId)));
@@ -886,8 +919,17 @@ const learn: StepExecutor = async (c) => {
     return out;
   });
   if (analyses.length) lessons.push(`Requested a fresh analysis of experiment${analyses.length === 1 ? '' : 's'} ${analyses.join(', ')} (M10).`);
+  // D-040: the studio copies the Page's observed counters into its calendar and adapts the next days.
+  const studio = studioOf(c.prior);
+  let studioLearning: ReturnType<typeof learnFrom> | null = null;
+  if (studio) {
+    await syncPlanResults(c.deps, c.tenantId, studio.programId);
+    const history = await tx(c, (t) => programHistory(t, studio.programId));
+    studioLearning = learnFrom(history);
+    lessons.push(...studioLearning.notes.map((n) => `Content studio: ${n}`));
+  }
   const detail = [...lessons, replanReason ? `Next cycle brought forward to ${sooner} h because ${replanReason}.` : `Next cycle in ${cadence} h.`].join(' ');
-  return { kind: 'completed', detail, output: { lessons, replanHours, replanReason, ideaId: ideaId ?? null, actionStatus: actionStatus ?? null, experimentAnalyses: analyses } };
+  return { kind: 'completed', detail, output: { lessons, replanHours, replanReason, ideaId: ideaId ?? null, actionStatus: actionStatus ?? null, experimentAnalyses: analyses, studioLearning } };
 };
 
 export const EXECUTORS: Record<TaskKind, StepExecutor> = { observe, forecast, research, ideas, decide, content, submit, track, measure, learn };

@@ -72,3 +72,30 @@ def test_backup_is_due_after_the_interval_only():
     assert backup_due(None, now, 24)
     assert not backup_due(now - timedelta(hours=23, minutes=59), now, 24)
     assert backup_due(now - timedelta(hours=24), now, 24)
+
+
+def test_damaged_archive_is_reported_not_raised(tmp_path):
+    """Corruption anywhere in the archive (here: the internal manifest) becomes a verification problem."""
+    import io
+    import json
+    import tarfile
+
+    from futuregrow_analytics.backup import _open_archive, sha256
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        data = b'{"format": \x96 broken'
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    archive = buf.getvalue()
+    store = FilesystemStore(str(tmp_path))
+    store.put("b.fgb", archive, "application/x-tar")
+    store.put("b.fgb.manifest.json", json.dumps({"archiveSha256": sha256(archive), "tables": {}}).encode(), "application/json")
+    _sidecar, _inner, _members, problems = _open_archive(store, "b.fgb")
+    assert any("internal manifest is unreadable" in p for p in problems)
+    store.put("c.fgb", b"not a tar archive at all" * 40, "application/x-tar")
+    store.put("c.fgb.manifest.json", json.dumps({"archiveSha256": "0" * 64, "tables": {}}).encode(), "application/json")
+    _sidecar, _inner, _members, problems = _open_archive(store, "c.fgb")
+    assert any("SHA-256" in p for p in problems)
+    assert any("archive is unreadable" in p for p in problems)

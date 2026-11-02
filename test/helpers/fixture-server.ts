@@ -9,6 +9,8 @@ export interface RecordedRequest {
   body: string;
   json: unknown;
   form: URLSearchParams | null;
+  /** The request body as received (binary uploads such as multipart photos). */
+  raw: Buffer;
 }
 
 export interface FixtureResponse {
@@ -51,7 +53,8 @@ export class FixtureServer {
       req.on('data', (c) => chunks.push(c));
       req.on('end', async () => {
         const url = new URL(req.url ?? '/', 'http://fixture');
-        const body = Buffer.concat(chunks).toString('utf8');
+        const raw = Buffer.concat(chunks);
+        const body = raw.toString('utf8');
         const ct = req.headers['content-type'] ?? '';
         let json: unknown = null;
         if (ct.includes('json') && body) {
@@ -69,6 +72,7 @@ export class FixtureServer {
           body,
           json,
           form: ct.includes('x-www-form-urlencoded') ? new URLSearchParams(body) : null,
+          raw,
         };
         this.requests.push(rec);
         const route = [...this.routes].reverse().find((r) => r.method === rec.method && (typeof r.path === 'string' ? r.path === rec.path : r.path.test(rec.path)));

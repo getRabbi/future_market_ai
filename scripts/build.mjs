@@ -19,7 +19,8 @@ import { build } from 'esbuild';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(path.join(root, 'package.json'));
 
-const COMMON_EXTERNAL = ['graphile-worker', 'pg-native'];
+// harfbuzzjs and resvg load their WebAssembly from their own package directory (D-040 cards).
+const COMMON_EXTERNAL = ['graphile-worker', 'pg-native', 'harfbuzzjs', '@resvg/resvg-wasm'];
 const SERVICES = {
   api: { entries: { main: 'apps/api/src/main.ts', migrate: 'packages/db/src/cli/migrate.ts', probe: 'packages/db/src/cli/probe.ts', 'reencrypt-credentials': 'packages/runtime/src/cli/reencrypt-credentials.ts' }, external: COMMON_EXTERNAL, migrations: true },
   worker: { entries: { main: 'apps/worker/src/main.ts' }, external: COMMON_EXTERNAL, migrations: false },
@@ -96,6 +97,8 @@ async function buildService(name) {
     path.join(out, 'node_modules'),
   );
   if (svc.migrations) fs.cpSync(path.join(root, 'packages/db/drizzle'), path.join(out, 'drizzle'), { recursive: true });
+  // Card fonts (SIL OFL 1.1, licence texts included) next to the bundle; @futuregrow/visuals finds them there.
+  fs.cpSync(path.join(root, 'packages/visuals/fonts'), path.join(out, 'fonts'), { recursive: true });
   fs.writeFileSync(path.join(out, 'package.json'), JSON.stringify({ name: `futuregrow-${name}`, private: true, type: 'module' }, null, 2));
   const bytes = Object.values(result.metafile.outputs).reduce((s, o) => s + o.bytes, 0);
   fs.writeFileSync(path.join(out, 'meta.json'), JSON.stringify(result.metafile));

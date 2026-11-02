@@ -1,6 +1,6 @@
 import type { ActionRisk, ActionTypeDefinition, ApprovalGroup, CategoryPolicy, DataPurpose, PlatformCapability, PolicyDecision, PolicyOutcome, Proposer, RiskCategory, TenantPolicy, TenantRole } from '@futuregrow/contracts';
 
-export const POLICY_VERSION = 'fg-policy-1.3.0';
+export const POLICY_VERSION = 'fg-policy-1.4.0';
 
 /* ------------------------------------------------------------------ */
 /* Inputs: facts are gathered by the caller from the database; the      */
@@ -98,6 +98,12 @@ export interface OrganicPostFact {
   copyLintPassed: boolean;
   /** Codes of the blocking lint violations. */
   lintCodes: readonly string[];
+  /** D-040: every link in the link field or the text; ownListing = the Page product's verified store listing. */
+  links?: readonly { url: string; ownListing: boolean }[];
+  /** D-040: the text names the app, the store, downloading or installing. */
+  mentionsProduct?: boolean;
+  /** D-040: M23's check of the post against the verified curriculum unit it cites; null = cites none. */
+  curriculum?: { verified: boolean; problems: readonly string[] } | null;
 }
 
 export interface DecisionFact {
@@ -275,6 +281,10 @@ export function restrictedOrganicTopics(text: string): string[] {
  * spend, link, paid partnership, synthetic persona or protected population. An Autopilot post that
  * fails the content checks is denied, so it is redrafted instead of waiting for a person; anything
  * else keeps the jurisdiction rule below.
+ * D-040: a lesson citing no claim qualifies instead when M23 verified it against its curriculum
+ * unit and it does not mention the product; a link qualifies only when it leads to the Page
+ * product's own verified store listing (links in the text count too). A curriculum post that does
+ * not match its unit is denied like restricted copy.
  */
 function organicPostScreen(i: PolicyInput): { eligible: boolean; deny: Finding | null } | null {
   const d = i.definition;
@@ -283,11 +293,17 @@ function organicPostScreen(i: PolicyInput): { eligible: boolean; deny: Finding |
   const f = i.facts;
   const restricted = restrictedOrganicTopics(typeof i.params.message === 'string' ? i.params.message : '');
   const lintFailed = f.organicPost ? !f.organicPost.copyLintPassed : false;
-  if (i.proposedBy.type !== 'user' && (restricted.length || lintFailed)) {
-    const why = restricted.length ? `covers restricted topics (${restricted.join(', ')})` : `failed copy lint (${f.organicPost!.lintCodes.join(', ')})`;
+  const curriculum = f.organicPost?.curriculum ?? null;
+  if (i.proposedBy.type !== 'user' && (restricted.length || lintFailed || (curriculum && !curriculum.verified))) {
+    const why = restricted.length ? `covers restricted topics (${restricted.join(', ')})` : lintFailed ? `failed copy lint (${f.organicPost!.lintCodes.join(', ')})` : `does not match its curriculum unit (${curriculum!.problems.join('; ')})`;
     return { eligible: false, deny: deny('R-JURISDICTION', 'ORGANIC_POST_RESTRICTED', `organic post ${why}; it is not published automatically and needs a new draft`) };
   }
   const claimsOk = f.claims.length > 0 && f.missingClaimIds.length === 0 && f.claims.every((c) => c.status === 'approved' && !c.regulated && (!c.expiresAt || c.expiresAt.getTime() > i.now.getTime()));
+  // D-040: links only to the Page product's own verified store listing (facts without link data: no link at all).
+  const links = f.organicPost?.links ?? (i.params.link ? [{ url: String(i.params.link), ownListing: false }] : []);
+  const linksOk = links.every((l) => l.ownListing);
+  // D-040: a lesson that states nothing about the product needs no claim when M23 verified its Korean against the lesson bank.
+  const curriculumOnly = f.claims.length === 0 && f.missingClaimIds.length === 0 && curriculum?.verified === true && f.organicPost?.mentionsProduct === false && links.length === 0;
   const eligible =
     categoryPolicy(i.tenantPolicy, d.category)?.autonomy === 'pre_authorized_within_limits' &&
     !d.affectsSpend &&
@@ -299,10 +315,10 @@ function organicPostScreen(i: PolicyInput): { eligible: boolean; deny: Finding |
     !r.involvesChildren &&
     !r.usesSensitiveAttributes &&
     r.geographies.length > 0 &&
-    !i.params.link &&
+    linksOk &&
     !f.disclosure?.paidPartnership &&
     !f.disclosure?.syntheticPersonaId &&
-    claimsOk &&
+    (claimsOk || curriculumOnly) &&
     f.organicPost?.copyLintPassed === true &&
     restricted.length === 0;
   return { eligible, deny: null };
@@ -321,7 +337,8 @@ function ruleJurisdiction(i: PolicyInput): Finding[] {
   const unapproved = i.risk.geographies.filter((g) => !i.facts.approvedJurisdictions.includes(g));
   if (unapproved.length && organic?.eligible) {
     // Recorded with the decision so the audit shows why no legal approval was asked for.
-    return [{ rule: 'R-JURISDICTION', code: 'ORGANIC_EDUCATIONAL_POST', message: `ordinary organic Page post for ${unapproved.join(', ')}: approved claims, copy lint and restricted-topic screen passed; no rule pack needed`, effect: 'PRE_AUTHORIZED' }];
+    const basis = i.facts.claims.length ? 'approved claims' : 'verified curriculum content';
+    return [{ rule: 'R-JURISDICTION', code: 'ORGANIC_EDUCATIONAL_POST', message: `ordinary organic Page post for ${unapproved.join(', ')}: ${basis}, copy lint and restricted-topic screen passed; no rule pack needed`, effect: 'PRE_AUTHORIZED' }];
   }
   if (unapproved.length) {
     return [approve('R-JURISDICTION', 'JURISDICTION_UNAPPROVED', `no legal-approved rule pack covering ${d.type} for: ${unapproved.join(', ')}`, LEGAL_GROUP)];
