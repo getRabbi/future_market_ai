@@ -4,7 +4,7 @@ import { sha256Hex } from '@futuregrow/observability';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
-import { createDsar, executeDsarDeletion, ingestEvents, verifyDsarIdentity } from '../src/modules/m02-customers/index.js';
+import { createDsar, executeDsarDeletion, ingestEvents, recordConsent, verifyDsarIdentity } from '../src/modules/m02-customers/index.js';
 import { campaignConversions, recordAppEvent, recordAppEventCoverage, recordInstall } from '../src/modules/m19-app-growth/index.js';
 
 let h: CoreHarness;
@@ -37,6 +37,27 @@ afterAll(async () => {
 });
 
 describe('application-scoped conversion evidence', () => {
+  it('honors profile analytics withdrawal and expired grants despite a true payload consent flag', async () => {
+    const input = { ...install('com.example.consent-state'), userId: 'consent-state-subject' };
+    await recordInstall(h.deps, h.tenantId, 'key:backend', input);
+    await recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input));
+    const [row] = await tx((t) => t.select().from(appInstalls).where(eq(appInstalls.appId, input.appId)));
+    const consent = { profileId: row!.profileId!, purpose: 'analytics', status: 'withdrawn', lawfulBasis: 'consent', source: 'privacy-settings', capturedAt: h.clock.now().toISOString() };
+    await tx((t) => recordConsent(t, h.tenantId, h.users.owner, consent));
+    const event = { appId: input.appId, platform: input.platform, installId: input.installId, eventId: randomUUID(), event: 'activation', occurredAt: ago(19), consent: { analytics: true } };
+    expect(await recordAppEvent(h.deps, h.tenantId, 'key:backend', event)).toMatchObject({ recorded: false, reason: expect.stringMatching(/profile analytics consent/) });
+    await expect(recordAppEventCoverage(h.deps, h.tenantId, 'key:backend', coverage(input))).rejects.toThrow(/profile analytics consent/);
+    await expect(recordInstall(h.deps, h.tenantId, 'key:backend', { ...input, installId: randomUUID() })).rejects.toThrow(/profile analytics consent/);
+    expect((await report(input.appId)).campaigns).toEqual([]);
+    expect(await tx((t) => t.select().from(appInstalls).where(eq(appInstalls.appId, input.appId)))).toHaveLength(1);
+    await tx((t) => recordConsent(t, h.tenantId, h.users.owner, { ...consent, status: 'granted', expiresAt: ago(1) }));
+    expect(await recordAppEvent(h.deps, h.tenantId, 'key:backend', event)).toMatchObject({ recorded: false });
+    expect((await report(input.appId)).campaigns).toEqual([]);
+    await tx((t) => recordConsent(t, h.tenantId, h.users.owner, { ...consent, status: 'granted', expiresAt: null }));
+    expect((await recordAppEvent(h.deps, h.tenantId, 'key:backend', event)).recorded).toBe(true);
+    expect((await report(input.appId)).campaigns[0]!.metrics.activations).toBe(1);
+  });
+
   it('keeps missing coverage unavailable and reports true zero only for reconciled mature windows', async () => {
     const input = install('com.example.coverage-zero');
     await recordInstall(h.deps, h.tenantId, 'key:backend', input);

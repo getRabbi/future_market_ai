@@ -39,7 +39,7 @@ A successful response is HTTP 202, for example:
 
 Replaying the same tenant/application/platform/installation identity does not insert another install (`recorded: false`). Retries return the original attribution result. Retain the same payload on retries; this is deduplication, not an update API. Installation, event, identity, evidence and audit writes commit atomically. Installation timestamps more than five minutes in the future and clicks after installation are rejected. Do not interpret attribution labels as store verification: the endpoint trusts the authenticated sender's telemetry, and does not cryptographically attest the Android device or query Play Console. Legacy records are not automatically reassigned to an application.
 
-Without analytics consent, existing M19 stores a minimal unattributed install without campaign fields or a profile link. Do not send analytics events or optional identity/context when consent is absent. Decide whether the application's consent policy permits even that minimal event before enabling forwarding.
+Without analytics consent, existing M19 stores a minimal unattributed install without campaign fields or a profile link. Do not send analytics events or optional identity/context when consent is absent. A recorded profile-level analytics denial, withdrawal or expired grant overrides a true payload flag: new linked installs and completeness declarations are rejected, app events are not recorded, and the profile is excluded from campaign reports. Renew consent through the existing consent workflow, not by replaying telemetry. Decide whether the application's consent policy permits even the minimal unattributed event before enabling forwarding.
 
 ## Minimal mobile and backend work outside this repository
 

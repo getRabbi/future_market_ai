@@ -1,5 +1,5 @@
 import { fetchSalesReport } from '@futuregrow/connectors';
-import { appInstalls, appStoreReports, customerEvents, type DbOrTx, evidenceRecords, type Tx, withTenant } from '@futuregrow/db';
+import { appInstalls, appStoreReports, consentState, customerEvents, type DbOrTx, evidenceRecords, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
 import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm';
@@ -91,6 +91,7 @@ export async function recordInstall(deps: CoreDeps, tenantId: string, source: st
         profileId = ev?.profileId ?? null;
       }
       if (!profileId) throw invalid('installation event did not resolve an analytics profile');
+      if (!(await analyticsStateAllowsProcessing(tx, profileId, now))) throw invalid('profile analytics consent is withdrawn, denied or expired');
     }
     const referrer = consented && i.platform === 'android' && i.installReferrer ? parseInstallReferrer(i.installReferrer) : {};
     const method = !consented ? 'unattributed' : i.platform === 'android' && Object.keys(referrer).length ? 'play_install_referrer' : i.selfReportedSource ? 'self_reported' : 'unattributed';
@@ -169,6 +170,7 @@ export async function recordAppEvent(deps: CoreDeps, tenantId: string, source: s
       .for('update');
     if (!install) throw invalid('record this application installation before its events');
     if (!install.consentAnalytics || !install.profileId) return { recorded: false, reason: 'installation has no analytics consent or profile' };
+    if (!(await analyticsStateAllowsProcessing(tx, install.profileId, now))) return { recorded: false, reason: 'profile analytics consent is withdrawn, denied or expired' };
     if (occurredAt < install.installedAt) throw invalid('event precedes installation');
     const [duplicate] = await tx.select().from(customerEvents).where(eq(customerEvents.messageId, messageId));
     if (duplicate) {
@@ -238,6 +240,7 @@ export async function recordAppEventCoverage(deps: CoreDeps, tenantId: string, s
       .where(and(eq(appInstalls.appId, input.appId), eq(appInstalls.platform, input.platform), eq(appInstalls.installId, installHash)))
       .for('update');
     if (!install?.consentAnalytics || !install.profileId || !install.evidenceId) throw invalid('coverage requires a consented application installation');
+    if (!(await analyticsStateAllowsProcessing(tx, install.profileId, now))) throw invalid('profile analytics consent is withdrawn, denied or expired');
     if (through <= install.installedAt) throw invalid('coverage must end after installation');
     const previous = install.eventCoverage[input.event];
     if (previous && through < new Date(previous.through)) throw conflict('coverage cannot move backwards');
@@ -333,6 +336,8 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
       where i.app_id = ${query.appId} and i.platform = ${query.platform}
         and i.installed_at >= ${from} and i.installed_at < ${to} and i.installed_at <= ${now}
         and i.consent_analytics and i.profile_id is not null and proof.status = 'admitted' and proof.content is not null
+        and not exists (select 1 from consent_state cs where cs.profile_id = i.profile_id and cs.purpose = 'analytics'
+          and (cs.status <> 'granted' or cs.expires_at <= ${now}))
     ), observed as (
       select i.*, events.first_open, events.activation, events.retained, events.first_open_7d, events.activation_7d,
         coverage.open and events.open_count = (i.event_coverage->'first_open'->>'eventCount')::int as open_complete,
@@ -428,6 +433,16 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
 function reconciledWindow(eligibleInstalls: number, reconciledInstalls: number, positives: number) {
   const complete = eligibleInstalls > 0 && reconciledInstalls === eligibleInstalls;
   return { eligibleInstalls, reconciledInstalls, complete, value: complete ? positives : null, basis: 'reconciled_backend_declaration' };
+}
+
+/** Payload consent cannot override a recorded withdrawal or expired grant. */
+async function analyticsStateAllowsProcessing(tx: Tx, profileId: string, now: Date) {
+  const [state] = await tx
+    .select()
+    .from(consentState)
+    .where(and(eq(consentState.profileId, profileId), eq(consentState.purpose, 'analytics')))
+    .for('share');
+  return !state || (state.status === 'granted' && (!state.expiresAt || state.expiresAt > now));
 }
 
 /* ------------------------------------------------------------------ */
