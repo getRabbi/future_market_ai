@@ -9,6 +9,7 @@ import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobHelpers, Task } from 'graphile-worker';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { JURISDICTION_DOMAIN_KEYS } from '../../../packages/contracts/src/index.js';
+import { EXECUTORS } from '../../../packages/core/src/modules/autopilot/steps.js';
 import { approveJurisdictionPacks, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import '../src/register-modules.js';
@@ -1334,6 +1335,12 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(params.media).toEqual([{ assetId: card!.id, sha256: card!.sha256 }]);
     expect(params.curriculum?.pack).toBe('eps-topik-bn');
     expect(action).toMatchObject({ status: 'VERIFIED', proposedById: 'autopilot', policyVersion: 'fg-policy-1.4.0' });
+    // A submit step interrupted after M23 accepted its post must recover that action even
+    // though it already consumes the daily limit. It must reach tracking, never submit twice.
+    const [cycle] = await otx((t) => t.select().from(goalCycles).where(eq(goalCycles.id, k.submit!.cycleId)));
+    const resumedSubmit = await EXECUTORS.submit({ deps: h.deps, tenantId: org, goal: g, cycle: cycle!, task: k.submit!, prior: k, aiCallsLeft: 0, now: h.clock.now() });
+    expect(resumedSubmit).toMatchObject({ kind: 'completed', refs: { actionId: action!.id }, output: { postId: post!.id, status: 'VERIFIED' } });
+    expect(published).toHaveLength(1);
     const reasons = (action!.policyDecision as { reasons: { code: string; message: string }[] }).reasons;
     expect(reasons.map((r) => r.code)).toEqual(['ORGANIC_EDUCATIONAL_POST']);
     expect(reasons[0]!.message).toMatch(post!.claimIds.length ? /approved claims/ : /verified curriculum content/);

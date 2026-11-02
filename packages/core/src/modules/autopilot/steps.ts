@@ -627,6 +627,18 @@ async function submitPost(c: StepContext): Promise<StepResult> {
   const postIds = (c.prior.content?.output.postIds as string[] | undefined) ?? [];
   if (!postIds.length) return { kind: 'skipped', detail: 'No post draft is ready to publish in this cycle.' };
   if (!c.goal.autoSubmit) return { kind: 'blocked', needs: 'approval', detail: 'This goal is set to suggest only: the post drafts wait for you in Pending approvals.' };
+  // A crash can happen after M23 durably accepts the post but before this task saves its result.
+  // Recover the existing action before counting it against the limits for NEW submissions.
+  const [offered] = await tx(c, (t) =>
+    t
+      .select({ postId: socialPosts.id, actionId: actionRequests.id, status: actionRequests.status, actionType: actionRequests.actionType })
+      .from(socialPosts)
+      .innerJoin(actionRequests, eq(actionRequests.id, socialPosts.actionId))
+      .where(and(inArray(socialPosts.id, postIds), sql`${socialPosts.disclosure}->'review'->>'goalId' = ${c.goal.id}`))
+      .orderBy(socialPosts.id)
+      .limit(1),
+  );
+  if (offered) return { kind: 'completed', detail: 'Recovered the existing publishing action; tracking its outcome without submitting another post.', refs: { actionId: offered.actionId }, output: offered };
   const lim = limitsOf(c.goal);
   const actions = await tx(c, (t) => goalActions(t, c.goal.id));
   const open = actions.filter((a) => !SETTLED_ACTION_STATES.includes(a.status)).length;
