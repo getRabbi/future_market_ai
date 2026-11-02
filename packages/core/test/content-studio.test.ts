@@ -4,7 +4,7 @@ import { withTenant } from '@futuregrow/db';
 import { renderCard } from '@futuregrow/visuals';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
-import { type ClaimRef, compose, type Objective } from '../src/modules/studio/compose.js';
+import { type ClaimRef, compose, type Objective, taggedListingUrl } from '../src/modules/studio/compose.js';
 import { PACKS, packUnits, packVersion, unitById, verifyCurriculumText } from '../src/modules/studio/curriculum.js';
 import { dayOffset, type HistoryItem, planDays } from '../src/modules/studio/planner.js';
 
@@ -219,6 +219,19 @@ describe('seven-day content calendar (D-040)', () => {
     expect(plan.notes.join(' ')).toMatch(/Moved one grammar point slot to review quiz/);
     expect(plan.items.filter((x) => x.kind === 'quiz').length).toBe(2);
     expect(plan.items.some((x) => x.kind === 'grammar')).toBe(false);
+  });
+});
+
+it('tags the verified Play listing with decodable campaign and lesson attribution', () => {
+  const url = new URL(taggedListingUrl(LISTING + '&referrer=old&untrusted=1', 'eps_daily', 'v-safety-1'));
+  expect(url.origin + url.pathname).toBe('https://play.google.com/store/apps/details');
+  expect(url.searchParams.get('id')).toBe('com.rabbi.eps_topik_bangla');
+  expect([...url.searchParams.keys()].sort()).toEqual(['id', 'referrer']);
+  expect(Object.fromEntries(new URLSearchParams(url.searchParams.get('referrer')!))).toEqual({
+    utm_source: 'facebook',
+    utm_medium: 'organic_social',
+    utm_campaign: 'eps_daily',
+    utm_content: 'v-safety-1',
   });
 });
 

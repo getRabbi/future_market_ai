@@ -1341,6 +1341,10 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(overview.calendar).toHaveLength(7);
     expect(overview.calendar[0]).toMatchObject({ status: 'published', postId: post!.id, assetId: card!.id });
     expect(new Set(overview.calendar.map((i) => i.kind)).size).toBeGreaterThanOrEqual(4);
+    expect(overview.measurement.publishedPosts).toBe(1);
+    const preview = await contentStudio.previewPlanItem(h.deps, org, overview.calendar[0]!.id);
+    expect(preview).toMatchObject({ stored: true, caption: post!.caption });
+    expect(createHash('sha256').update(preview.png).digest('hex')).toBe(card!.sha256);
 
     // Same day: run now again; nothing new is drafted or posted.
     await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'run_now'));
@@ -1360,6 +1364,7 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(published[1]!.message).not.toBe(published[0]!.message);
     expect(provider.calls.length).toBe(modelCalls);
     overview = await contentStudio.overview(h.deps, org, program.id);
+    expect(overview.measurement.publishedPosts).toBe(2);
     const first = overview.history.find((i) => i.postId === post!.id)!;
     expect(first).toMatchObject({ status: 'published', engagement: 3 + 2 * 1 + 0 });
     expect(first.metrics).toMatchObject({ reactions: 3, comments: 1 });
