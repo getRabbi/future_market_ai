@@ -2,9 +2,9 @@
 
 ## Resume here
 
-The full completion mission is **not finished**. This session implements the P0 reliability/missing-data milestone and records the existing Android ingestion contract. Resume from this file instead of repeating the repository audit.
+The full completion mission is **not finished**. P0 reliability/missing-data and the first P1 conversion-evidence milestone are implemented. Resume from this file instead of repeating the repository audit.
 
-Starting HEAD: `7f7700cf81bd9d08e531e6b69cf8fb199117f3be`. Working branch: `fix/studio-reliability`. Draft PR: [#14](https://github.com/getRabbi/future_market_ai/pull/14). No production deployment or live Facebook calls were made. Goal `fe9be4e0`, permissions, posting frequency and $0 ad budget were not modified.
+Starting HEAD: `7f7700cf81bd9d08e531e6b69cf8fb199117f3be`. Current working branch: `feat/app-conversion-evidence`, stacked on P0 branch `fix/studio-reliability`. P0 draft PR: [#14](https://github.com/getRabbi/future_market_ai/pull/14), final commit `914c455`, [all CI jobs passed](https://github.com/getRabbi/future_market_ai/actions/runs/41505107643). No production deployment or live Facebook calls were made. Goal `fe9be4e0`, permissions, posting frequency and $0 ad budget were not modified.
 
 ## Completed code
 
@@ -18,7 +18,17 @@ Starting HEAD: `7f7700cf81bd9d08e531e6b69cf8fb199117f3be`. Working branch: `fix/
 - Cycle startup rechecks mutable `nextRunAt` and target date under the goal row lock. A real PostgreSQL lock-race regression covers schedule changes between the initial read and lock acquisition.
 - Architecture policy reference corrected to 1.4.0 and the implemented Studio behavior documented. [Android integration contract](APP_INSTALL_INTEGRATION.md) describes the existing endpoint and explicitly separates remaining backend/mobile work.
 
-Commits already saved: `e40ef11` (measurement/concurrent drafts), `3037370` (submission recovery). Subsequent scheduling/recovery and documentation commits are on the same branch; inspect `git log -4 --oneline` for their IDs.
+P0 commits: `e40ef11` (measurement/concurrent drafts), `3037370` (submission recovery), `914c455` (scheduling/recovery/checkpoint).
+
+### P1 conversion-evidence milestone
+
+- Additive migration `0012_app_conversion_evidence.sql` adds application ID, ingestion source, evidence reference and reporting index to existing installs. Legacy rows remain nullable and are not silently assigned to an app or included in scoped reports.
+- Install ingestion now serializes replays and commits identity/event/install/evidence/audit atomically, reusing M02 validation inside the existing tenant transaction. Real installation/click timestamps are checked; duplicate responses preserve the original attribution.
+- New server-key-only `/ingest/v1/app-events` accepts actual first-open, activation and session events with app/install scope, consent, stable event IDs and observed times. Replays deduplicate; conflicting event IDs and invalid timestamps are rejected. Evidence identifies authenticated backend reporting, not independent Play verification.
+- New authenticated `/v1/app/applications` and `/v1/app/campaigns` expose evidence-backed observations by application/platform/source/campaign/content. Missing clicks/outcomes are unavailable, not zero. Retention requires an elapsed 14-day window and a genuine session at age 7–14 days. Evidence samples are bounded and marked when truncated; counts include all matching installs.
+- App growth has a new per-application campaign screen. Old source/method cohorts remain labelled as legacy summaries, not campaign KPIs.
+- DSAR deletion clears install attribution/evidence linkage and consent, deletes profile events and clears evidence content; deleted installations cannot be relinked by a new app event.
+- No Play Console importer, verified tracking-coverage declaration, channel-account/program mapping or conversion-driven Studio optimization has been added yet. This is not the whole of phase 2.
 
 ## Files changed by this work
 
@@ -34,17 +44,18 @@ Commits already saved: `e40ef11` (measurement/concurrent drafts), `3037370` (sub
 - `docs/APP_INSTALL_INTEGRATION.md` (new)
 - this checkpoint
 
-No database migration or new dependency was introduced. `graphify update .` was run (AST only); graph output stays ignored.
+P1 also changes `packages/core/src/modules/m02-customers/index.ts`, `packages/core/src/modules/m19-app-growth/index.ts`, `packages/db/src/schema/growth.ts`, migration `0012_app_conversion_evidence.sql` and its generated snapshot/journal, both API channel-route files, `apps/api/test/public-channels.test.ts`, new `packages/core/test/app-conversions.test.ts`, new `apps/web/src/components/AppConversions.tsx`, the control-plane mount/catalog and its route-contract test. No new dependency was introduced. `graphify update .` was run (AST only); graph output stays ignored.
 
 ## Validation
 
 - Targeted Studio/worker/connector/M23 tests: all 77 passed, including final missing-action-link recovery, concurrent drafting and the mutable-schedule lock race.
+- P1 targeted conversion/acquisition/public-API/UI-contract tests: 35 passed on the final source, covering maximum-length identifiers, concurrent replay, cross-app/tenant isolation, timestamp validation, real events, immature retention, unrelated evidence rejection, rollback, DSAR and server-key authorization. Final typecheck, lint and generated-doc checks passed. Production builds and backup/customer regression reruns are in progress; check the latest commit/PR before deployment.
 - Typecheck, lint, generated docs check, API/worker/media production bundles and web build passed. Lint has 88 existing warnings and one configuration notice; no errors.
 - Local full TypeScript suite: 378 passed; the separate real-TLS PostgreSQL startup hook timed out, leaving five TLS tests unrun. Do not describe that local full run as green. [Linux CI at `3037370`](https://github.com/getRabbi/future_market_ai/actions/runs/41503632542) passed all jobs, including full TypeScript/security, Python, render, E2E, production bundles and licence policy.
 - Local browser E2E: all 13 passed.
 - Local Python: 34 passed; three setup errors were sandbox access failures in pytest's temporary directory. Rerunning both affected backup/TLS files outside the sandbox passed all 12 tests, including the three that previously errored.
 - All provider execution was against fixtures. No fresh live provider, production health, backup restore or deployed-build verification was performed.
-- Final PR CI and final scheduling/recovery validation must be checked on the latest head before merging. Keep the draft PR undeployed until those checks are reviewed.
+- Final P0 CI at `914c455` passed every job. P1's local broad run was not green: 386 tests passed, the TLS setup and backup cron timed out, and an identifier-boundary test ran against an older loaded module while edits were in progress. The final focused rerun above passed that boundary regression. Do not describe the broad P1 run as passing. Review P1 CI on the committed head before merging.
 
 ## Preserved pre-existing changes
 
@@ -57,7 +68,7 @@ These four files were dirty on entry and were not included in this work's commit
 
 ## Remaining implementation, in order
 
-1. **P1 / phase 2:** implement application-scoped, evidence-backed campaign conversion reporting on existing M19. Do not rebuild ingestion. `/ingest/v1/app-installs` already requires a server ingestion key and rejects browser keys; `recordInstall()` deduplicates per tenant/platform/hashed install ID and minimizes referrers. Existing `acquisitionCohorts()` groups source/method, not campaigns, and lacks telemetry-coverage/mature-window semantics. The install table lacks application scope. Install, profile-event and audit writes are separate transactions. Add app scope, timestamp consistency checks, durable evidence/atomic deduplication, actual first-open/activation/retention coverage, null unavailable metrics and focused tenant/app isolation tests. Then add reporting/API/UI and evidence-qualified Studio use. Apple sales-report ingestion exists; Google Play Console report ingestion does not.
+1. **P1 / phase 2:** finish verified tracking-coverage declarations and explicit program/channel-account mappings, then evidence-qualified Studio conversion learning. Current new reports deliberately use observed counts and null unobserved outcomes, without rates or claims of completeness. Add a credential/source-verified Google Play Console report importer using supported official APIs; Apple sales-report ingestion already exists. Preserve legacy callers and do not combine unscoped historical installs into new app KPIs. The existing cohort endpoint still reports legacy source/method summaries and is not the new campaign reporting API.
 2. **P2 / phase 3:** reusable brand/program configuration, bounded Agent Kernel strategy, approved-claim/curriculum constraints, provider-neutral media sources with configured rights/credentials, quality/diversity checks and authorized quiz reveals. Existing EPS curriculum and branded renderer remain functional; do not replace them.
 3. **P3 / phase 4:** platform-independent concepts plus per-channel formats; audit and reuse official Meta/TikTok/YouTube executors. Verify current official X/Reddit/LinkedIn API access before adding adapters. Keep unsupported publishing disabled. Extend the existing group/share-kit workspace and conservative authorized replies.
 4. **P4 / phase 5:** uncertainty-aware business-outcome learning with independent brand/app/account/channel series. The present fix only makes engagement observations safe to compare; it does not implement conversion optimization or causal inference.
@@ -67,4 +78,4 @@ These four files were dirty on entry and were not included in this work's commit
 
 The mobile application's repository and its authenticated backend are needed to ship device telemetry. No unrelated application was guessed or edited. Use `APP_INSTALL_INTEGRATION.md`; never ship a FUTUREGROW server key in an APK. Play Console credentials/report permissions, other-platform commercial/API approvals and AI/stock credentials/rights must be genuinely connected before activating those providers. Their live availability was not audited here.
 
-Next development task: after checking the latest PR validation, add application scope and evidence-backed install/campaign observations to M19, with atomic replay behavior and cross-app/tenant isolation tests. Start navigation with `graphify query "recordInstall acquisitionCohorts" --budget 800`, then the already located `packages/core/src/modules/m19-app-growth/index.ts`, `packages/db/src/schema/growth.ts` (`appInstalls`), `apps/api/src/routes/public-channel-routes.ts`, `apps/api/src/routes/public-routes.ts`, and their existing acquisition/public-channel tests. Reuse the ingestion-key flow and existing M02 event infrastructure.
+Next development task: finish P1 validation/commit, then implement verified tracking-coverage declarations and program/channel-account mappings so complete zeros and comparable conversion rates can safely feed Studio learning. Start navigation with `graphify query "recordInstall campaignConversions recordAppEvent" --budget 800`, then the already located M19 module, `packages/db/src/schema/growth.ts`, API channel routes and conversion/public-channel tests. Reuse the ingestion-key flow and M02 event infrastructure. Do not repeat the P0 audit.

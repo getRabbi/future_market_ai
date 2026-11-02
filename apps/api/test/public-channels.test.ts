@@ -94,7 +94,7 @@ describe('public channel endpoints', () => {
   it('app installs require a server ingestion key', async () => {
     const browser = await tx((t) => customers.createIngestionKey(t, h.tenantId, h.users.owner, { kind: 'browser', allowedOrigins: ['https://shop.acme.test'] }));
     const server = await tx((t) => customers.createIngestionKey(t, h.tenantId, h.users.owner, { kind: 'server', allowedOrigins: [] }));
-    const body = { platform: 'android', installId: 'device-0042', installedAt: h.clock.now().toISOString(), installReferrer: 'utm_source=partner&utm_campaign=q4', consent: { analytics: true } };
+    const body = { appId: 'com.example.app', platform: 'android', installId: 'device-0042', installedAt: h.clock.now().toISOString(), installReferrer: 'utm_source=partner&utm_campaign=q4', consent: { analytics: true } };
     const viaBrowser = await app.inject({ method: 'POST', url: '/ingest/v1/app-installs', headers: { 'x-fg-write-key': browser.key, origin: 'https://shop.acme.test', 'content-type': 'application/json' }, payload: JSON.stringify(body) });
     expect(viaBrowser.statusCode).toBe(403);
     const ok = await app.inject({ method: 'POST', url: '/ingest/v1/app-installs', headers: { authorization: `Bearer ${server.key}`, 'content-type': 'application/json' }, payload: JSON.stringify(body) });
@@ -104,5 +104,16 @@ describe('public channel endpoints', () => {
     expect(row!.campaignRef).toBe('q4');
     const [p] = await tx((t) => t.select().from(customerProfiles).where(eq(customerProfiles.id, row!.profileId!)));
     expect(p).toBeDefined();
+    const event = { appId: body.appId, platform: body.platform, installId: body.installId, eventId: randomUUID(), event: 'first_open', occurredAt: h.clock.now().toISOString(), consent: { analytics: true } };
+    const browserEvent = await app.inject({ method: 'POST', url: '/ingest/v1/app-events', headers: { 'x-fg-write-key': browser.key, origin: 'https://shop.acme.test' }, payload: event });
+    expect(browserEvent.statusCode).toBe(403);
+    const headers = { authorization: `Bearer ${server.key}` };
+    const accepted = await app.inject({ method: 'POST', url: '/ingest/v1/app-events', headers, payload: event });
+    expect(accepted.statusCode).toBe(202);
+    expect(accepted.json()).toMatchObject({ recorded: true, evidenceId: expect.any(String) });
+    const replay = await app.inject({ method: 'POST', url: '/ingest/v1/app-events', headers, payload: event });
+    expect(replay.json()).toMatchObject({ recorded: false, evidenceId: accepted.json().evidenceId });
+    const query = new URLSearchParams({ appId: body.appId, platform: body.platform, from: new Date(h.clock.now().getTime() - 86_400_000).toISOString(), to: h.clock.now().toISOString() });
+    expect((await app.inject({ method: 'GET', url: `/v1/app/campaigns?${query}` })).statusCode).toBe(401);
   });
 });

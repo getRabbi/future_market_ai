@@ -438,6 +438,10 @@ export const appInstalls = pgTable(
     id: pk(),
     tenantId: tenantId(),
     platform: text('platform').notNull(),
+    /** Null on legacy records; never merge these into an explicitly scoped application's KPI. */
+    appId: text('app_id'),
+    ingestionSource: text('ingestion_source'),
+    evidenceId: uuid('evidence_id'),
     installId: text('install_id').notNull(),
     profileId: uuid('profile_id'),
     installedAt: ts('installed_at').notNull(),
@@ -449,7 +453,12 @@ export const appInstalls = pgTable(
     consentAnalytics: boolean('consent_analytics').notNull(),
     receivedAt: ts('received_at').notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('app_installs_uq').on(t.tenantId, t.platform, t.installId), oneOf('app_installs_platform_chk', t.platform, ['ios', 'android']), oneOf('app_installs_method_chk', t.attributionMethod, ['play_install_referrer', 'app_store_campaign_link', 'self_reported', 'unattributed'])],
+  (t) => [
+    uniqueIndex('app_installs_uq').on(t.tenantId, t.platform, t.installId),
+    index('app_installs_campaign_idx').on(t.tenantId, t.appId, t.platform, t.campaignRef, t.installedAt),
+    oneOf('app_installs_platform_chk', t.platform, ['ios', 'android']),
+    oneOf('app_installs_method_chk', t.attributionMethod, ['play_install_referrer', 'app_store_campaign_link', 'self_reported', 'unattributed']),
+  ],
 );
 
 export const appStoreReports = pgTable(
