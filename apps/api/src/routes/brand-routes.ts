@@ -1,4 +1,4 @@
-import { brandsModule } from '@futuregrow/core';
+import { brandsModule, media } from '@futuregrow/core';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -11,6 +11,7 @@ const Body = z.record(z.string(), z.unknown());
 export function registerBrandRoutes(app: FastifyInstance, ctx: ApiContext): void {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
+  r.get('/v1/media/providers', { schema: { tags: ['brands'] } }, async (req) => tenantTx(ctx, req, (t) => media.mediaProviders({ t, deps: ctx.deps, tenantId: tenantOf(req) })));
   r.get('/v1/brands', { schema: { tags: ['brands'] } }, async (req) => tenantTx(ctx, req, (tx) => brandsModule.listBrands(tx)));
   r.post('/v1/brands', { schema: { tags: ['brands'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => brandsModule.createBrand(tx, tenantOf(req), actorOf(req), req.body))));
   r.get('/v1/brands/:id', { schema: { tags: ['brands'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => brandsModule.getBrand(tx, req.params.id)));
