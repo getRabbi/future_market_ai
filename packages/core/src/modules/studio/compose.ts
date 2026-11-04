@@ -231,6 +231,8 @@ export interface ComposeInput {
   palette: PaletteId;
   variant: 0 | 1;
   serial: number;
+  /** utm_content of a store link; defaults to `<kind>-<serial>`. The studio passes a per-day identity (D-041). */
+  linkContent?: string;
   recentHooks: string[];
   recentPrompts: string[];
   salt: string;
@@ -385,7 +387,7 @@ function finish(input: ComposeInput, card: CardSpec, lines: string[], asksAnswer
       claimIds.push(c.id);
     }
     if (wantsLink && input.appUrl && extra.length) {
-      link = taggedListingUrl(input.appUrl, input.campaign, `${input.kind}-${input.serial}`);
+      link = taggedListingUrl(input.appUrl, input.campaign, input.linkContent ?? `${input.kind}-${input.serial}`);
       out.push(`👉 ${link}`);
     }
   }

@@ -145,3 +145,9 @@ Then in the control plane: Audit trail → **Verify chain now** (valid), Evidenc
 2. Code: revert the release commit on `main` (Northflank redeploys api and worker); redeploy Pages from the previous deployment. Migration 0009 is additive and the previous code ignores the new tables and columns, so no database restore is needed.
 3. Removing the schema (only if required, after the code rollback): `DROP TABLE goal_tasks, goal_cycles, growth_goals; ALTER TABLE growth_decisions DROP COLUMN goal_id; ALTER TABLE tenant_settings DROP COLUMN autopilot_enabled;` and delete the newest row (migration 0009) from `drizzle.__drizzle_migrations`. Take a backup first (RUNBOOK §9).
 
+## 11. Growth studio release (D-041…D-044)
+
+1. Merge through a PR after CI is green. The push to `main` builds api and worker; if Northflank skips a build for the second of two quick pushes, start it with `POST /v1/projects/default/services/api/build {"sha": "<main sha>"}` and confirm `deployment.internal.deployedSHA`.
+2. Migrations 0014/0015 run on api start (advisory-locked); check the `{"ok":true,…,"lockWaitMs":…}` line in the api log and the new routes in `/v1/openapi.json` (`/v1/brands`, `/v1/social/platforms`, `/v1/media/providers`).
+3. Deploy Pages from the merged tree (`npm run build -w @futuregrow/web`, `wrangler@4.147.0 pages deploy dist --project-name futuregrow-web --branch main --commit-hash <sha>`); note the previous deployment id as the rollback target.
+4. Read-only checks: platform status shows Facebook `live_verified` only if a post was verified in the last 14 days, X `disabled`, Reddit `owner_assisted`; media providers show only the template renderer enabled; the EPS goal keeps its schedule (no extra post).

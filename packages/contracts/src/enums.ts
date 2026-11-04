@@ -69,7 +69,7 @@ export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];
 export const KILL_SWITCH_SCOPES = ['system', 'tenant', 'connector', 'object', 'model', 'agent'] as const;
 export type KillSwitchScope = (typeof KILL_SWITCH_SCOPES)[number];
 
-export const PROVIDERS = ['internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console'] as const;
+export const PROVIDERS = ['internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'linkedin', 'x', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export const CAPABILITY_FALLBACKS = ['queue_for_human', 'disable', 'read_only'] as const;

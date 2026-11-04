@@ -18,6 +18,10 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.get('/v1/social/posts', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.listPosts(tx)));
   r.post('/v1/social/posts', { schema: { tags: ['social'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => social.schedulePost(tx, deps, tenantOf(req), actorOf(req), req.body))));
   r.get('/v1/social/stats', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.audienceStats(tx)));
+  r.get('/v1/social/platforms', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.platformReadiness(tx, deps.clock.now())));
+  r.post('/v1/social/caption-check', { schema: { tags: ['social'], body: z.object({ platform: z.enum(social.PLATFORMS), caption: z.string().min(1).max(70_000), link: z.string().url().nullable().optional(), images: z.number().int().min(0).max(20).optional() }).strict() } }, async (req) =>
+    social.checkCaption(req.body.platform, req.body.caption, { link: req.body.link ?? null, images: req.body.images ?? 0 }),
+  );
   r.get('/v1/social/interactions', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.listInteractions(tx)));
   r.post('/v1/social/connections/:id/insights/sync', { schema: { tags: ['social'], params: Id } }, async (req) => social.syncPageInsights(deps, tenantOf(req), req.params.id, { actor: actorOf(req) }));
   r.post('/v1/social/connections/:id/posts/snapshot', { schema: { tags: ['social'], params: Id } }, async (req) => social.collectPagePostSnapshot(deps, tenantOf(req), req.params.id, { actor: actorOf(req) }));

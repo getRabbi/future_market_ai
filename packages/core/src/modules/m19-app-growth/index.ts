@@ -1,11 +1,12 @@
 import { fetchSalesReport } from '@futuregrow/connectors';
-import { appInstalls, appStoreReports, consentState, customerEvents, type DbOrTx, evidenceRecords, type Tx, withTenant } from '@futuregrow/db';
+import { appInstalls, appStoreReports, brandApps, consentState, customerEvents, type DbOrTx, evidenceRecords, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
 import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, record } from '../../util.js';
+import { identityKey, resolveCampaignIdentities } from '../brands/index.js';
 import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { ingestEventsInTransaction } from '../m02-customers/index.js';
@@ -298,6 +299,8 @@ export const CampaignQuerySchema = z
     platform: z.enum(['ios', 'android']),
     from: z.string().datetime({ offset: true }),
     to: z.string().datetime({ offset: true }),
+    /** Only campaigns whose registered identity belongs to this brand (D-041). */
+    brandId: z.string().uuid().optional(),
   })
   .strict();
 
@@ -399,14 +402,26 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
       count(*) filter (where retention_complete and retained and installed_at + interval '14 days' <= ${now})::int as complete_retention,
       jsonb_agg(jsonb_build_object('install', evidence_id, 'events', coalesce(event_evidence_ids, ARRAY[]::text[]))) filter (where proof_rank <= 50) as proofs
     from ranked group by 1,2,3,4,5 order by 1,2,3,4,5`);
+  if (query.brandId) {
+    const [owner] = await tx
+      .select({ brandId: brandApps.brandId })
+      .from(brandApps)
+      .where(and(eq(brandApps.platform, query.platform), eq(brandApps.appId, query.appId)));
+    if (!owner || owner.brandId !== query.brandId) throw invalid('this application is not linked to that brand');
+  }
+  const identities = await resolveCampaignIdentities(tx, query.platform, query.appId, result.rows);
+  const rows = result.rows.filter((r) => !query.brandId || (identities.get(identityKey(r.campaign, r.content))?.status === 'registered' && identities.get(identityKey(r.campaign, r.content))?.brandId === query.brandId));
   return {
     appId: query.appId,
     platform: query.platform,
     from: query.from,
     to: query.to,
     asOf: now.toISOString(),
-    campaigns: result.rows.map((r) => ({
+    ...(query.brandId ? { brandId: query.brandId } : {}),
+    campaigns: rows.map((r) => ({
       campaign: r.campaign,
+      /** Which brand/program/plan item/post/channel produced this link, from the campaign registry only. */
+      identity: identities.get(identityKey(r.campaign, r.content))!,
       source: r.source,
       medium: r.medium,
       content: r.content,
@@ -426,6 +441,7 @@ export async function campaignConversions(tx: DbOrTx, raw: unknown, now: Date) {
       'Counts are consented, evidence-backed backend observations. An authenticated sender is not independent Google Play verification. Attribution describes the supplied campaign, not causal impact.',
       'Unobserved outcomes are unavailable, not zero. Reconciled windows report a value only when every mature install has a matching backend completeness declaration; these declarations do not prove device instrumentation or total store coverage. Late events invalidate affected declarations. No conversion rates or statistical winners are inferred.',
       'Clicks, unscoped legacy installs, non-consented records and other applications are excluded. Empty campaigns mean no supported observations, not zero store acquisitions.',
+      'Content identity comes only from the campaign registry (links the studio registered for a brand-linked application). Unregistered campaigns are not assigned to a Page or post from their UTM labels.',
     ],
   };
 }

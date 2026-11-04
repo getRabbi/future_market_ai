@@ -1,4 +1,4 @@
-import { assetRights, assets, claims, connections, contentPlanItems, type DbOrTx, evidenceRecords, socialPosts, studioPrograms, type Tx, withTenant } from '@futuregrow/db';
+import { assetRights, assets, brandChannels, claims, connections, contentPlanItems, type DbOrTx, evidenceRecords, socialPosts, studioPrograms, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
 import { type CardSpec, FONT_SOURCES, hammingDistance, PALETTE_IDS, type PaletteId, renderCard } from '@futuregrow/visuals';
@@ -6,6 +6,7 @@ import { and, desc, eq, gte, inArray, isNotNull, like, lt, ne, notInArray, sql }
 import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, clipText, requireRole } from '../../util.js';
+import { registerCampaignLink } from '../brands/index.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { lintCopy } from '../m03-knowledge/index.js';
 import { recomputeEligibility } from '../m14-assets/index.js';
@@ -60,6 +61,8 @@ export const ProgramInputSchema = z
     pack: z.string().refine((p) => Boolean(PACKS[p]), 'unknown curriculum pack'),
     status: z.enum(['active', 'paused']).default('active'),
     settings: ProgramSettingsSchema.default({ appCtaPerWeek: 2, linkPerWeek: 1, campaign: 'eps_daily' }),
+    /** The brand the program publishes for (D-041); its channel account must already be that brand's. */
+    brandId: z.string().uuid().nullable().optional(),
   })
   .strict();
 
@@ -80,12 +83,26 @@ export async function upsertProgram(t: Tx, tenantId: string, actor: Actor, raw: 
   const input = ProgramInputSchema.parse(raw);
   const [conn] = await t.select().from(connections).where(eq(connections.id, input.connectionId));
   if (!conn || conn.provider !== 'meta') throw invalid('the content studio needs a Facebook Page connection');
+  const [current] = await t.select().from(studioPrograms).where(eq(studioPrograms.connectionId, input.connectionId));
+  // Store-link identities are (app, campaign, content): two programs sharing a campaign name could collide.
+  if (!current || (current.settings as { campaign?: string }).campaign !== input.settings.campaign) {
+    const [clash] = await t
+      .select({ id: studioPrograms.id })
+      .from(studioPrograms)
+      .where(and(ne(studioPrograms.connectionId, input.connectionId), sql`${studioPrograms.settings}->>'campaign' = ${input.settings.campaign}`));
+    if (clash) throw conflict(`campaign "${input.settings.campaign}" is already used by another program; choose a distinct campaign name`);
+  }
+  if (input.brandId) {
+    const [channel] = await t.select().from(brandChannels).where(eq(brandChannels.connectionId, input.connectionId));
+    if (!channel || channel.brandId !== input.brandId) throw conflict("link the program's Facebook Page to this brand first");
+  }
+  const brandId = input.brandId === undefined ? (current?.brandId ?? null) : input.brandId;
   const [row] = await t
     .insert(studioPrograms)
-    .values({ tenantId, connectionId: input.connectionId, pack: input.pack, status: input.status, settings: input.settings, createdBy: actorRef(actor) })
-    .onConflictDoUpdate({ target: [studioPrograms.tenantId, studioPrograms.connectionId], set: { pack: input.pack, status: input.status, settings: input.settings, updatedBy: actorRef(actor), updatedAt: new Date() } })
+    .values({ tenantId, connectionId: input.connectionId, pack: input.pack, status: input.status, settings: input.settings, brandId, createdBy: actorRef(actor) })
+    .onConflictDoUpdate({ target: [studioPrograms.tenantId, studioPrograms.connectionId], set: { pack: input.pack, status: input.status, settings: input.settings, brandId, updatedBy: actorRef(actor), updatedAt: new Date() } })
     .returning();
-  await audit(t, tenantId, actor, 'studio.program.saved', { type: 'studio_program', id: row!.id }, { connectionId: input.connectionId, pack: input.pack, status: input.status, settings: input.settings });
+  await audit(t, tenantId, actor, 'studio.program.saved', { type: 'studio_program', id: row!.id }, { connectionId: input.connectionId, pack: input.pack, status: input.status, settings: input.settings, brandId });
   return row!;
 }
 
@@ -258,6 +275,8 @@ async function prepare(t: DbOrTx, deps: CoreDeps, item: PlanRow, program: Progra
       palette: look.palette,
       variant: look.variant,
       serial,
+      // One store-link identity per calendar day (content_plan_day_uq), so an install maps to exactly one post.
+      linkContent: `${item.kind}-${item.day.replaceAll('-', '')}`,
       recentHooks: recent.map((r) => r.hookId!).filter(Boolean),
       recentPrompts: recent.map((r) => r.promptId!).filter(Boolean),
       salt: `${item.id}`,
@@ -486,7 +505,9 @@ export async function draftPlannedPost(deps: CoreDeps, tenantId: string, args: {
       .update(contentPlanItems)
       .set({ status: 'drafted', statusReason: null, postId: post!.id, assetId: asset.id, dhash: card.dhash, hookId: composition.hookId, promptId: composition.promptId, ctaFeature: composition.ctaFeature, palette: used.palette, variant: used.variant, metrics: { attempts }, updatedAt: now })
       .where(eq(contentPlanItems.id, item.id));
-    await audit(t, tenantId, AUTOPILOT, 'studio.post.drafted', { type: 'content_plan_item', id: item.id }, { postId: post!.id, assetId: asset.id, kind: item.kind, unitId: item.unitId, objective: item.objective, claimIds: composition.claimIds, attempts: attempts.length });
+    // A store link's campaign identity is registered with the post it belongs to (D-041); unmapped links stay unmapped.
+    const campaignLink = composition.link ? await registerCampaignLink(t, tenantId, { programId: program.id, planItemId: item.id, postId: post!.id, connectionId: conn.id, channelPlatform: 'facebook', url: composition.link, createdBy: ACTOR_REF }) : null;
+    await audit(t, tenantId, AUTOPILOT, 'studio.post.drafted', { type: 'content_plan_item', id: item.id }, { postId: post!.id, assetId: asset.id, kind: item.kind, unitId: item.unitId, objective: item.objective, claimIds: composition.claimIds, attempts: attempts.length, ...(campaignLink ? { campaignLink } : {}) });
     return { ok: true as const, postId: post!.id, assetId: asset.id, evidenceIds, template: composition.card.template };
   });
   if (result.existing) return result.existing;

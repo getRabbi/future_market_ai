@@ -141,6 +141,24 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Content studio (D-040): verified EPS-TOPIK lesson bank (eps-topik-bn), seven-day adaptive calendar (migration 0011), branded HarfBuzz/resvg cards with automated QA and near-duplicate checks, card assets with provenance and rights, Facebook photo posts through M23 (exact-byte upload, photo read-back), policy fg-policy-1.4.0 (curriculum-verified lessons, own-listing links), learning from read-back counters, owner-assisted community workspace, Content studio tab. No model call per post.
 - [ ] A real goal in a real organization producing measured results (needs live KPI data, policy, forecast gates and approved actions; see BLOCKERS / DEPLOYMENT §10).
 
+### Growth studio: brands, platforms, learning, media (2026-11-04/05) — ◐ (implemented and tested; release in progress)
+- [x] Stage 1 integration: PR #14 (P0 reliability) and PR #15 (conversion evidence, migrations 0012/0013) merged on top of PR #16 and live at `00ffb0d` (api, worker, Pages); emoji-safe text clipping fix for jsonb task writes.
+- [x] D-041 brands, explicit channel/app/program mappings, campaign identity registry (migration 0014), brand-scoped M19 campaign reports.
+- [x] D-042 platform readiness for 7 platforms, per-platform caption rules, LinkedIn and X connectors (X disabled, B-019), Reddit owner-assisted, comment spam/duplicate screen (migration 0015).
+- [x] D-043 uncertainty-aware learning (posteriors, minimum samples, 95% decision rule, association-only notes).
+- [x] D-044 provider-neutral media registry with one QA gate; stock and AI sources disabled until licensed.
+- [x] Brands & channels tab in the Autopilot UI.
+
+**Capability status (2026-11-05):**
+
+| Status | Capabilities |
+|---|---|
+| Production-verified | Facebook Page photo/text posts through M23 with read-back verification (EPS-topik-Bangla, Development-mode app; public visibility not independently verified); daily Page post counters; Studio calendar, branded cards, evening window, rolling 24 h limit; conversion ingestion routes deployed (no live app traffic yet). |
+| Implemented, fixture-tested only | Instagram, TikTok, YouTube, LinkedIn publishing executors; X executor; brand/campaign registry and brand-scoped reports; platform readiness; learning comparisons; media registry; spam screen. |
+| Configured, awaiting credentials | Google Ads, Shopify, App Store Connect, Resend, PostHog, Chatwoot; Play Console reporting; stock media vendor. |
+| Awaiting external approval or owner decision | Meta App Review / Live mode and `read_insights`; TikTok audit; LinkedIn Community Management API (B-020); X spend (B-019); Reddit API (B-021); image model approval (B-011). |
+| Not implemented | Video production for YouTube/TikTok; Play Console report importer; independent device/store install verification; engagement/analytics ingestion for non-Meta platforms; stock/AI vendor adapters. |
+
 ## Completion summary
 
 All 24 modules are implemented and tested against real PostgreSQL with provider APIs exercised through fixture servers. Every P0 gate (FG-P0-001…008) and P1 item (FG-P1-001…006) is implemented and verified. FG-P2-001 (failover, AI spend limits, deprecation monitoring) is implemented and tested; the controlled beta is live. What remains is external: live credentials and app reviews, legal rule packs, vendor reviews and the payout provider — each listed with its unblock step in BLOCKERS.md. Deployment steps: DEPLOYMENT.md; operations: docs/RUNBOOK.md.

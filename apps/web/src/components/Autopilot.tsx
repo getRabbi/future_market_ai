@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Me } from '../lib/api.js';
 import { relativeTime, statusLabel } from '../lib/format.js';
+import { BrandStudioView } from './BrandStudio.js';
 import { ContentStudioView } from './ContentStudio.js';
 import { Badge, EmptyState, ErrorNotice, LoadingRows, Logo, useApi } from './ui.js';
 
@@ -27,11 +28,12 @@ export interface AutopilotStatus {
   modelAvailable: boolean;
 }
 
-type View = 'setup' | 'goals' | 'content' | 'activity' | 'approvals' | 'results';
+type View = 'setup' | 'goals' | 'content' | 'brands' | 'activity' | 'approvals' | 'results';
 const VIEWS: { key: View; title: string; summary: string }[] = [
   { key: 'setup', title: 'Business setup', summary: 'What the Autopilot can use: connections, data, evidence, claims, AI and your rules.' },
   { key: 'goals', title: 'Growth goals', summary: 'Say what you want to achieve. The Autopilot plans it and keeps working while you are away.' },
   { key: 'content', title: 'Content studio', summary: 'Daily lesson posts for your Facebook Page: the seven-day plan, each card, what went out and how it did, and community groups.' },
+  { key: 'brands', title: 'Brands & channels', summary: 'Your brands, the accounts and apps each one owns, what every platform can really do now, and which image sources are available.' },
   { key: 'activity', title: 'AI activity', summary: 'What the Autopilot is doing now, what it finished, what is blocked and why. Real records only.' },
   { key: 'approvals', title: 'Pending approvals', summary: 'Actions and drafts that wait for a person because your policy says so.' },
   { key: 'results', title: 'Results', summary: 'Measured outcomes against your baseline and the no-action forecast.' },
@@ -216,6 +218,7 @@ export function AutopilotShell({ me, status, orgSelect, onStatus }: { me: Me; st
         {view === 'setup' ? <SetupView me={me} status={status} onStatus={onStatus} /> : null}
         {view === 'goals' ? <GoalsView me={me} go={go} /> : null}
         {view === 'content' ? <ContentStudioView me={me} /> : null}
+        {view === 'brands' ? <BrandStudioView me={me} /> : null}
         {view === 'activity' ? <ActivityView /> : null}
         {view === 'approvals' ? <ApprovalsView me={me} onChange={() => void inbox.reload()} /> : null}
         {view === 'results' ? <ResultsView /> : null}

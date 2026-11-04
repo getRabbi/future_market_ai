@@ -38,6 +38,8 @@ export interface CoreConfig {
   aiSpendDefaultMonthlyUsd: number | null;
   /** Platform switch for the Autopilot (FG_AUTOPILOT=off → false). Tenants opt in separately. */
   autopilotAvailable?: boolean;
+  /** Creative media sources (D-044); a stock vendor is used only with an approved stock_media licence too. */
+  media?: { stockProvider: string | null };
 }
 
 export interface Clock {

@@ -1,5 +1,7 @@
 # Existing Android install ingestion contract
 
+> **Campaign identity (D-041):** links the content studio puts on posts now carry `utm_content=<kind>-<yyyymmdd>` (one per program per day) and are registered with the brand, program, plan item, post and channel. Pass the Play Install Referrer string through unchanged; FUTUREGROW maps `(appId, utm_campaign, utm_content)` to that registry. The application must be linked to the brand (`POST /v1/brands/:id/apps` with its Play listing URL) for installs to be attributed; otherwise they appear as `unregistered`.
+
 Status: FUTUREGROW supports application-scoped, evidence-backed backend installs, conversion events, completeness reconciliation and campaign reports. No mobile repository was inspected or modified. Play Console import, account/program mapping and conversion-driven Studio optimization remain unfinished. Backend declarations do not independently verify device instrumentation or total store coverage.
 
 ## Trust boundary

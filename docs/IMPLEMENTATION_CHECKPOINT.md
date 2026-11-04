@@ -1,88 +1,30 @@
-# Implementation checkpoint — 2026-11-02
+# Implementation checkpoint — 2026-11-05
 
 ## Resume here
 
-The full completion mission is **not finished**. P0 reliability/missing-data, P1 conversion evidence and backend completeness reconciliation are implemented. Resume from this file instead of repeating the repository audit.
+Master mission (five stages) state. Resume from this file; do not repeat the audit.
 
-Starting HEAD: `7f7700cf81bd9d08e531e6b69cf8fb199117f3be`. Current working branch: `feat/app-conversion-evidence`, stacked on P0 branch `fix/studio-reliability`. P0 draft PR: [#14](https://github.com/getRabbi/future_market_ai/pull/14), final commit `914c455`, [all CI jobs passed](https://github.com/getRabbi/future_market_ai/actions/runs/41505107643). No production deployment or live Facebook calls were made. Goal `fe9be4e0`, permissions, posting frequency and $0 ad budget were not modified.
+- **Stage 1 — done and live.** PR #14 (merge `8c8999b`) and PR #15 (merge `00ffb0d`) are on `main`. Main was merged into the P0 branch (`52de9b7`: kept PR #14's versioned `measurePost`, PR #16's evening window / rolling-limit wait / answer reveals) plus fix `40b88df` (emoji surrogate split in the Page excerpt made the observe task's jsonb write throw and strand the task). api + worker deployedSHA `00ffb0d`, migrations 0012/0013 applied (`migrate ok`), live OpenAPI includes `/v1/app/campaigns`, Pages deployment `37ceee97` (rollback target `02da2594`). The live 19:00 UTC cycle after release observed without error and waits for the 19:00 Dhaka window.
+- **Stages 2–4 — implemented on branch `feat/d041-growth-studio`** (commits `45ef74a` brands, `50c2c95` platforms/LinkedIn/X/spam, `a872baa` learning, `6f5da1f` media, `38afe8b` regex fix, `e59242c` UI, then docs). See DECISIONS D-041…D-044 and PROGRESS "Growth studio".
+- **Stage 5 — docs reconciled** (ARCHITECTURE 4d–4f, DECISIONS, BLOCKERS B-019…B-021, PROGRESS capability table, RUNBOOK §15, DEPLOYMENT §11, APP_INSTALL_INTEGRATION identity note). Release of the branch: PR → CI → merge → api/worker (migrations 0014/0015) → Pages → read-only checks (DEPLOYMENT §11).
 
-P1 draft PR: [#15](https://github.com/getRabbi/future_market_ai/pull/15), targeting the P0 branch. Initial conversion commit `305d5c3` passed [every CI job](https://github.com/getRabbi/future_market_ai/actions/runs/41514015332). The completeness increment follows on the same branch; check PR #15's latest head/checks before merging. Merge P0 first and retarget P1 to main. Both PRs remain drafts and undeployed.
+## Validation on the branch
 
-## Completed code
+- Full TypeScript suite before the docs commit: 428 tests, 1 failure found and fixed (LinkedIn lifecycle regex lost its backslashes in a patch script; two more patterns had the same defect and were fixed with contract tests). Re-run the full suite on the final head before merging.
+- Python 37/37 (on Stage 1 head). Typecheck, lint (0 errors), docs check pass.
+- All new provider work is fixture-tested only; no live LinkedIn, X, stock or image-model call was made.
 
-- Studio measurements explicitly record missing counters and completeness. Reactions, comments and shares must all be observed and evidence-backed to score; true zeroes remain valid. Missing fields in snapshots no longer throw.
-- Measurement age comes from observation time, not sync time. Older/repeated observations cannot replace newer ones; observations outside 24–168 hours are rejected; seven-day windows freeze even if no new observation arrives. Learning only compares complete frozen observations taken at age 144–168 hours. Scores remain descriptive, not causal/statistical winners.
-- Frozen historical records remain untouched. Legacy unversioned scores are excluded from current learning/API scores rather than silently reinterpreted. UI shows incomplete counters and unavailable/provisional scores.
-- Calendar-item row locking prevents simultaneous workers from creating multiple daily drafts; restart reuses the existing draft. Failure updates cannot overwrite an already drafted item.
-- Social `verifiedAt` uses the independent proof's `checkedAt`.
-- Interrupted submit steps recover existing M23 actions before applying limits for new submissions. Recovery also repairs a missing post/action link using the original, tenant-scoped idempotency key and matching post/account.
-- Calendar occupancy is bounded to the current Dhaka date; a future-dated submitted post no longer consumes today's slot.
-- Cycle startup rechecks mutable `nextRunAt` and target date under the goal row lock. A real PostgreSQL lock-race regression covers schedule changes between the initial read and lock acquisition.
-- Architecture policy reference corrected to 1.4.0 and the implemented Studio behavior documented. [Android integration contract](APP_INSTALL_INTEGRATION.md) describes the existing endpoint and explicitly separates remaining backend/mobile work.
+## Remaining work, in order
 
-P0 commits: `e40ef11` (measurement/concurrent drafts), `3037370` (submission recovery), `914c455` (scheduling/recovery/checkpoint).
-
-### P1 conversion-evidence milestone
-
-- Additive migration `0012_app_conversion_evidence.sql` adds application ID, ingestion source, evidence reference and reporting index to existing installs. Legacy rows remain nullable and are not silently assigned to an app or included in scoped reports.
-- Install ingestion now serializes replays and commits identity/event/install/evidence/audit atomically, reusing M02 validation inside the existing tenant transaction. Real installation/click timestamps are checked; duplicate responses preserve the original attribution.
-- New server-key-only `/ingest/v1/app-events` accepts actual first-open, activation and session events with app/install scope, consent, stable event IDs and observed times. Replays deduplicate; conflicting event IDs and invalid timestamps are rejected. Evidence identifies authenticated backend reporting, not independent Play verification.
-- New authenticated `/v1/app/applications` and `/v1/app/campaigns` expose evidence-backed observations by application/platform/source/campaign/content. Missing clicks/outcomes are unavailable, not zero. Retention requires an elapsed 14-day window and a genuine session at age 7–14 days. Evidence samples are bounded and marked when truncated; counts include all matching installs.
-- App growth has a new per-application campaign screen. Old source/method cohorts remain labelled as legacy summaries, not campaign KPIs.
-- DSAR deletion clears install attribution/evidence linkage and consent, deletes profile events and clears evidence content; deleted installations cannot be relinked by a new app event.
-- Recorded profile analytics denial/withdrawal or an expired grant overrides payload consent for new linked installs, app events, coverage and campaign reporting. A new telemetry flag cannot renew that stored consent; renewal uses the existing consent workflow.
-- Additive migration `0013_app_event_coverage.sql` defaults coverage to unknown. New server-only `/ingest/v1/app-event-coverage` reconciles explicit backend event counts and SHA-256 digests of event identities/timestamps for closed per-installation intervals. These are backend declarations, not independent instrumentation or store verification.
-- Fixed seven-day first-open/activation and 7–14-day retention windows report a value (including true zero) only when every mature install in the group has valid coverage. Missing, partial or immature coverage stays null. Late events atomically invalidate the affected declaration; boundary events and retries preserve it. Cleared supporting evidence makes the result unavailable. DSAR clears coverage as well as events/evidence.
-- The UI separately labels observed outcomes and reconciled windows. Exact digest calculation, retry/reconciliation behavior, trust limits and rollback compatibility are documented in the integration contract.
-- No Play Console importer, independent device/store coverage verification, channel-account/program mapping or conversion-driven Studio optimization has been added yet. This is not the whole of phase 2.
-
-## Files changed by this work
-
-- `packages/core/src/modules/studio/measurement.ts` (new)
-- `packages/core/src/modules/studio/index.ts`
-- `packages/core/src/modules/m16-social/index.ts`
-- `packages/core/src/modules/autopilot/steps.ts`
-- `packages/core/src/modules/autopilot/engine.ts`
-- `packages/core/test/studio-measurement.test.ts` (new)
-- `apps/worker/test/autopilot.test.ts`
-- `apps/web/src/components/ContentStudio.tsx`
-- `docs/ARCHITECTURE.md`
-- `docs/APP_INSTALL_INTEGRATION.md` (new)
-- this checkpoint
-
-P1 also changes `packages/core/src/modules/m02-customers/index.ts`, `packages/core/src/modules/m19-app-growth/index.ts`, `packages/db/src/schema/growth.ts`, migrations `0012_app_conversion_evidence.sql` / `0013_app_event_coverage.sql` and their generated snapshots/journal, both API channel-route files, `apps/api/test/public-channels.test.ts`, new `packages/core/test/app-conversions.test.ts`, new `apps/web/src/components/AppConversions.tsx`, the control-plane mount/catalog and its route-contract test. No new dependency was introduced. `graphify update .` was run (AST only); graph output stays ignored.
-
-## Validation
-
-- Targeted Studio/worker/connector/M23 tests: all 77 passed, including final missing-action-link recovery, concurrent drafting and the mutable-schedule lock race.
-- P1 final targeted conversion/acquisition/public-API/UI-contract tests: 42 passed, covering maximum-length identifiers, concurrent replay, cross-app/tenant isolation, timestamp validation, real events, immature retention, unrelated evidence rejection, rollback, DSAR and server-key authorization. Completeness tests cover missing versus true zero, exact digest/identity/timestamp matching, partial/immature cohorts, revoked evidence, late-event invalidation, concurrent event/declaration arrival and exclusive interval boundaries. The privacy regression also verifies withdrawal, expired grants, rejection of telemetry-based renewal and explicit consent renewal. Final typecheck, lint and generated-doc checks passed.
-- P1 initial production API/worker/media/web builds, all six backup/restore tests on isolated rerun and all 13 local browser E2E tests passed. Linux CI at `305d5c3` passed full TypeScript/security, Python, render, E2E, production bundles, licence policy and all four container builds. The completeness increment's final CI must be reviewed on PR #15.
-- Typecheck, lint, generated docs check, API/worker/media production bundles and web build passed. Lint has 88 existing warnings and one configuration notice; no errors.
-- Local full TypeScript suite: 378 passed; the separate real-TLS PostgreSQL startup hook timed out, leaving five TLS tests unrun. Do not describe that local full run as green. [Linux CI at `3037370`](https://github.com/getRabbi/future_market_ai/actions/runs/41503632542) passed all jobs, including full TypeScript/security, Python, render, E2E, production bundles and licence policy.
-- Local browser E2E: all 13 passed.
-- Local Python: 34 passed; three setup errors were sandbox access failures in pytest's temporary directory. Rerunning both affected backup/TLS files outside the sandbox passed all 12 tests, including the three that previously errored.
-- All provider execution was against fixtures. No fresh live provider, production health, backup restore or deployed-build verification was performed.
-- Final P0 CI at `914c455` passed every job. P1's local broad run was not green: 386 tests passed, the TLS setup and backup cron timed out, and an identifier-boundary test ran against an older loaded module while edits were in progress. The final focused rerun above passed that boundary regression. Do not describe the broad P1 run as passing. Review P1 CI on the committed head before merging.
+1. Release `feat/d041-growth-studio` (see DEPLOYMENT §11) and verify live read-only: `/v1/social/platforms`, `/v1/media/providers`, `/v1/brands`, EPS goal schedule unchanged.
+2. Optional owner step: create the EPS TOPIK Bangla brand, link Page `eeb35c7e` and the Play listing `com.rabbi.eps_topik_bangla`, assign program `42216a51`, so new store links are registered (no content migration needed).
+3. Not implemented (needs decisions or external access): video production for YouTube/TikTok; Play Console report importer (needs Play reporting access); engagement/analytics ingestion beyond Meta; stock/AI vendor adapters (need a chosen vendor and licence); conversion outcomes in the learning loop (needs registered identities with reconciled windows from real app traffic; mobile side per `APP_INSTALL_INTEGRATION.md`).
 
 ## Preserved pre-existing changes
 
-These four files were dirty on entry and were not included in this work's commits. Preserve them:
+These four files were dirty on entry and are deliberately not committed:
 
 - `docs/D040_CONTENT_STUDIO.md`
 - `infra/cloudflare/uptime-worker/src/monitor.ts`
 - `infra/cloudflare/uptime-worker/test/monitor.test.ts`
 - `infra/cloudflare/uptime-worker/wrangler.toml`
-
-## Remaining implementation, in order
-
-1. **P1 / phase 2:** add explicit program/channel-account mappings, then evidence-qualified Studio conversion learning with adequate sample sizes and reconciled fixed windows. Backend reconciliation is implemented; independent device/store coverage remains unverified. Add a credential/source-verified Google Play Console report importer using supported official APIs; Apple sales-report ingestion already exists. Preserve legacy callers and do not combine unscoped historical installs into new app KPIs. The existing cohort endpoint still reports legacy source/method summaries and is not the new campaign reporting API.
-2. **P2 / phase 3:** reusable brand/program configuration, bounded Agent Kernel strategy, approved-claim/curriculum constraints, provider-neutral media sources with configured rights/credentials, quality/diversity checks and authorized quiz reveals. Existing EPS curriculum and branded renderer remain functional; do not replace them.
-3. **P3 / phase 4:** platform-independent concepts plus per-channel formats; audit and reuse official Meta/TikTok/YouTube executors. Verify current official X/Reddit/LinkedIn API access before adding adapters. Keep unsupported publishing disabled. Extend the existing group/share-kit workspace and conservative authorized replies.
-4. **P4 / phase 5:** uncertainty-aware business-outcome learning with independent brand/app/account/channel series. The present fix only makes engagement observations safe to compare; it does not implement conversion optimization or causal inference.
-5. **Phase 6:** reconcile the remaining architecture/runbook/policy/capability/progress/decision/blocker records against implementation; audit current readiness, worker recovery, backups, secrets, expiry, monitoring, rollback and migration compatibility. Original blueprints were not rewritten. Current deployment/provider status must be verified rather than inferred from historical docs.
-
-## External dependencies and exact next task
-
-The mobile application's repository and its authenticated backend are needed to ship device telemetry. No unrelated application was guessed or edited. Use `APP_INSTALL_INTEGRATION.md`; never ship a FUTUREGROW server key in an APK. Play Console credentials/report permissions, other-platform commercial/API approvals and AI/stock credentials/rights must be genuinely connected before activating those providers. Their live availability was not audited here.
-
-Next development task: add explicit, tenant-scoped program/channel-account mappings for app campaign attribution. Locate `studioPrograms`, Studio referrer generation, connections and `campaignConversions` using graphify; associate generated campaign/content identities with the actual app/program/connection rather than inferring Page identity from free-text UTM labels. Reject cross-tenant/app/account mappings, preserve existing EPS programs/goal/schedule, and add focused mapping/report isolation tests. Then use mature reconciled observations and adequate samples for cautious Studio learning. Reuse the existing M19 declarations and M02 event infrastructure; do not repeat the P0 audit or rebuild ingestion.

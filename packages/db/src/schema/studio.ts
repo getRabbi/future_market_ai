@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { date, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, dbl, json, oneOf, pk, rawCheck, tenantId, ts, updatedAt } from './_common.js';
 import { growthGoals } from './autopilot.js';
+import { brands } from './brands.js';
 import { assets, socialPosts } from './growth.js';
 import { connections } from './platform.js';
 
@@ -25,6 +26,8 @@ export const studioPrograms = pgTable(
       .notNull()
       .references(() => connections.id, { onDelete: 'cascade' }),
     pack: text('pack').notNull(),
+    /** The brand this program publishes for (D-041); null for programs created before brands existed. */
+    brandId: uuid('brand_id').references(() => brands.id, { onDelete: 'set null' }),
     status: text('status').notNull().default('active'),
     /** appUrl (verified store listing), campaign, appCtaPerWeek, linkPerWeek. */
     settings: json<Record<string, unknown>>('settings').notNull().default({}),

@@ -166,7 +166,7 @@ export async function effectiveSunset(tx: DbOrTx, provider: string, versions: Ap
   return { at: row.sunsetAt, basis: why[row.sunsetSource!] };
 }
 
-const LABEL: Record<LifecycleProvider, string> = { meta: 'Meta Graph API', googleAds: 'Google Ads API', shopify: 'Shopify Admin API', tiktok: 'TikTok API', youtube: 'YouTube Data API', appStoreConnect: 'App Store Connect API' };
+const LABEL: Record<LifecycleProvider, string> = { meta: 'Meta Graph API', googleAds: 'Google Ads API', shopify: 'Shopify Admin API', tiktok: 'TikTok API', youtube: 'YouTube Data API', linkedin: 'LinkedIn Marketing API', x: 'X API', appStoreConnect: 'App Store Connect API' };
 
 /** Worker cron: announce lifecycle milestones and newly observed deprecation signals once each. */
 export async function checkApiLifecycle(db: Db, notifier: Notifier, versions: ApiVersions, environment: string, now = new Date()): Promise<{ sent: number; failed: number; skipped: number }> {

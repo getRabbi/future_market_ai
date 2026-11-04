@@ -121,6 +121,60 @@ export const ACTION_TYPES = [
     }),
   },
   {
+    type: 'social.linkedin.publish_post',
+    provider: 'linkedin',
+    capability: 'linkedin_org_post',
+    category: 'PUBLIC_PUBLISHING',
+    description: 'Publish a text or image post as a LinkedIn organization (Posts API; needs the Community Management API product and w_organization_social).',
+    affectsSpend: false,
+    publicFacing: true,
+    contactsPeople: false,
+    verification: 'read_after_write',
+    rollback: 'supported',
+    supported: true,
+    paramsSchema: z
+      .object({
+        authorUrn: z.string().regex(/^urn:li:organization:\d+$/),
+        commentary: z.string().min(1).max(3000),
+        postId: z.string().uuid(),
+        assetIds: z.array(z.string().uuid()).max(20).default([]),
+        media: z
+          .array(z.object({ assetId: z.string().uuid(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }))
+          .max(20)
+          .optional(),
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => (p.media?.length ?? 0) === p.assetIds.length && (p.media ?? []).every((m, i) => m.assetId === p.assetIds[i]), 'media must list the assetIds in order with their content hashes'),
+  },
+  {
+    type: 'social.x.publish_post',
+    provider: 'x',
+    capability: 'x_post_create',
+    category: 'PUBLIC_PUBLISHING',
+    description: 'Publish a post (up to 4 images) to an X account (API v2). X bills every post request (pay-per-use, no free tier), so this stays unsupported until the owner authorizes that spend.',
+    affectsSpend: false,
+    publicFacing: true,
+    contactsPeople: false,
+    verification: 'read_after_write',
+    rollback: 'supported',
+    supported: false,
+    blockerRef: 'B-019',
+    paramsSchema: z
+      .object({
+        text: z.string().min(1).max(4000),
+        postId: z.string().uuid(),
+        assetIds: z.array(z.string().uuid()).max(4).default([]),
+        media: z
+          .array(z.object({ assetId: z.string().uuid(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }))
+          .max(4)
+          .optional(),
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => (p.media?.length ?? 0) === p.assetIds.length && (p.media ?? []).every((m, i) => m.assetId === p.assetIds[i]), 'media must list the assetIds in order with their content hashes'),
+  },
+  {
     type: 'social.youtube.upload_video',
     provider: 'youtube',
     capability: 'youtube_video_upload',
@@ -405,7 +459,7 @@ export function listActionTypes(): readonly ActionTypeDefinition[] {
  * every domain is never covered, so it keeps needing legal approval.
  */
 export const JURISDICTION_DOMAINS = {
-  organic_social: ['social.facebook.publish_post', 'social.instagram.publish_media', 'social.tiktok.publish_video', 'social.youtube.upload_video'],
+  organic_social: ['social.facebook.publish_post', 'social.instagram.publish_media', 'social.tiktok.publish_video', 'social.youtube.upload_video', 'social.linkedin.publish_post', 'social.x.publish_post'],
   social_engagement: ['social.facebook.reply_comment'],
   advertising: ['ads.google.update_campaign_budget', 'ads.google.set_campaign_status', 'ads.meta.update_campaign_budget', 'ads.meta.set_campaign_status'],
   messaging: ['email.send', 'sms.send', 'whatsapp.send'],

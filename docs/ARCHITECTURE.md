@@ -140,6 +140,18 @@ Server-key install ingestion supports an explicit application ID and commits its
 
 These are authenticated backend reports, not independently verified Google Play acquisitions. Server-only completeness declarations reconcile event counts and digests for closed per-installation intervals. Fixed seven-day first-open/activation and 7–14-day retention windows expose zero only when all mature installations in the campaign have matching declarations. Late events invalidate affected coverage; erased/revoked evidence prevents completeness. This verifies transport reconciliation, not device instrumentation or total store coverage. Program/account mappings, Google Play Console import and conversion-driven Studio learning remain pending. See the [integration contract](APP_INSTALL_INTEGRATION.md). Additive migrations `0012_app_conversion_evidence.sql` and `0013_app_event_coverage.sql` preserve legacy records outside scoped campaign KPIs and default coverage to unknown.
 
+## 4d. Brands and campaign identity (D-041)
+
+`brands` hold a validated profile (voice, contrast-checked palette, bundled fonts, audience, objectives, destinations, limits) and reference product facts (`kg_entities`) whose approved claims the content may cite. `brand_channels` and `brand_apps` map each channel account and each store application to exactly one brand; a Studio program joins a brand only through its channel account (`studio_programs.brand_id`). When the Studio drafts a post with a store link it registers `(app, campaign, content)` in `campaign_links` with the brand, program, plan item, post and channel, inside the drafting transaction; `content` is `<kind>-<yyyymmdd>`, unique per program. M19's campaign report resolves identities only through this registry and the app's brand (`registered`, `unregistered`, `brand_mismatch`).
+
+## 4e. Platforms, formats and community screening (D-042)
+
+`platformReadiness` (`GET /v1/social/platforms`) combines the action-type allowlist, the capability registry, the tenant's connections (status, health, scopes, audit flag) and read-back-verified posts into one status per platform; `live_verified` needs a verified post in the last 14 days. `checkCaption` holds per-platform limits and is enforced when a post is scheduled. Connectors: Meta (Facebook, Instagram), TikTok, YouTube, LinkedIn (Posts API, `Linkedin-Version` 202610) and X (API v2, disabled by B-019). Reddit is owner-assisted only. Incoming comments carry `moderation.spam` (verdict and signals); likely spam and duplicates are not drafted.
+
+## 4f. Media providers and learning (D-043, D-044)
+
+The Studio's images come from `MediaProvider`s; only the template renderer is enabled today. Stock and AI sources enable only with credentials plus a rights record (licence registry / model registry), and every candidate passes `mediaQa`. The planner's learning compares Gamma–Poisson posteriors with overdispersion and minimum samples (`studio/learning.ts`); a calendar slot moves only on a ≥95% posterior difference, and reports are labelled associations.
+
 ## 5. Evidence (M01)
 
 Every fact that can drive a decision is an evidence record with source, licence/usage rights, PII class, lawful basis, permitted/prohibited uses, confidence, observed time and freshness SLA. Records missing rights or lawful basis are quarantined until a reviewer resolves them. Automation needs current evidence permitted for `autonomous_execution`; system producers (journeys, syncs, audits, reports) declare SLAs explicitly.
