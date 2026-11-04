@@ -109,3 +109,15 @@ describe('X posts (API v2) — implemented, disabled until per-request spend is 
     expect(await READ_CONNECTORS.x!.healthCheck(ctx())).toMatchObject({ healthy: false, details: { error: expect.stringMatching(/different X account/) } });
   });
 });
+
+describe('LinkedIn and X contracts', () => {
+  it('accepts a real organization URN in the action schema and derives the LinkedIn version sunset', async () => {
+    const { lifecycleRule } = await import('../src/index.js');
+    const schema = getActionType('social.linkedin.publish_post')!.paramsSchema;
+    const params = { authorUrn: 'urn:li:organization:5515715', commentary: 'আজকের শব্দ', postId: '00000000-0000-4000-8000-0000000000a1', assetIds: [], claimIds: [], disclosure: { isAiGenerated: false, paidPartnership: false, syntheticPersonaId: null, disclosureText: null } };
+    expect(schema.safeParse(params).success).toBe(true);
+    expect(schema.safeParse({ ...params, authorUrn: 'urn:li:organization:abc' }).success).toBe(false);
+    expect(lifecycleRule('linkedin', '202610')).toMatchObject({ kind: 'dated', sunsetAt: '2027-10-01T00:00:00.000Z' });
+    expect(lifecycleRule('x', '2')).toMatchObject({ kind: 'evergreen', sunsetAt: null });
+  });
+});

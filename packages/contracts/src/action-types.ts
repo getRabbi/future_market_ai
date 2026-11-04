@@ -134,7 +134,7 @@ export const ACTION_TYPES = [
     supported: true,
     paramsSchema: z
       .object({
-        authorUrn: z.string().regex(/^urn:li:organization:d+$/),
+        authorUrn: z.string().regex(/^urn:li:organization:\d+$/),
         commentary: z.string().min(1).max(3000),
         postId: z.string().uuid(),
         assetIds: z.array(z.string().uuid()).max(20).default([]),

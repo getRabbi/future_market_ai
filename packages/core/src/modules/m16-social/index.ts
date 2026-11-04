@@ -244,7 +244,7 @@ function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connecti
       return {
         actionType: 'social.linkedin.publish_post',
         params: {
-          authorUrn: /^d+$/.test(conn.externalAccountId) ? `urn:li:organization:${conn.externalAccountId}` : conn.externalAccountId,
+          authorUrn: /^\d+$/.test(conn.externalAccountId) ? `urn:li:organization:${conn.externalAccountId}` : conn.externalAccountId,
           commentary: post.caption,
           postId: post.id,
           assetIds: post.assetIds,

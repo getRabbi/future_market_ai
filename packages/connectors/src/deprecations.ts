@@ -55,7 +55,7 @@ export function lifecycleRule(provider: LifecycleProvider, apiVersion: string): 
       return { provider, apiVersion, kind: 'evergreen', sunsetAt: null, basis: 'YouTube Data API v3 has no published sunset; watched through response headers.', sourceUrl: 'https://developers.google.com/youtube/v3/revision_history' };
     case 'linkedin': {
       // LinkedIn Marketing versions are monthly (YYYYMM) and supported for about a year (202511 sunsets 2026-11-16).
-      const m = /^(d{4})(d{2})$/.exec(apiVersion);
+      const m = /^(\d{4})(\d{2})$/.exec(apiVersion);
       const sunsetAt = m ? new Date(Date.UTC(Number(m[1]) + 1, Number(m[2]) - 1, 1)).toISOString() : null;
       return {
         provider,
