@@ -134,6 +134,12 @@ Studio counters retain missing values explicitly. A version-2 engagement score r
 
 This behavior is covered by local provider fixtures and worker integration tests. It does not establish current production deployment or live provider availability. See [implementation checkpoint](IMPLEMENTATION_CHECKPOINT.md) for validation and remaining work.
 
+## 4c. Application conversion observations (M19)
+
+Server-key install ingestion supports an explicit application ID and commits its minimized referrer, profile event, evidence and audit atomically. Concurrent retries share the same application/platform/installation identity. Separate server-authenticated first-open, activation and session events retain actual occurrence times and evidence; first opens are not inferred from installs. Tenant/app-scoped campaign reports and the App growth screen expose observed outcomes, with unavailable fields kept null. Week-one retention needs a real session at age 7–14 days and an elapsed window. Deletion removes linked events, attribution and evidence content.
+
+These are authenticated backend reports, not independently verified Google Play acquisitions. Server-only completeness declarations reconcile event counts and digests for closed per-installation intervals. Fixed seven-day first-open/activation and 7–14-day retention windows expose zero only when all mature installations in the campaign have matching declarations. Late events invalidate affected coverage; erased/revoked evidence prevents completeness. This verifies transport reconciliation, not device instrumentation or total store coverage. Program/account mappings, Google Play Console import and conversion-driven Studio learning remain pending. See the [integration contract](APP_INSTALL_INTEGRATION.md). Additive migrations `0012_app_conversion_evidence.sql` and `0013_app_event_coverage.sql` preserve legacy records outside scoped campaign KPIs and default coverage to unknown.
+
 ## 5. Evidence (M01)
 
 Every fact that can drive a decision is an evidence record with source, licence/usage rights, PII class, lawful basis, permitted/prohibited uses, confidence, observed time and freshness SLA. Records missing rights or lawful basis are quarantined until a reviewer resolves them. Automation needs current evidence permitted for `autonomous_execution`; system producers (journeys, syncs, audits, reports) declare SLAs explicitly.

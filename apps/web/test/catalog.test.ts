@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { buildApp } from '../../api/src/app.js';
+import { APP_CONVERSION_CALLS } from '../src/components/AppConversions.js';
 import { AUTOPILOT_CALLS } from '../src/components/Autopilot.js';
 import { CONNECTION_CALLS } from '../src/components/Connections.js';
 import { CONTENT_CALLS } from '../src/components/ContentStudio.js';
@@ -68,6 +69,7 @@ function calls() {
   for (const c of GROUND_TRUTH_CALLS) out.push({ where: 'ground-truth screen', method: c.method, path: c.path });
   for (const c of AUTOPILOT_CALLS) out.push({ where: 'autopilot screen', method: c.method, path: c.path });
   for (const c of CONTENT_CALLS) out.push({ where: 'content studio screen', method: c.method, path: c.path });
+  for (const c of APP_CONVERSION_CALLS) out.push({ where: 'app conversions screen', method: c.method, path: c.path });
   return out;
 }
 

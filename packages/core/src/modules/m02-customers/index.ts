@@ -196,70 +196,73 @@ export interface IngestResult {
  * unless they are contract events (orders/refunds/subscriptions), which are kept minimised.
  */
 export async function ingestEvents(deps: CoreDeps, tenantId: string, source: string, raw: unknown[], opts: { verifiedEmail?: boolean } = {}): Promise<IngestResult> {
+  return withTenant(deps.db, { tenantId, actor: actorRef(systemActor(`ingest:${source}`)) }, (tx) => ingestEventsInTransaction(tx, deps, tenantId, source, raw, opts));
+}
+
+/** Reuse event validation, identity and consent handling inside an existing tenant transaction. */
+export async function ingestEventsInTransaction(tx: Tx, deps: CoreDeps, tenantId: string, source: string, raw: unknown[], opts: { verifiedEmail?: boolean } = {}): Promise<IngestResult> {
   if (raw.length > 500) throw invalid('at most 500 events per batch');
   const actor = systemActor(`ingest:${source}`);
   const result: IngestResult = { accepted: 0, duplicates: 0, dropped: [], profileIds: [] };
-  await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
-    for (const r of raw) {
-      const parsed = IngestEventSchema.safeParse(r);
-      if (!parsed.success) {
-        result.dropped.push({ messageId: String((r as { messageId?: unknown })?.messageId ?? 'unknown'), reason: 'invalid event' });
-        continue;
-      }
-      const e = parsed.data;
-      const analyticsConsent = e.context.consent?.analytics;
-      const contract = CONTRACT_EVENTS.has(e.event);
-      if (analyticsConsent === false && !contract) {
-        result.dropped.push({ messageId: e.messageId, reason: 'analytics consent denied' });
-        continue;
-      }
-      const [dup] = await tx.select({ id: customerEvents.id }).from(customerEvents).where(eq(customerEvents.messageId, e.messageId));
-      if (dup) {
-        result.duplicates += 1;
-        continue;
-      }
-      const ids: { kind: IdentifierKind; value: string; verified: boolean }[] = [];
-      if (e.userId) ids.push({ kind: 'user_id', value: e.userId, verified: true });
-      if (e.email) ids.push({ kind: 'email', value: e.email, verified: opts.verifiedEmail === true });
-      if (e.phone) ids.push({ kind: 'phone', value: e.phone, verified: false });
-      if (e.anonymousId) ids.push({ kind: 'anonymous_id', value: e.anonymousId, verified: false });
-      if (e.deviceId) ids.push({ kind: 'device_id', value: e.deviceId, verified: false });
-      let profileId: string | null = null;
-      if (ids.length) {
-        const res = await resolveIdentity(tx, deps, tenantId, ids, {
-          ...(e.email ? { email: e.email } : {}),
-          ...(e.phone ? { phone: e.phone } : {}),
-          ...(e.context.country ? { country: e.context.country } : {}),
-          ...(e.context.locale ? { locale: e.context.locale } : {}),
-          ...(e.context.timezone ? { timezone: e.context.timezone } : {}),
-        });
-        profileId = res.profileId;
-        if (res.merged.length) {
-          await record(tx, tenantId, actor, 'customer.profile.merged', { type: 'customer_profile', id: profileId }, { merged: res.merged, policy: MATCH_POLICY_VERSION });
-        }
-      }
-      const { clean, removed } = scrubProperties(analyticsConsent === false ? {} : e.properties);
-      const context = analyticsConsent === false ? {} : { ...e.context, piiRemoved: removed.length ? removed : undefined };
-      await tx.insert(customerEvents).values({
-        tenantId,
-        messageId: e.messageId,
-        profileId,
-        anonymousId: e.anonymousId ? identifierHash(deps.config.identifierPepper, 'anonymous_id', e.anonymousId) : null,
-        eventName: e.event,
-        occurredAt: new Date(e.timestamp),
-        properties: clean,
-        context,
-        source,
-        revenueMicros: e.revenue !== undefined ? Math.round(e.revenue * 1_000_000) : null,
-        currency: e.currency ?? null,
+  for (const r of raw) {
+    const parsed = IngestEventSchema.safeParse(r);
+    if (!parsed.success) {
+      result.dropped.push({ messageId: String((r as { messageId?: unknown })?.messageId ?? 'unknown'), reason: 'invalid event' });
+      continue;
+    }
+    const e = parsed.data;
+    const analyticsConsent = e.context.consent?.analytics;
+    const contract = CONTRACT_EVENTS.has(e.event);
+    if (analyticsConsent === false && !contract) {
+      result.dropped.push({ messageId: e.messageId, reason: 'analytics consent denied' });
+      continue;
+    }
+    const [dup] = await tx.select({ id: customerEvents.id }).from(customerEvents).where(eq(customerEvents.messageId, e.messageId));
+    if (dup) {
+      result.duplicates += 1;
+      continue;
+    }
+    const ids: { kind: IdentifierKind; value: string; verified: boolean }[] = [];
+    if (e.userId) ids.push({ kind: 'user_id', value: e.userId, verified: true });
+    if (e.email) ids.push({ kind: 'email', value: e.email, verified: opts.verifiedEmail === true });
+    if (e.phone) ids.push({ kind: 'phone', value: e.phone, verified: false });
+    if (e.anonymousId) ids.push({ kind: 'anonymous_id', value: e.anonymousId, verified: false });
+    if (e.deviceId) ids.push({ kind: 'device_id', value: e.deviceId, verified: false });
+    let profileId: string | null = null;
+    if (ids.length) {
+      const res = await resolveIdentity(tx, deps, tenantId, ids, {
+        ...(e.email ? { email: e.email } : {}),
+        ...(e.phone ? { phone: e.phone } : {}),
+        ...(e.context.country ? { country: e.context.country } : {}),
+        ...(e.context.locale ? { locale: e.context.locale } : {}),
+        ...(e.context.timezone ? { timezone: e.context.timezone } : {}),
       });
-      result.accepted += 1;
-      if (profileId && !result.profileIds.includes(profileId)) result.profileIds.push(profileId);
+      profileId = res.profileId;
+      if (res.merged.length) {
+        await record(tx, tenantId, actor, 'customer.profile.merged', { type: 'customer_profile', id: profileId }, { merged: res.merged, policy: MATCH_POLICY_VERSION });
+      }
     }
-    if (result.accepted) {
-      await record(tx, tenantId, actor, 'customer.event.ingested', { type: 'ingest_batch', id: sha256Hex(JSON.stringify(raw.map((x) => (x as { messageId?: string }).messageId))).slice(0, 32) }, { accepted: result.accepted, source });
-    }
-  });
+    const { clean, removed } = scrubProperties(analyticsConsent === false ? {} : e.properties);
+    const context = analyticsConsent === false ? {} : { ...e.context, piiRemoved: removed.length ? removed : undefined };
+    await tx.insert(customerEvents).values({
+      tenantId,
+      messageId: e.messageId,
+      profileId,
+      anonymousId: e.anonymousId ? identifierHash(deps.config.identifierPepper, 'anonymous_id', e.anonymousId) : null,
+      eventName: e.event,
+      occurredAt: new Date(e.timestamp),
+      properties: clean,
+      context,
+      source,
+      revenueMicros: e.revenue !== undefined ? Math.round(e.revenue * 1_000_000) : null,
+      currency: e.currency ?? null,
+    });
+    result.accepted += 1;
+    if (profileId && !result.profileIds.includes(profileId)) result.profileIds.push(profileId);
+  }
+  if (result.accepted) {
+    await record(tx, tenantId, actor, 'customer.event.ingested', { type: 'ingest_batch', id: sha256Hex(JSON.stringify(raw.map((x) => (x as { messageId?: string }).messageId))).slice(0, 32) }, { accepted: result.accepted, source });
+  }
   return result;
 }
 
@@ -464,7 +467,7 @@ export async function executeDsarDeletion(deps: CoreDeps, tenantId: string, acto
           .where(and(inArray(journeyEnrollments.profileId, ids), eq(journeyEnrollments.state, 'active')))
           .returning({ id: journeyEnrollments.id }),
       );
-      await del('app_installs', tx.update(appInstalls).set({ profileId: null, referrer: {} }).where(inArray(appInstalls.profileId, ids)).returning({ id: appInstalls.id }));
+      await del('app_installs', tx.update(appInstalls).set({ profileId: null, referrer: {}, campaignRef: null, sourceRef: null, consentAnalytics: false, evidenceId: null, eventCoverage: {} }).where(inArray(appInstalls.profileId, ids)).returning({ id: appInstalls.id }));
       const convs = await tx.select({ id: conversations.id }).from(conversations).where(inArray(conversations.profileId, ids));
       if (convs.length) {
         await del(

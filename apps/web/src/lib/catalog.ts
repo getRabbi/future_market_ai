@@ -1140,10 +1140,10 @@ export const SECTIONS: Section[] = [
     slug: 'app',
     title: 'App growth',
     modules: ['M19'],
-    summary: 'Installs by attribution method, cohorts and App Store reports. Attribution shows association, not cause.',
+    summary: 'Application-specific campaign observations, legacy cohorts and App Store reports. Attribution shows association, not cause.',
     resources: [
-      { title: 'Installs by method', list: '/v1/app/installs/stats', empty: 'No installs recorded yet.' },
-      { title: 'Cohorts (last 90 days)', list: `/v1/app/cohorts?from=${new Date(Date.now() - 90 * 86_400_000).toISOString()}&to=${iso()}&activationEvent=activated`, pick: 'cohorts', empty: 'No cohorts yet.' },
+      { title: 'Legacy install totals (all applications)', list: '/v1/app/installs/stats', empty: 'No installs recorded yet.' },
+      { title: 'Legacy cohorts (all applications; not campaign KPIs)', list: `/v1/app/cohorts?from=${new Date(Date.now() - 90 * 86_400_000).toISOString()}&to=${iso()}&activationEvent=activated`, pick: 'cohorts', empty: 'No cohorts yet.' },
       {
         title: 'App Store reports',
         list: '/v1/app/store-reports',

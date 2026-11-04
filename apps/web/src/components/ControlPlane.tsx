@@ -3,6 +3,7 @@ import { api, getTenant, type Me, setTenant } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
 import { SECTION_GROUPS, SECTIONS, sectionBySlug } from '../lib/catalog.js';
 import { STAGES, stageOf } from '../lib/journey.js';
+import { AppConversions } from './AppConversions.js';
 import { Approvals } from './Approvals.js';
 import { AutopilotOffer, AutopilotShell, type AutopilotStatus } from './Autopilot.js';
 import { Connections } from './Connections.js';
@@ -123,6 +124,7 @@ export function ControlPlane({ section, mode = 'classic' }: { section: string; m
             {current.custom === 'settings' ? <Settings me={me} onTenant={switchTenant} onChanged={() => void boot()} /> : null}
             {current.custom === 'assets' ? <AssetUpload /> : null}
             {current.custom === 'connections' ? <Connections me={me} /> : null}
+            {current.slug === 'app' ? <AppConversions /> : null}
             {current.custom === 'knowledge' ? <GroundTruth /> : current.resources.map((r) => <ResourcePanel key={r.title} resource={r} />)}
           </div>
           <SectionPager slug={current.slug} />
