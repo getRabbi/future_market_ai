@@ -9,6 +9,7 @@ import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobHelpers, Task } from 'graphile-worker';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { JURISDICTION_DOMAIN_KEYS } from '../../../packages/contracts/src/index.js';
+import { EXECUTORS } from '../../../packages/core/src/modules/autopilot/steps.js';
 import { approveJurisdictionPacks, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import '../src/register-modules.js';
@@ -1225,6 +1226,49 @@ describe('Autopilot: budgets, controls and loop prevention', () => {
     expect(replay.id).toBe(withAction.actionId);
   }, 180_000);
 
+  it('rechecks a mutable nextRunAt after acquiring the goal lock', async () => {
+    const g = await goal({ title: 'Rescheduled while starting', kpi: { metricKey: 'kpi.retained', label: 'Retained', unit: 'count' }, channels: ['experiments'] });
+    const nextAt = new Date(h.clock.now().getTime() + DAY);
+    let acquiredResolve!: (pid: number) => void;
+    let releaseResolve!: () => void;
+    const acquired = new Promise<number>((resolve) => {
+      acquiredResolve = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseResolve = resolve;
+    });
+    const holding = tx(async (t) => {
+      await t.select().from(growthGoals).where(eq(growthGoals.id, g.id)).for('update');
+      const backend = await t.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+      acquiredResolve(backend.rows[0]!.pid);
+      await release;
+      await t.update(growthGoals).set({ nextRunAt: nextAt }).where(eq(growthGoals.id, g.id));
+    });
+    const pid = await acquired;
+    const advancing = autopilot.advanceGoal(h.deps, h.tenantId, g.id);
+    let blocked = false;
+    try {
+      // Wait for the actual SQL lock, not a timing guess: advanceGoal has read the old due
+      // schedule but startCycle cannot acquire its row yet.
+      for (let i = 0; i < 100; i++) {
+        const waiters = await h.t.handle.db.execute(sql`select pid from pg_stat_activity where ${pid} = any(pg_blocking_pids(pid)) and query like '%growth_goals%'`);
+        if (waiters.rows.length) {
+          blocked = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    } finally {
+      releaseResolve();
+      await holding;
+    }
+    const result = await advancing;
+    expect(blocked).toBe(true);
+    expect(result).toMatchObject({ idle: 'next cycle not due', nextAt });
+    expect(await tx((t) => t.select().from(goalCycles).where(eq(goalCycles.goalId, g.id)))).toHaveLength(0);
+    await tx((t) => autopilot.commandGoal(t, h.deps, h.tenantId, h.users.owner, g.id, 'cancel'));
+  }, 60_000);
+
   it('completes the goal at its target date with a final measurement from recorded values', async () => {
     const key = 'kpi.final';
     const sid = await series(key, 20, 50);
@@ -1334,6 +1378,8 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
         .where(eq(socialPosts.id, (k.content!.output.postIds as string[])[0]!)),
     );
     expect(post).toMatchObject({ status: 'published_verified', externalPostId: '999_1', externalUrl: 'https://fb.example/999_1' });
+    expect(post!.verifiedAt!.getTime()).toBeGreaterThanOrEqual(Date.parse(published[0]!.at));
+    expect(post!.verifiedAt!.getTime()).toBeLessThanOrEqual(h.clock.now().getTime());
     expect(published[0]!.message).toBe(post!.caption);
     const [card] = await otx((t) => t.select().from(assets).where(eq(assets.id, post!.assetIds[0]!)));
     expect(card).toMatchObject({ kind: 'image', mime: 'image/png', width: 1080, height: 1350, origin: 'render', publishEligible: true });
@@ -1343,6 +1389,17 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(params.media).toEqual([{ assetId: card!.id, sha256: card!.sha256 }]);
     expect(params.curriculum?.pack).toBe('eps-topik-bn');
     expect(action).toMatchObject({ status: 'VERIFIED', proposedById: 'autopilot', policyVersion: 'fg-policy-1.4.0' });
+    // A submit step interrupted after M23 accepted its post must recover that action even
+    // though it already consumes the daily limit. It must reach tracking, never submit twice.
+    const [cycle] = await otx((t) => t.select().from(goalCycles).where(eq(goalCycles.id, k.submit!.cycleId)));
+    const resumedSubmit = await EXECUTORS.submit({ deps: h.deps, tenantId: org, goal: g, cycle: cycle!, task: k.submit!, prior: k, aiCallsLeft: 0, now: h.clock.now() });
+    expect(resumedSubmit).toMatchObject({ kind: 'completed', refs: { actionId: action!.id }, output: { postId: post!.id, status: 'VERIFIED' } });
+    await otx((t) => t.update(socialPosts).set({ actionId: null }).where(eq(socialPosts.id, post!.id)));
+    const unlinkedSubmit = await EXECUTORS.submit({ deps: h.deps, tenantId: org, goal: g, cycle: cycle!, task: k.submit!, prior: k, aiCallsLeft: 0, now: h.clock.now() });
+    expect(unlinkedSubmit).toMatchObject({ kind: 'completed', refs: { actionId: action!.id } });
+    const [relinked] = await otx((t) => t.select().from(socialPosts).where(eq(socialPosts.id, post!.id)));
+    expect(relinked!.actionId).toBe(action!.id);
+    expect(published).toHaveLength(1);
     const reasons = (action!.policyDecision as { reasons: { code: string; message: string }[] }).reasons;
     expect(reasons.map((r) => r.code)).toEqual(['ORGANIC_EDUCATIONAL_POST']);
     expect(reasons[0]!.message).toMatch(post!.claimIds.length ? /approved claims/ : /verified curriculum content/);
@@ -1384,17 +1441,52 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(provider.calls.length).toBe(modelCalls);
     overview = await contentStudio.overview(h.deps, org, program.id);
     expect(overview.measurement.publishedPosts).toBe(2);
-    const first = overview.history.find((i) => i.postId === post!.id)!;
+    // That cycle observed the Page 30 minutes before the first post was a day old: too young to measure.
+    let first = overview.history.find((i) => i.postId === post!.id)!;
+    expect(first.metrics.observedAt).toBeUndefined();
+    // The Page is read once per UTC day; the next day's read (first post ~36 h old) is recorded.
+    h.clock.advance(12 * 60 * 60_000);
+    await social.collectPagePostSnapshot(h.deps, org, conn.id);
+    await contentStudio.syncPlanResults(h.deps, org, program.id);
+    overview = await contentStudio.overview(h.deps, org, program.id);
+    first = overview.history.find((i) => i.postId === post!.id)!;
     // The fixture Page returns no share counter: it stays unknown and the post has no engagement score.
-    expect(first).toMatchObject({ status: 'published', engagement: null });
-    expect(first.metrics).toMatchObject({ reactions: 3, comments: 1, shares: null });
+    expect(first).toMatchObject({ status: 'published', engagement: null, learningEligible: false });
+    expect(first.metrics).toMatchObject({ reactions: 3, comments: 1, shares: null, observationComplete: false, missingMetrics: ['shares'], measurementVersion: 2 });
     expect(overview.measurement.notes.join(' ')).toMatch(/no install or conversion figure is shown/);
     // A post the Page made without the studio uses that day's slot: the calendar plans around it.
     h.clock.advance(DAY);
+    // A submitted post scheduled for a future Dhaka date must not consume today's calendar slot.
+    const [futurePost] = await otx((t) =>
+      t
+        .insert(socialPosts)
+        .values({ tenantId: org, connectionId: conn.id, platform: 'facebook', caption: 'future scheduled post', assetIds: [], claimIds: [], disclosure: {}, status: 'submitted', scheduledAt: new Date(h.clock.now().getTime() + DAY), createdBy: 'user:someone' })
+        .returning(),
+    );
+    const beforeToday = await contentStudio.refreshPlan(h.deps, org, program.id);
+    expect(beforeToday.items[0]).toMatchObject({ day: beforeToday.today, status: 'planned' });
+    await otx((t) => t.update(socialPosts).set({ status: 'cancelled' }).where(eq(socialPosts.id, futurePost!.id)));
     await otx((t) => t.insert(socialPosts).values({ tenantId: org, connectionId: conn.id, platform: 'facebook', caption: 'posted by hand', assetIds: [], claimIds: [], disclosure: {}, status: 'published_verified', scheduledAt: h.clock.now(), verifiedAt: h.clock.now(), createdBy: 'user:someone' }));
     const replanned = await contentStudio.refreshPlan(h.deps, org, program.id);
     expect(replanned.items[0]).toMatchObject({ day: replanned.today, status: 'skipped', statusReason: expect.stringMatching(/already has a post today/) });
     expect(replanned.items.slice(1).every((i) => i.status === 'planned' && i.day > replanned.today)).toBe(true);
+    // Two workers reaching tomorrow together must share one durable draft, including after restart.
+    h.clock.advance(DAY);
+    const draftArgs = { programId: program.id, goalId: g.id, cycleId: randomUUID(), market: 'BD' };
+    const concurrent = await Promise.allSettled([contentStudio.draftPlannedPost(h.deps, org, draftArgs), contentStudio.draftPlannedPost(h.deps, org, draftArgs)]);
+    const drafts = concurrent.map((r) => {
+      expect(r.status).toBe('fulfilled');
+      if (r.status !== 'fulfilled') throw r.reason;
+      expect(['drafted', 'existing']).toContain(r.value.kind);
+      if (r.value.kind !== 'drafted' && r.value.kind !== 'existing') throw new Error(r.value.detail);
+      return r.value;
+    });
+    expect(drafts[0]!.postId).toBe(drafts[1]!.postId);
+    const resumed = await contentStudio.draftPlannedPost(h.deps, org, draftArgs);
+    expect(resumed).toMatchObject({ kind: 'existing', postId: drafts[0]!.postId });
+    const dayPosts = await otx((t) => t.select().from(socialPosts).where(sql`${socialPosts.disclosure}->'review'->>'planItemId' = ${drafts[0]!.planItemId}`));
+    expect(dayPosts).toHaveLength(1);
+    expect(published).toHaveLength(2);
     await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'));
   }, 300_000);
 });

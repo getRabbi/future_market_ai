@@ -5,7 +5,7 @@ import { tenantKey } from '@futuregrow/storage';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps } from '../../deps.js';
-import { audit, normalizeText, record, requireRole } from '../../util.js';
+import { audit, clipText, normalizeText, record, requireRole } from '../../util.js';
 import { effectiveFreshness } from '../m23-execution/facts.js';
 import { raiseAlert } from '../m24-governance/index.js';
 
@@ -329,14 +329,14 @@ export async function lintCopy(tx: DbOrTx, text: string, opts: { claimIds: strin
   for (const s of sentences(text)) {
     for (const t of CLAIM_TRIGGERS) {
       if (t.re.test(s) && !covered(s, claimTexts)) {
-        violations.push({ code: `UNSUBSTANTIATED_${t.code}`, severity: 'block', message: `${t.label} without an approved claim`, excerpt: s.slice(0, 300) });
+        violations.push({ code: `UNSUBSTANTIATED_${t.code}`, severity: 'block', message: `${t.label} without an approved claim`, excerpt: clipText(s, 300) });
         break;
       }
     }
     for (const t of SCOPE_TERMS) {
       const claimed = new Set(usable.flatMap((c) => [...termsIn(t.re, c.text)]));
       const extra = [...termsIn(t.re, s)].filter((w) => !claimed.has(w));
-      if (extra.length) violations.push({ code: t.code, severity: 'block', message: `${t.label} ("${extra.join('", "')}") that no cited approved claim states`, excerpt: s.slice(0, 300) });
+      if (extra.length) violations.push({ code: t.code, severity: 'block', message: `${t.label} ("${extra.join('", "')}") that no cited approved claim states`, excerpt: clipText(s, 300) });
     }
   }
   const rules = await tx.select().from(brandRules).where(eq(brandRules.active, true));
