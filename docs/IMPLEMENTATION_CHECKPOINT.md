@@ -11,7 +11,7 @@ Master mission (five stages) state. Resume from this file; do not repeat the aud
 
 ## Validation on the branch
 
-- Full TypeScript suite before the docs commit: 428 tests, 1 failure found and fixed (LinkedIn lifecycle regex lost its backslashes in a patch script; two more patterns had the same defect and were fixed with contract tests). Re-run the full suite on the final head before merging.
+- Full TypeScript suite: a first run found 1 failure (the LinkedIn lifecycle regex lost its backslashes in a patch script; two more patterns had the same defect), fixed with contract tests; the final head passed 429/429 locally and in CI.
 - Python 37/37 (on Stage 1 head). Typecheck, lint (0 errors), docs check pass.
 - All new provider work is fixture-tested only; no live LinkedIn, X, stock or image-model call was made.
 
