@@ -6,7 +6,7 @@ import { and, desc, eq, gte, inArray, like, lte, max, or, sql } from 'drizzle-or
 import { z } from 'zod';
 import { runAgent } from '../../agents.js';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
-import { audit, normalizeText, record, requireRole } from '../../util.js';
+import { audit, clipText, normalizeText, record, requireRole } from '../../util.js';
 import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { lintCopy, screenRetrieved, searchKnowledge, upsertEntity } from '../m03-knowledge/index.js';
@@ -211,13 +211,13 @@ function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connecti
     case 'instagram':
       return {
         actionType: 'social.instagram.publish_media',
-        params: { igUserId: d.options.igUserId ?? conn.externalAccountId, mediaType: assetKinds[first!] === 'video' ? 'REELS' : 'IMAGE', mediaUrl: `asset://${first}`, caption: post.caption.slice(0, 2200), postId: post.id, assetIds: post.assetIds, claimIds: post.claimIds, disclosure },
+        params: { igUserId: d.options.igUserId ?? conn.externalAccountId, mediaType: assetKinds[first!] === 'video' ? 'REELS' : 'IMAGE', mediaUrl: `asset://${first}`, caption: clipText(post.caption, 2200), postId: post.id, assetIds: post.assetIds, claimIds: post.claimIds, disclosure },
       };
     case 'tiktok':
       return {
         actionType: 'social.tiktok.publish_video',
         params: {
-          title: post.caption.slice(0, 2200),
+          title: clipText(post.caption, 2200),
           videoUrl: `asset://${first}`,
           privacyLevel: d.options.tiktokPrivacy ?? 'SELF_ONLY',
           disableComment: false,
@@ -235,8 +235,8 @@ function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connecti
       return {
         actionType: 'social.youtube.upload_video',
         params: {
-          title: (d.options.youtubeTitle ?? post.caption).slice(0, 100),
-          description: post.caption.slice(0, 5000),
+          title: clipText(d.options.youtubeTitle ?? post.caption, 100),
+          description: clipText(post.caption, 5000),
           privacyStatus: d.options.youtubePrivacy ?? 'private',
           categoryId: '22',
           containsSyntheticMedia: d.isAiGenerated,
@@ -351,7 +351,7 @@ export async function recordInteraction(tx: Tx, deps: CoreDeps, tenantId: string
       parentExternalId: input.parentExternalId ?? null,
       kind: input.kind,
       authorHash: identifierHash(deps.config.identifierPepper, 'social_author', input.authorId),
-      text: input.text.slice(0, 8000),
+      text: clipText(input.text, 8000),
       receivedAt: input.receivedAt,
       moderation: moderate(input.text),
     })
@@ -904,7 +904,7 @@ export async function syncPageProfile(deps: CoreDeps, tenantId: string, connecti
     const attributes = { facebookPageId: pageId, categories: profile.categories, about: profile.about, website: profile.website, link: profile.link };
     let fact = await current(tx);
     if (!fact || fact.name !== profile.name || canonical(fact.attributes) !== canonical(attributes)) {
-      fact = await upsertEntity(tx, deps, tenantId, actor, { kind: 'product', key: pageFactKey(pageId), name: profile.name.slice(0, 300), attributes, evidenceId: ev.evidenceId });
+      fact = await upsertEntity(tx, deps, tenantId, actor, { kind: 'product', key: pageFactKey(pageId), name: clipText(profile.name, 300), attributes, evidenceId: ev.evidenceId });
     }
     return { pageId, evidenceId: ev.evidenceId, entityId: fact.status === 'active' ? fact.id : null, reused: false, profile };
   });
@@ -1058,10 +1058,10 @@ export async function draftOrganicPosts(deps: CoreDeps, tenantId: string, actor:
           tenantId,
           agent,
           {
-            title: `[Exploratory] ${out.title || idea.title}`.slice(0, 200),
-            objective: input.objective.slice(0, 500),
+            title: clipText(`[Exploratory] ${out.title || idea.title}`, 200),
+            objective: clipText(input.objective, 500),
             channel: 'facebook',
-            audience: idea.audience.slice(0, 500),
+            audience: clipText(idea.audience, 500),
             angle: out.angle,
             hooks: (hooks.length ? hooks : [idea.title]).slice(0, 10),
             proofPoints: out.proofPoints.filter((p) => ok.has(p.claimId)).slice(0, 10),
@@ -1081,17 +1081,17 @@ export async function draftOrganicPosts(deps: CoreDeps, tenantId: string, actor:
       for (const p of out.posts.slice(0, max)) {
         const text = p.text.trim();
         if (!text || text.length > 5000) {
-          rejected.push({ text: text.slice(0, 120), reason: 'empty or too long' });
+          rejected.push({ text: clipText(text, 120), reason: 'empty or too long' });
           continue;
         }
         if (!p.claimIds.every((id) => ok.has(id))) {
-          rejected.push({ text: text.slice(0, 120), reason: 'cited a claim that was not provided' });
+          rejected.push({ text: clipText(text, 120), reason: 'cited a claim that was not provided' });
           continue;
         }
         const lint = await lintCopy(tx, text, { claimIds: p.claimIds, channel: 'facebook', now });
         if (!lint.passed) {
           rejected.push({
-            text: text.slice(0, 120),
+            text: clipText(text, 120),
             reason: `copy lint: ${lint.violations
               .filter((v) => v.severity === 'block')
               .map((v) => v.code)

@@ -199,6 +199,8 @@ export interface CurriculumRef {
   pack: string;
   version: string;
   unitId: string;
+  /** An earlier quiz or notice-reading unit whose answer the post reveals. */
+  revealUnitId?: string;
 }
 
 export interface CurriculumCheck {
@@ -218,10 +220,12 @@ export function verifyCurriculumText(text: string, ref: CurriculumRef | null | u
   if (packVersion(pack) !== ref.version) return { verified: false, problems: [`pack ${ref.pack} changed since the post was composed (${ref.version} → ${packVersion(pack)})`] };
   const unit = unitById(pack, ref.unitId);
   if (!unit) return { verified: false, problems: [`unknown unit ${ref.unitId}`] };
+  const reveal = ref.revealUnitId ? unitById(pack, ref.revealUnitId) : null;
+  if (ref.revealUnitId && (!reveal || (reveal.kind !== 'quiz' && reveal.kind !== 'reading'))) return { verified: false, problems: [`unknown answer-reveal unit ${ref.revealUnitId}`] };
   const t = text.normalize('NFC');
   const problems: string[] = [];
   for (const c of unit.core) if (!t.includes(c)) problems.push(`the post does not quote "${c}"`);
-  const allowed = unit.korean.map((k) => k.normalize('NFC'));
+  const allowed = [...unit.korean, ...(reveal?.korean ?? [])].map((k) => k.normalize('NFC'));
   const foreign = [...new Set([...t.matchAll(HANGUL_RUN)].map((m) => m[0]))].filter((w) => !allowed.some((k) => k.includes(w)));
   if (foreign.length) problems.push(`Korean not in the verified unit: ${foreign.slice(0, 5).join(', ')}`);
   return { verified: problems.length === 0, problems };

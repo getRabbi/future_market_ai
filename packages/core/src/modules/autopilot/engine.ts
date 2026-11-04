@@ -3,7 +3,7 @@ import { goalCycles, goalTasks, growthDecisions, growthGoals, killSwitches, type
 import { and, asc, desc, eq, gte, inArray, isNotNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { CoreDeps } from '../../deps.js';
 import { registerEventHandlers } from '../../event-handlers.js';
-import { record } from '../../util.js';
+import { clipText, record, wellFormedJson } from '../../util.js';
 import { isSystemHalted } from '../m24-governance/index.js';
 import { autopilotAvailable, type GoalRow, goalKpi, limitsOf } from './goals.js';
 import { AUTOPILOT, aiCallsFor, type CycleRow, EXECUTORS, measureGoal, type StepContext, type StepResult, type TaskRow } from './steps.js';
@@ -256,9 +256,10 @@ async function claimNext(deps: CoreDeps, tenantId: string, goalId: string, now: 
 async function applyResult(deps: CoreDeps, tenantId: string, task: TaskRow, r: StepResult, now: Date): Promise<string> {
   return withTenant(deps.db, tctx(tenantId), async (tx) => {
     const refs = Object.fromEntries(Object.entries({ ...task.refs, ...(r.refs ?? {}) }).filter((e): e is [string, string] => typeof e[1] === 'string'));
-    const output = { ...task.output, ...(r.output ?? {}) };
+    // Step outputs quote Page posts and captions: a lone surrogate would make the jsonb write throw and strand the task.
+    const output = wellFormedJson({ ...task.output, ...(r.output ?? {}) });
     const aiCalls = task.aiCalls + (r.aiCalls ?? 0);
-    const base = { refs, output, aiCalls, leaseUntil: null, updatedAt: now, detail: r.detail.slice(0, 4000) };
+    const base = { refs, output, aiCalls, leaseUntil: null, updatedAt: now, detail: clipText(r.detail, 4000) };
     let status: string;
     let set: Partial<TaskRow>;
     if (r.kind === 'waiting') {
@@ -266,7 +267,7 @@ async function applyResult(deps: CoreDeps, tenantId: string, task: TaskRow, r: S
       set = { ...base, status, notBefore: r.recheckAt, waitUntil: task.waitUntil ?? new Date(now.getTime() + r.maxWaitHours * HOUR), attempts: Math.max(0, task.attempts - 1) };
     } else if (r.kind === 'retry') {
       status = task.attempts >= task.maxAttempts ? 'failed' : 'pending';
-      set = { ...base, status, lastError: r.error.slice(0, 2000), notBefore: new Date(now.getTime() + 2 ** task.attempts * MINUTE), ...(status === 'failed' ? { finishedAt: now, detail: `${r.detail} Gave up after ${task.attempts} attempts: ${r.error}`.slice(0, 4000) } : {}) };
+      set = { ...base, status, lastError: clipText(r.error, 2000), notBefore: new Date(now.getTime() + 2 ** task.attempts * MINUTE), ...(status === 'failed' ? { finishedAt: now, detail: clipText(`${r.detail} Gave up after ${task.attempts} attempts: ${r.error}`, 4000) } : {}) };
     } else {
       status = r.kind;
       set = { ...base, status, needs: r.kind === 'blocked' ? r.needs : null, finishedAt: now, notBefore: null };

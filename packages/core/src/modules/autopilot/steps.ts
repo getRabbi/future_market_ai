@@ -51,7 +51,7 @@ import {
 import { keywordOpportunities, queueSeoAudit } from '../m18-discovery/index.js';
 import { DOWNLOADS_SERIES_KEY, syncDownloadsSeries } from '../m19-app-growth/index.js';
 import { approvedJurisdictionScopes, getTenantPolicy } from '../m24-governance/index.js';
-import { draftPlannedPost, learnFrom, programForConnection, programHistory, syncPlanResults } from '../studio/index.js';
+import { draftPlannedPost, learnFrom, nextPostingSlot, POST_WINDOW, postingWindow, programForConnection, programHistory, syncPlanResults } from '../studio/index.js';
 import { type GoalRow, goalActions, goalCategories, goalKpi, limitsOf } from './goals.js';
 
 export type CycleRow = typeof goalCycles.$inferSelect;
@@ -579,6 +579,8 @@ async function bootstrapContent(c: StepContext): Promise<StepResult> {
  */
 async function studioContent(c: StepContext): Promise<StepResult> {
   const studio = studioOf(c.prior)!;
+  const slot = nextPostingSlot(c.now);
+  if (slot) return { kind: 'waiting', detail: `Lessons go out between ${POST_WINDOW.startHour}:00 and ${POST_WINDOW.endHour}:00 Bangladesh time; the day's post is drafted when that window opens (${slot.toISOString()}).`, recheckAt: slot, maxWaitHours: 48 };
   const r = await draftPlannedPost(c.deps, c.tenantId, { programId: studio.programId, goalId: c.goal.id, cycleId: c.cycle.id, market: c.goal.market, now: c.now });
   if (r.kind === 'blocked') return { kind: 'blocked', needs: r.needs, detail: r.detail, refs: { planItemId: r.planItemId } };
   if (r.kind === 'skipped') return { kind: 'skipped', detail: r.detail, refs: { planItemId: r.planItemId } };
@@ -662,7 +664,14 @@ async function submitPost(c: StepContext): Promise<StepResult> {
       .innerJoin(actionRequests, eq(actionRequests.id, socialPosts.actionId))
       .where(sql`${socialPosts.disclosure}->'review'->>'goalId' = ${c.goal.id}`),
   );
-  const recent = offers.filter((o) => o.at && Date.parse(o.at) > c.now.getTime() - DAY && !['DENIED', 'REJECTED', 'CANCELLED'].includes(o.status)).length;
+  const counted = offers.filter((o) => o.at && Date.parse(o.at) > c.now.getTime() - DAY && !['DENIED', 'REJECTED', 'CANCELLED'].includes(o.status)).map((o) => Date.parse(o.at!));
+  const recent = counted.length;
+  if (recent >= lim.maxPostsPerDay && studioOf(c.prior)) {
+    // A day's lesson waits until the rolling 24 h limit frees a slot, if that is still within its posting window.
+    const clearsAt = new Date(counted.sort((a, b) => a - b)[recent - lim.maxPostsPerDay]! + DAY + 1_000);
+    if (clearsAt < postingWindow(c.now).end)
+      return { kind: 'waiting', detail: `This goal handed ${recent} post${recent === 1 ? '' : 's'} to the execution gateway in the last 24 hours (limit ${lim.maxPostsPerDay}); today's lesson goes out when the limit frees a slot at ${clearsAt.toISOString()}.`, recheckAt: clearsAt, maxWaitHours: 4, output: { postIds } };
+  }
   if (recent >= lim.maxPostsPerDay) return { kind: 'skipped', detail: `This goal already handed ${recent} post${recent === 1 ? '' : 's'} to the execution gateway in the last 24 hours (limit ${lim.maxPostsPerDay}); the draft waits for a later cycle.`, output: { postIds } };
   const ideaId = c.prior.content?.output.ideaId as string | undefined;
   const page = ((c.prior.observe?.output.organic as { pages: OrganicPage[] } | null | undefined)?.pages ?? [])[0];

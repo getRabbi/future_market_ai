@@ -63,7 +63,7 @@ export const ACTION_TYPES = [
           .max(10)
           .optional(),
         /** D-040: the verified curriculum unit the post teaches (M23 checks the message against it). */
-        curriculum: z.object({ pack: z.string().min(1), version: z.string().min(1), unitId: z.string().min(1) }).optional(),
+        curriculum: z.object({ pack: z.string().min(1), version: z.string().min(1), unitId: z.string().min(1), revealUnitId: z.string().min(1).optional() }).optional(),
         claimIds: z.array(z.string().uuid()).default([]),
         disclosure,
       })
