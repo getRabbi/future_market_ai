@@ -18,6 +18,7 @@ import './modules/m02-customers/executors.js';
 export * from './agents.js';
 export * from './ai-budget.js';
 export * as autopilot from './modules/autopilot/index.js';
+export * as brandsModule from './modules/brands/index.js';
 export * as competitorsModule from './modules/m05-competitors/index.js';
 export * as ideas from './modules/m06-ideas/index.js';
 export * as brain from './modules/m07-brain/index.js';

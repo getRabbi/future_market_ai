@@ -1,5 +1,6 @@
 export * from './auth.js';
 export * from './autopilot.js';
+export * from './brands.js';
 export * from './data.js';
 export * from './growth.js';
 export * from './intelligence.js';

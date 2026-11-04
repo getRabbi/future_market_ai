@@ -99,6 +99,13 @@
       "when": 1793649360424,
       "tag": "0013_app_event_coverage",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793817838035,
+      "tag": "0014_brands",
+      "breakpoints": true
     }
   ]
 }
