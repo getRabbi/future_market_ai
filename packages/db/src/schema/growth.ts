@@ -252,7 +252,11 @@ export const socialPosts = pgTable(
     createdBy: text('created_by').notNull(),
     createdAt: createdAt(),
   },
-  (t) => [index('social_posts_schedule_idx').on(t.tenantId, t.status, t.scheduledAt), oneOf('social_posts_platform_chk', t.platform, ['facebook', 'instagram', 'tiktok', 'youtube']), oneOf('social_posts_status_chk', t.status, ['draft', 'scheduled', 'submitted', 'published_verified', 'failed', 'cancelled', 'blocked'])],
+  (t) => [
+    index('social_posts_schedule_idx').on(t.tenantId, t.status, t.scheduledAt),
+    oneOf('social_posts_platform_chk', t.platform, ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin', 'x']),
+    oneOf('social_posts_status_chk', t.status, ['draft', 'scheduled', 'submitted', 'published_verified', 'failed', 'cancelled', 'blocked']),
+  ],
 );
 
 export const socialInteractions = pgTable(

@@ -11,6 +11,8 @@ Every consequential write is an ActionRequest evaluated by the deterministic pol
 | `social.facebook.publish_post` | meta | PUBLIC_PUBLISHING |  | yes |  | read_after_write | supported | yes |
 | `social.instagram.publish_media` | meta | PUBLIC_PUBLISHING |  | yes |  | status_poll | manual | yes |
 | `social.tiktok.publish_video` | tiktok | PUBLIC_PUBLISHING |  | yes |  | status_poll | manual | yes |
+| `social.linkedin.publish_post` | linkedin | PUBLIC_PUBLISHING |  | yes |  | read_after_write | supported | yes |
+| `social.x.publish_post` | x | PUBLIC_PUBLISHING |  | yes |  | read_after_write | supported | no (B-019) |
 | `social.youtube.upload_video` | youtube | PUBLIC_PUBLISHING |  | yes |  | read_after_write | supported | yes |
 | `social.facebook.reply_comment` | meta | PUBLIC_PUBLISHING |  | yes | yes | read_after_write | supported | yes |
 | `ads.google.update_campaign_budget` | google_ads | SPEND | yes |  |  | read_after_write | supported | yes |

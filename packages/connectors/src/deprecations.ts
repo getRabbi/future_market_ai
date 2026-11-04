@@ -53,15 +53,30 @@ export function lifecycleRule(provider: LifecycleProvider, apiVersion: string): 
       return { provider, apiVersion, kind: 'evergreen', sunsetAt: null, basis: 'No published sunset for the v2 open API; watched through response headers.', sourceUrl: 'https://developers.tiktok.com/doc/overview' };
     case 'youtube':
       return { provider, apiVersion, kind: 'evergreen', sunsetAt: null, basis: 'YouTube Data API v3 has no published sunset; watched through response headers.', sourceUrl: 'https://developers.google.com/youtube/v3/revision_history' };
+    case 'linkedin': {
+      // LinkedIn Marketing versions are monthly (YYYYMM) and supported for about a year (202511 sunsets 2026-11-16).
+      const m = /^(d{4})(d{2})$/.exec(apiVersion);
+      const sunsetAt = m ? new Date(Date.UTC(Number(m[1]) + 1, Number(m[2]) - 1, 1)).toISOString() : null;
+      return {
+        provider,
+        apiVersion,
+        kind: 'dated',
+        sunsetAt,
+        basis: 'LinkedIn supports each monthly Marketing API version for about one year; the derived date is the earliest likely sunset. Record the announced date from the migrations page.',
+        sourceUrl: 'https://learn.microsoft.com/en-us/linkedin/marketing/versioning',
+      };
+    }
+    case 'x':
+      return { provider, apiVersion, kind: 'evergreen', sunsetAt: null, basis: 'X API v2 has no published sunset; watched through response headers and the changelog.', sourceUrl: 'https://docs.x.com/changelog' };
     case 'appStoreConnect':
       return { provider, apiVersion, kind: 'evergreen', sunsetAt: null, basis: 'App Store Connect API v1 has no published sunset; watched through response headers.', sourceUrl: 'https://developer.apple.com/documentation/appstoreconnectapi' };
   }
 }
 
-export const LIFECYCLE_PROVIDERS: LifecycleProvider[] = ['meta', 'googleAds', 'shopify', 'tiktok', 'youtube', 'appStoreConnect'];
+export const LIFECYCLE_PROVIDERS: LifecycleProvider[] = ['meta', 'googleAds', 'shopify', 'tiktok', 'youtube', 'linkedin', 'x', 'appStoreConnect'];
 
 /** Action-type provider ids (contracts PROVIDERS) to lifecycle keys. */
-export const LIFECYCLE_KEY: Partial<Record<string, LifecycleProvider>> = { meta: 'meta', google_ads: 'googleAds', shopify: 'shopify', tiktok: 'tiktok', youtube: 'youtube', app_store_connect: 'appStoreConnect' };
+export const LIFECYCLE_KEY: Partial<Record<string, LifecycleProvider>> = { meta: 'meta', google_ads: 'googleAds', shopify: 'shopify', tiktok: 'tiktok', youtube: 'youtube', linkedin: 'linkedin', x: 'x', app_store_connect: 'appStoreConnect' };
 
 export type DeprecationSignalKind = 'deprecation_header' | 'sunset_header' | 'provider_warning' | 'version_upgraded';
 

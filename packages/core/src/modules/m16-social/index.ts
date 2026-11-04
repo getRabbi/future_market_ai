@@ -2,7 +2,7 @@ import { injectionSignals, PROMPTS, redactPii, untrustedBlock } from '@futuregro
 import { fetchPageInsights, fetchPagePosts, fetchPageProfile, type PAGE_INSIGHT_METRICS, PAGE_POST_METRICS, type PagePostMetric, type PagePostObservation, type PageProfile } from '@futuregrow/connectors';
 import { actionRequests, assets, claims, connections, type DbOrTx, evidenceRecords, growthIdeas, kgEntities, metricPoints, metricSeries, socialInteractions, socialPosts, syntheticPersonas, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, identifierHash, invalid, notFound, sha256Hex } from '@futuregrow/observability';
-import { and, desc, eq, gte, inArray, like, lte, max, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, like, lte, max, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runAgent } from '../../agents.js';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
@@ -17,13 +17,17 @@ import { effectiveFreshness } from '../m23-execution/facts.js';
 import { type ActionView, cancelAction, currentPolicyDecision, proposeAction } from '../m23-execution/gateway.js';
 import { type ActionRow, registerHooks, registerResolver } from '../m23-execution/registry.js';
 import { registerWebhookHandler } from '../webhooks.js';
+import { checkCaption } from './platforms.js';
 
-const PLATFORM_PROVIDER = { facebook: 'meta', instagram: 'meta', tiktok: 'tiktok', youtube: 'youtube' } as const;
+export * from './platforms.js';
+
+const PLATFORM_PROVIDER = { facebook: 'meta', instagram: 'meta', tiktok: 'tiktok', youtube: 'youtube', linkedin: 'linkedin', x: 'x' } as const;
 type Platform = keyof typeof PLATFORM_PROVIDER;
+const PUBLISHING_PLATFORMS = Object.keys(PLATFORM_PROVIDER) as [Platform, ...Platform[]];
 
 export const ScheduleSchema = z.object({
   connectionId: z.string().uuid(),
-  platform: z.enum(['facebook', 'instagram', 'tiktok', 'youtube']),
+  platform: z.enum(PUBLISHING_PLATFORMS),
   personaId: z.string().uuid().nullable().default(null),
   assetIds: z.array(z.string().uuid()).max(10).default([]),
   caption: z.string().min(1).max(5000),
@@ -54,6 +58,9 @@ export async function schedulePost(tx: Tx, deps: CoreDeps, tenantId: string, act
   if (!conn) throw notFound('connection');
   if (conn.provider !== PLATFORM_PROVIDER[p.platform]) throw invalid(`connection is ${conn.provider}, platform ${p.platform} needs ${PLATFORM_PROVIDER[p.platform]}`);
   if ((p.platform === 'instagram' || p.platform === 'tiktok' || p.platform === 'youtube') && p.assetIds.length === 0) throw invalid(`${p.platform} posts need media`);
+  // D-042: each platform's own limits; copy that does not fit is rewritten for the channel, never cut.
+  const fit = checkCaption(p.platform, p.caption, { link: p.link, images: p.assetIds.length });
+  if (!fit.ok) throw invalid(`caption does not fit ${p.platform}: ${fit.problems.join('; ')}`);
 
   let caption = p.caption;
   const disclosure = { ...p.disclosure, syntheticPersonaId: p.personaId };
@@ -127,6 +134,8 @@ const PUBLISH_PLATFORM: Record<string, { platform: Platform; captionKey: string 
   'social.instagram.publish_media': { platform: 'instagram', captionKey: 'caption' },
   'social.tiktok.publish_video': { platform: 'tiktok', captionKey: 'title' },
   'social.youtube.upload_video': { platform: 'youtube', captionKey: 'description' },
+  'social.linkedin.publish_post': { platform: 'linkedin', captionKey: 'commentary' },
+  'social.x.publish_post': { platform: 'x', captionKey: 'text' },
 };
 
 /**
@@ -227,6 +236,34 @@ function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connecti
           brandOrganicToggle: !d.paidPartnership,
           postId: post.id,
           assetIds: post.assetIds,
+          claimIds: post.claimIds,
+          disclosure,
+        },
+      };
+    case 'linkedin':
+      return {
+        actionType: 'social.linkedin.publish_post',
+        params: {
+          authorUrn: /^d+$/.test(conn.externalAccountId) ? `urn:li:organization:${conn.externalAccountId}` : conn.externalAccountId,
+          commentary: post.caption,
+          postId: post.id,
+          assetIds: post.assetIds,
+          ...(post.assetIds.length ? { media: post.assetIds.map((id) => ({ assetId: id, sha256: assetFacts[id]?.sha256 ?? '' })) } : {}),
+          claimIds: post.claimIds,
+          disclosure,
+        },
+      };
+    case 'x':
+      return {
+        actionType: 'social.x.publish_post',
+        params: {
+          text: post.link
+            ? `${post.caption}
+${post.link}`
+            : post.caption,
+          postId: post.id,
+          assetIds: post.assetIds,
+          ...(post.assetIds.length ? { media: post.assetIds.map((id) => ({ assetId: id, sha256: assetFacts[id]?.sha256 ?? '' })) } : {}),
           claimIds: post.claimIds,
           disclosure,
         },
@@ -340,7 +377,41 @@ export function moderate(text: string) {
   return { injectionSignals: injection, needsEscalation: escalation || injection.length > 0, abusiveOrLegal: escalation };
 }
 
+const SPAM_SIGNALS: [string, RegExp][] = [
+  ['link', /https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|net|org|xyz|top|link|click|shop|site|online|ru|ly)\b/i],
+  ['contact_invite', /whats\s?app|telegram|t\.me\/|wa\.me\/|\b(?:dm|inbox|message) me\b|ইনবক্স কর|হোয়াটসঅ্যাপ|টেলিগ্রাম/i],
+  ['phone_number', /\+?\d[\d\s-]{8,}\d/],
+  ['money_promo', /\b(?:earn|income|profit|invest(?:ment)?|crypto|bitcoin|forex|loan|giveaway)\b|ইনকাম|টাকা আয়|আয় করুন|বিনিয়োগ/i],
+  ['repetition', /(.)\1{7,}/u],
+];
+
+export type SpamVerdict = 'ok' | 'suspicious' | 'likely_spam' | 'duplicate';
+
+/**
+ * Explainable spam and duplicate screen for incoming comments. "duplicate": the same author posted
+ * the same text on this account in the last 7 days, or two other authors posted identical text
+ * (copy-paste campaigns). Likely spam and duplicates get no AI reply draft.
+ */
+export function classifySpam(text: string, authorHash: string, recent: { authorHash: string; text: string }[]): { verdict: SpamVerdict; signals: string[] } {
+  const signals = SPAM_SIGNALS.filter(([, re]) => re.test(text)).map(([k]) => k);
+  const norm = normalizeText(text);
+  if (norm.length >= 8) {
+    const same = recent.filter((r) => normalizeText(r.text) === norm);
+    if (same.some((r) => r.authorHash === authorHash)) return { verdict: 'duplicate', signals: [...signals, 'repeated_by_author'] };
+    if (new Set(same.map((r) => r.authorHash)).size >= 2) return { verdict: 'duplicate', signals: [...signals, 'copied_across_authors'] };
+  }
+  const verdict: SpamVerdict = signals.length >= 2 ? 'likely_spam' : signals.length === 1 ? 'suspicious' : 'ok';
+  return { verdict, signals };
+}
+
 export async function recordInteraction(tx: Tx, deps: CoreDeps, tenantId: string, input: { connectionId: string; platform: string; externalId: string; parentExternalId?: string | null; kind: 'comment' | 'mention' | 'message'; authorId: string; text: string; receivedAt: Date }) {
+  const authorHash = identifierHash(deps.config.identifierPepper, 'social_author', input.authorId);
+  const recent = await tx
+    .select({ authorHash: socialInteractions.authorHash, text: socialInteractions.text })
+    .from(socialInteractions)
+    .where(and(eq(socialInteractions.connectionId, input.connectionId), gte(socialInteractions.receivedAt, new Date(input.receivedAt.getTime() - 7 * 86_400_000)), ne(socialInteractions.externalId, input.externalId)))
+    .orderBy(desc(socialInteractions.receivedAt))
+    .limit(500);
   const [row] = await tx
     .insert(socialInteractions)
     .values({
@@ -350,10 +421,10 @@ export async function recordInteraction(tx: Tx, deps: CoreDeps, tenantId: string
       externalId: input.externalId,
       parentExternalId: input.parentExternalId ?? null,
       kind: input.kind,
-      authorHash: identifierHash(deps.config.identifierPepper, 'social_author', input.authorId),
+      authorHash,
       text: clipText(input.text, 8000),
       receivedAt: input.receivedAt,
-      moderation: moderate(input.text),
+      moderation: { ...moderate(input.text), spam: classifySpam(input.text, authorHash, recent) },
     })
     .onConflictDoNothing()
     .returning();
@@ -400,7 +471,13 @@ export async function draftReply(deps: CoreDeps, tenantId: string, actor: Actor,
       const c = await searchKnowledge(tx, { query: i.text.slice(0, 300), roles: [], audience: 'public', limit: 6, match: 'any' });
       return { it: i, chunks: screenRetrieved(c).kept };
     });
-    const mod = it.moderation as { needsEscalation?: boolean };
+    const mod = it.moderation as { needsEscalation?: boolean; spam?: { verdict?: SpamVerdict } };
+    if (mod.spam?.verdict === 'likely_spam' || mod.spam?.verdict === 'duplicate') {
+      // No model call for spam or duplicates: nothing is drafted and nothing is posted.
+      await withTenant(deps.db, { tenantId, actor: 'agent:community-assistant' }, (tx) => tx.update(socialInteractions).set({ replyStatus: 'skipped' }).where(eq(socialInteractions.id, it.id)));
+      ctx.note('moderation', { spam: mod.spam.verdict });
+      return { draft: null, escalate: false, spam: mod.spam.verdict };
+    }
     if (mod.needsEscalation) {
       await withTenant(deps.db, { tenantId, actor: 'agent:community-assistant' }, (tx) => tx.update(socialInteractions).set({ replyStatus: 'skipped' }).where(eq(socialInteractions.id, it.id)));
       ctx.note('moderation', { escalated: true });

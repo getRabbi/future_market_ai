@@ -7,6 +7,8 @@ export type ProviderCredentials =
   | { provider: 'google_ads'; clientId: string; clientSecret: string; refreshToken: string; loginCustomerId?: string; developerToken?: string }
   | { provider: 'tiktok'; accessToken: string; openId?: string }
   | { provider: 'youtube'; clientId: string; clientSecret: string; refreshToken: string }
+  | { provider: 'linkedin'; accessToken: string }
+  | { provider: 'x'; accessToken: string }
   | { provider: 'shopify'; shopDomain: string; accessToken: string }
   | { provider: 'app_store_connect'; issuerId: string; keyId: string; privateKeyPem: string; vendorNumber?: string }
   | { provider: 'resend'; apiKey: string }
@@ -30,6 +32,8 @@ export interface ProviderEndpoints {
   tiktok: string;
   youtubeData: string;
   youtubeUpload: string;
+  linkedin: string;
+  x: string;
   appStoreConnect: string;
   resend: string;
   searchConsole: string;
@@ -44,6 +48,8 @@ export const DEFAULT_ENDPOINTS: ProviderEndpoints = {
   tiktok: 'https://open.tiktokapis.com',
   youtubeData: 'https://www.googleapis.com/youtube/v3',
   youtubeUpload: 'https://www.googleapis.com/upload/youtube/v3',
+  linkedin: 'https://api.linkedin.com',
+  x: 'https://api.x.com',
   appStoreConnect: 'https://api.appstoreconnect.apple.com',
   resend: 'https://api.resend.com',
   searchConsole: 'https://www.googleapis.com/webmasters/v3',
@@ -56,6 +62,9 @@ export interface ApiVersions {
   shopify: string;
   tiktok: string;
   youtube: string;
+  /** Linkedin-Version header (YYYYMM). */
+  linkedin: string;
+  x: string;
   appStoreConnect: string;
 }
 
@@ -65,6 +74,8 @@ export const DEFAULT_API_VERSIONS: ApiVersions = {
   shopify: '2026-10',
   tiktok: 'v2',
   youtube: 'v3',
+  linkedin: '202610',
+  x: '2',
   appStoreConnect: 'v1',
 };
 

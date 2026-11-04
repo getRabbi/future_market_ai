@@ -1,0 +1,6 @@
+ALTER TABLE "social_posts" DROP CONSTRAINT "social_posts_platform_chk";--> statement-breakpoint
+ALTER TABLE "connections" DROP CONSTRAINT "connections_provider_chk";--> statement-breakpoint
+ALTER TABLE "webhook_inbox" DROP CONSTRAINT "webhook_inbox_provider_chk";--> statement-breakpoint
+ALTER TABLE "social_posts" ADD CONSTRAINT "social_posts_platform_chk" CHECK ("social_posts"."platform" in ('facebook', 'instagram', 'tiktok', 'youtube', 'linkedin', 'x'));--> statement-breakpoint
+ALTER TABLE "connections" ADD CONSTRAINT "connections_provider_chk" CHECK ("connections"."provider" in ('internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'linkedin', 'x', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console'));--> statement-breakpoint
+ALTER TABLE "webhook_inbox" ADD CONSTRAINT "webhook_inbox_provider_chk" CHECK ("webhook_inbox"."provider" in ('internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'linkedin', 'x', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console'));
