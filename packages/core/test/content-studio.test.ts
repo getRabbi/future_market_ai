@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { type ClaimRef, compose, type Objective, taggedListingUrl } from '../src/modules/studio/compose.js';
 import { PACKS, packUnits, packVersion, unitById, verifyCurriculumText } from '../src/modules/studio/curriculum.js';
-import { dayOffset, type HistoryItem, planDays } from '../src/modules/studio/planner.js';
+import { dayOffset, type HistoryItem, nextPostingSlot, planDays, postingWindow } from '../src/modules/studio/planner.js';
 
 /*
  * D-040 content studio: the verified curriculum composes into captions and cards that pass the
@@ -232,6 +232,73 @@ it('tags the verified Play listing with decodable campaign and lesson attributio
     utm_medium: 'organic_social',
     utm_campaign: 'eps_daily',
     utm_content: 'v-safety-1',
+  });
+});
+
+describe('caption quality, answer reveal and posting time (D-040 follow-up)', () => {
+  const base = { topicNames: pack.topics, claims, appUrl: null, campaign: 'eps_daily', palette: 'navy' as const, variant: 0 as const, serial: 1, recentHooks: [] as string[], recentPrompts: [] as string[] };
+  const MARKS = ['১', '২', '৩', '৪'];
+
+  it('captions give a hook, a short takeaway and one question, leave the lesson to the card, and never answer their own quiz or notice', () => {
+    const failures: string[] = [];
+    for (const unit of packUnits(pack)) {
+      const c = compose({ ...base, unit, kind: unit.kind, objective: 'EDUCATE', salt: unit.id })!;
+      const lines = c.caption.split('\n').filter((l) => l.trim());
+      if (lines.length > 6) failures.push(`${unit.id}: ${lines.length} lines`);
+      if (!c.caption.includes('?')) failures.push(`${unit.id}: no question`);
+      if (/উত্তর:|\n\.\n/u.test(c.caption)) failures.push(`${unit.id}: answers itself`);
+      const asks = unit.kind === 'quiz' || unit.kind === 'reading';
+      if (asks !== c.caption.includes('সঠিক উত্তর থাকবে পরের পোস্টে')) failures.push(`${unit.id}: answer-later note`);
+      if (unit.kind === 'vocab' && c.caption.includes(unit.data.example.ko)) failures.push(`${unit.id}: repeats the card's example`);
+      if (unit.kind === 'grammar' && unit.data.rules.some((r) => c.caption.includes(`${r.when}: ${r.use}`))) failures.push(`${unit.id}: repeats the card's rules`);
+      if (unit.kind === 'reading' && unit.data.options.some((o) => c.caption.includes(o))) failures.push(`${unit.id}: repeats the card's options`);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('reveals the previous quiz or notice answer in the next lesson post, which passes copy lint and the curriculum check only with that unit referenced', async () => {
+    const version = packVersion(pack);
+    const vocab = packUnits(pack).filter((u) => u.kind === 'vocab')[3]!;
+    const quiz = unitById(pack, 'q-word-v-anjeonmo')!;
+    const reading = unitById(pack, 'r-no-smoking')!;
+    if (quiz.kind !== 'quiz' || reading.kind !== 'reading') throw new Error('fixture units');
+    expect(compose({ ...base, unit: quiz, kind: 'quiz', objective: 'EDUCATE', salt: 'q' })!.revealUnitId).toBeNull();
+
+    const afterQuiz = compose({ ...base, unit: vocab, kind: 'vocab', objective: 'EDUCATE', salt: 'v', previous: quiz })!;
+    expect(afterQuiz.revealUnitId).toBe(quiz.id);
+    expect(afterQuiz.caption).toContain(`✅ আগের কুইজের উত্তর: ${MARKS[quiz.data.answer]}) 안전모\n안전모 (${quiz.data.vocab.rr}) = ${quiz.data.vocab.bn}`);
+    const lint = await tx((t) => knowledge.lintCopy(t, afterQuiz.caption, { claimIds: afterQuiz.claimIds, channel: 'facebook', now: h.clock.now() }));
+    expect(lint.passed, JSON.stringify(lint.violations)).toBe(true);
+    expect(verifyCurriculumText(afterQuiz.caption, { pack: pack.id, version, unitId: vocab.id, revealUnitId: quiz.id })).toEqual({ verified: true, problems: [] });
+    expect(verifyCurriculumText(afterQuiz.caption, { pack: pack.id, version, unitId: vocab.id }).problems.join()).toMatch(/not in the verified unit: 안전모/);
+    expect(verifyCurriculumText(afterQuiz.caption, { pack: pack.id, version, unitId: vocab.id, revealUnitId: vocab.id }).problems.join()).toMatch(/answer-reveal unit/);
+
+    // The revealed number is the one the notice card showed.
+    const readingPost = compose({ ...base, unit: reading, kind: 'reading', objective: 'EDUCATE', salt: 'r' })!;
+    const shown = (readingPost.card as { options: string[] }).options;
+    const afterReading = compose({ ...base, unit: vocab, kind: 'vocab', objective: 'EDUCATE', salt: 'v', previous: reading })!;
+    expect(afterReading.caption).toContain(`✅ আগের নোটিশের উত্তর: ${MARKS[shown.indexOf('ধূমপান করা')]}) ধূমপান করা\n${reading.data.explainBn}`);
+    expect(verifyCurriculumText(afterReading.caption, { pack: pack.id, version, unitId: vocab.id, revealUnitId: reading.id }).verified).toBe(true);
+
+    // Only quiz and notice questions are answered; app capability posts carry no curriculum reference and reveal nothing.
+    expect(compose({ ...base, unit: vocab, kind: 'vocab', objective: 'EDUCATE', salt: 'v', previous: packUnits(pack).filter((u) => u.kind === 'vocab')[0]! })!.revealUnitId).toBeNull();
+    expect(compose({ ...base, unit: null, kind: 'feature', objective: 'DISCOVER', salt: 'f', previous: quiz })!.revealUnitId).toBeNull();
+  });
+
+  it('posts in the Bangladesh evening window instead of when the cycle happens to run', () => {
+    // 2026-11-04T19:00Z is 01:00 on 5 November in Bangladesh, when the 4 November post went out.
+    expect(nextPostingSlot(new Date('2026-11-04T19:00:00Z'))?.toISOString()).toBe('2026-11-05T13:00:00.000Z');
+    expect(nextPostingSlot(new Date('2026-11-05T13:30:00Z'))).toBeNull();
+    expect(nextPostingSlot(new Date('2026-11-05T16:00:00Z'))?.toISOString()).toBe('2026-11-06T13:00:00.000Z');
+    expect(postingWindow(new Date('2026-11-05T13:30:00Z'))).toEqual({ start: new Date('2026-11-05T13:00:00Z'), end: new Date('2026-11-05T16:00:00Z') });
+  });
+
+  it('does not review a word whose post never went out', () => {
+    const opts = { appClaims: true, appLink: true, appCtaPerWeek: 2, linkPerWeek: 1 };
+    const days = [...Array(7).keys()].map((k) => dayOffset('2026-11-10', k)); // Tuesday: review quiz day
+    const taught = (status: string): HistoryItem[] => [{ day: '2026-11-08', kind: 'vocab', unitId: 'v-anjeonmo', objective: 'EDUCATE', template: 'vocab', palette: 'navy', variant: 0, hookId: null, promptId: null, status, engagement: null }];
+    expect(planDays(pack, days, taught('published'), opts).items[0]!.unitId).toMatch(/^q-(meaning|word)-v-anjeonmo$/);
+    expect(planDays(pack, days, taught('drafted'), opts).items[0]!.unitId).not.toMatch(/^q-.*v-anjeonmo$/);
   });
 });
 
