@@ -1,6 +1,7 @@
 import { type CardTemplate, PALETTE_IDS, type PaletteId } from '@futuregrow/visuals';
 import type { Objective } from './compose.js';
 import { type CurriculumPack, challengeUnit, packUnits, type Segment, type Unit, unitById } from './curriculum.js';
+import { type Comparison, compareArms, MIN_POSTS_PER_ARM } from './learning.js';
 
 /**
  * Seven-day content calendar (D-040). Deterministic and explainable: a weekly lesson rotation,
@@ -86,29 +87,45 @@ const PUBLISHED = new Set(['drafted', 'submitted', 'published']);
 export interface Learning {
   measuredPosts: number;
   phase: 'exploring' | 'adapting';
-  byKind: { kind: string; posts: number; mean: number; lift: number | null }[];
+  byKind: { kind: string; posts: number; mean: number; lift: number | null; low: number; high: number; pBest: number | null }[];
   notes: string[];
+  /** Lesson type drives the calendar; the other dimensions are reported only (D-043). */
+  comparisons: Comparison[];
 }
 
-/** What the measured posts say, by lesson type; nothing is extrapolated beyond observed counters. */
+/**
+ * What the measured posts say, with uncertainty: the mix changes only when one lesson type is ahead
+ * of another with 95% posterior probability on enough complete, frozen observations.
+ */
 export function learnFrom(history: HistoryItem[]): Learning {
   const measured = history.filter((h) => h.status === 'published' && h.engagement !== null);
   const overall = measured.length ? measured.reduce((s, h) => s + h.engagement!, 0) / measured.length : 0;
-  const kinds = [...new Set(measured.map((h) => h.kind))];
-  const byKind = kinds
-    .map((k) => {
-      const xs = measured.filter((h) => h.kind === k).map((h) => h.engagement!);
-      const mean = xs.reduce((s, x) => s + x, 0) / xs.length;
-      return { kind: k, posts: xs.length, mean: Math.round(mean * 100) / 100, lift: xs.length >= 3 && overall > 0 ? Math.round(((mean - overall) / overall) * 100) / 100 : null };
-    })
-    .sort((a, b) => b.posts - a.posts);
-  const qualified = byKind.filter((k) => k.lift !== null);
-  const phase = measured.length >= 8 && qualified.length >= 2 ? 'adapting' : 'exploring';
+  const kind = compareArms(
+    'lesson type',
+    measured.map((h) => ({ arm: h.kind, value: h.engagement })),
+  );
+  const others = [
+    compareArms(
+      'palette',
+      measured.map((h) => ({ arm: h.palette, value: h.engagement })),
+    ),
+    compareArms(
+      'objective',
+      measured.map((h) => ({ arm: h.objective, value: h.engagement })),
+    ),
+    compareArms(
+      'hook',
+      measured.filter((h) => h.hookId).map((h) => ({ arm: h.hookId!, value: h.engagement })),
+    ),
+  ];
+  const byKind = kind.arms.map((a) => ({ kind: a.arm, posts: a.posts, mean: a.mean, lift: a.posts >= MIN_POSTS_PER_ARM && overall > 0 ? Math.round(((a.mean - overall) / overall) * 100) / 100 : null, low: a.low, high: a.high, pBest: a.pBest }));
+  const phase = kind.verdict === 'clear_difference' ? 'adapting' : 'exploring';
+  const name = (k: string) => KIND_NAME[k as PlanKind] ?? k;
   const notes =
     phase === 'exploring'
-      ? [`${measured.length} measured post${measured.length === 1 ? '' : 's'}; lesson types need three measured posts each (and eight in total) before the mix changes, so the calendar keeps exploring.`]
-      : qualified.map((k) => `${KIND_NAME[k.kind as PlanKind] ?? k.kind}: ${k.posts} posts, mean engagement ${k.mean} (${k.lift! >= 0 ? '+' : ''}${Math.round(k.lift! * 100)}% vs all posts).`);
-  return { measuredPosts: measured.length, phase, byKind, notes };
+      ? [`${measured.length} measured post${measured.length === 1 ? '' : 's'} with complete counters; ${kind.verdict === 'insufficient_data' ? kind.note : 'no lesson type is ahead with 95% probability yet'}, so the calendar keeps exploring.`]
+      : [`${name(kind.best!)} is ahead of ${name(kind.worst!)} with ${Math.round(kind.pBestOverWorst! * 100)}% posterior probability on ${measured.length} measured posts.`, 'Lesson types follow the weekday, so a difference can also reflect the day: it is an association, not a causal effect.'];
+  return { measuredPosts: measured.length, phase, byKind, notes, comparisons: [kind, ...others] };
 }
 
 function baseRotation(days: string[], lettersLeft: boolean): PlanKind[] {
@@ -149,14 +166,14 @@ export function planDays(pack: CurriculumPack, days: string[], history: HistoryI
 
   // Adapt: one slot moves from the weakest to the strongest qualified lesson type.
   if (learning.phase === 'adapting') {
-    const q = learning.byKind.filter((k) => k.lift !== null && k.kind !== 'feature');
-    const best = q[0] && [...q].sort((a, b) => b.lift! - a.lift!)[0]!;
-    const worst = [...q].filter((k) => kinds.includes(k.kind as PlanKind) && k.kind !== 'challenge').sort((a, b) => a.lift! - b.lift!)[0];
-    if (best && worst && best.kind !== worst.kind && best.lift! >= 0.25 && worst.lift! <= -0.25 && kinds.filter((k) => k === best.kind).length < 2) {
-      const i = kinds.indexOf(worst.kind as PlanKind);
+    const cmp = learning.comparisons[0]!;
+    const best = cmp.best as PlanKind;
+    const worst = cmp.worst as PlanKind;
+    if (best !== 'feature' && worst !== 'challenge' && worst !== 'feature' && kinds.filter((k) => k === best).length < 2) {
+      const i = kinds.indexOf(worst);
       if (i >= 0) {
-        kinds[i] = best.kind as PlanKind;
-        notes.push(`Moved one ${KIND_NAME[worst.kind as PlanKind]} slot to ${KIND_NAME[best.kind as PlanKind]}: measured engagement ${Math.round(best.lift! * 100)}% above vs ${Math.round(worst.lift! * 100)}% below the average.`);
+        kinds[i] = best;
+        notes.push(`Moved one ${KIND_NAME[worst]} slot to ${KIND_NAME[best]} (${Math.round(cmp.pBestOverWorst! * 100)}% probability it engages more); one slot only, so both keep being measured.`);
       }
     }
   }
