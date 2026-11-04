@@ -49,6 +49,32 @@ export function hoursBetween(a: Date, b: Date): number {
   return Math.abs(b.getTime() - a.getTime()) / 3_600_000;
 }
 
+/**
+ * Cut text to at most `max` UTF-16 code units without splitting a surrogate pair. A plain
+ * `slice` can leave half an emoji, which PostgreSQL rejects inside json/jsonb values.
+ */
+export function clipText(s: string, max: number): string {
+  if (s.length <= max) return wellFormed(s);
+  const cut = s.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return wellFormed(last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut);
+}
+
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** A string with every lone surrogate replaced by U+FFFD (String.prototype.toWellFormed). */
+export function wellFormed(s: string): string {
+  return s.replace(LONE_SURROGATE, '�');
+}
+
+/** Replace lone surrogates anywhere in a JSON-bound value so a jsonb write cannot fail on them. */
+export function wellFormedJson<T>(value: T): T {
+  if (typeof value === 'string') return wellFormed(value) as T;
+  if (Array.isArray(value)) return value.map((v) => wellFormedJson(v)) as T;
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) return Object.fromEntries(Object.entries(value).map(([k, v]) => [wellFormed(k), wellFormedJson(v)])) as T;
+  return value;
+}
+
 export function normalizeText(s: string): string {
   return s
     .normalize('NFKC')

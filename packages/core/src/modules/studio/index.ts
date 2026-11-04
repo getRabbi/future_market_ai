@@ -5,7 +5,7 @@ import { type CardSpec, FONT_SOURCES, hammingDistance, PALETTE_IDS, type Palette
 import { and, desc, eq, gte, inArray, isNotNull, like, lt, ne, notInArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
-import { audit, requireRole } from '../../util.js';
+import { audit, clipText, requireRole } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { lintCopy } from '../m03-knowledge/index.js';
 import { recomputeEligibility } from '../m14-assets/index.js';
@@ -371,7 +371,7 @@ export async function draftPlannedPost(deps: CoreDeps, tenantId: string, args: {
     const cardText = card.text.join('\n');
     const cardLint = await lintCopy(t, cardText, { claimIds: composition.claimIds, now });
     const blocking = [...captionLint.violations, ...cardLint.violations].filter((v) => v.severity === 'block');
-    if (blocking.length) return { ok: false as const, reason: `copy lint: ${blocking.map((v) => `${v.code} (${v.excerpt.slice(0, 60)})`).join('; ')}`, attempts };
+    if (blocking.length) return { ok: false as const, reason: `copy lint: ${blocking.map((v) => `${v.code} (${clipText(v.excerpt, 60)})`).join('; ')}`, attempts };
 
     // The card becomes a tenant asset with its provenance, rights and QA (M14 decides eligibility).
     const sha = sha256Hex(card.png);
