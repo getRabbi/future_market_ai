@@ -11,13 +11,13 @@ import { lintCopy } from '../m03-knowledge/index.js';
 import { recomputeEligibility } from '../m14-assets/index.js';
 import { pageBrandScope, postResults } from '../m16-social/index.js';
 import { type ClaimRef, type Composition, compose, type Objective } from './compose.js';
-import { PACKS, packVersion, unitById, verifyCurriculumText } from './curriculum.js';
+import { type CurriculumRef, PACKS, packVersion, unitById, verifyCurriculumText } from './curriculum.js';
 import { dayOffset, type HistoryItem, learnFrom, localDay, type PlanKind, planDays } from './planner.js';
 
 export * from './community.js';
 export { type ClaimRef, compose, FEATURE_MATCHERS, HOOKS, OBJECTIVES, taggedListingUrl } from './compose.js';
 export { type CurriculumRef, PACKS, packUnits, packVersion, unitById, verifyCurriculumText } from './curriculum.js';
-export { learnFrom, localDay, planDays } from './planner.js';
+export { learnFrom, localDay, nextPostingSlot, POST_WINDOW, planDays, postingWindow } from './planner.js';
 
 /**
  * Content studio (D-040): turns a Facebook Page's curriculum program into a seven-day plan and,
@@ -208,6 +208,8 @@ const HANGUL_RUN = /[ᄀ-ᇿ㄰-㆏가-힣]+/gu;
 /** Korean on the card beyond the unit: the 한 brand mark. */
 const CARD_BRAND_KOREAN = ['한'];
 
+const curriculumRef = (pack: (typeof PACKS)[string], unitId: string, c: Composition): CurriculumRef => ({ pack: pack.id, version: packVersion(pack), unitId, ...(c.revealUnitId ? { revealUnitId: c.revealUnitId } : {}) });
+
 interface Prepared {
   composition: Composition;
   card: Awaited<ReturnType<typeof renderCard>>;
@@ -233,6 +235,14 @@ async function prepare(t: DbOrTx, deps: CoreDeps, item: PlanRow, program: Progra
         .from(contentPlanItems)
         .where(and(eq(contentPlanItems.programId, program.id), inArray(contentPlanItems.status, ['submitted', 'published'])))
     ).length + 1;
+  // The previous published lesson (within three days): a quiz or notice question gets its answer here.
+  const [last] = await t
+    .select({ unitId: contentPlanItems.unitId, day: contentPlanItems.day })
+    .from(contentPlanItems)
+    .where(and(eq(contentPlanItems.programId, program.id), eq(contentPlanItems.status, 'published'), lt(contentPlanItems.day, item.day)))
+    .orderBy(desc(contentPlanItems.day))
+    .limit(1);
+  const previous = last?.unitId && last.day >= dayOffset(item.day, -3) ? unitById(pack, last.unitId) : null;
   const palettes: { palette: PaletteId; variant: 0 | 1 }[] = [{ palette: item.palette as PaletteId, variant: item.variant as 0 | 1 }, ...PALETTE_IDS.filter((p) => p !== item.palette).map((p, i) => ({ palette: p, variant: ((item.variant + i + 1) % 2) as 0 | 1 }))];
   const attempts: Prepared['attempts'] = [];
   const dhashes = recent.map((r) => r.dhash).filter((d): d is string => Boolean(d));
@@ -251,6 +261,7 @@ async function prepare(t: DbOrTx, deps: CoreDeps, item: PlanRow, program: Progra
       recentHooks: recent.map((r) => r.hookId!).filter(Boolean),
       recentPrompts: recent.map((r) => r.promptId!).filter(Boolean),
       salt: `${item.id}`,
+      previous,
     });
     if (!composition) return { ok: false, reason: 'no approved claim backs an app capability post', attempts };
     const card = await renderCard(composition.card);
@@ -292,7 +303,7 @@ export async function previewPlanItem(deps: CoreDeps, tenantId: string, itemId: 
     const checks = {
       captionLint: { passed: captionLint.passed, codes: captionLint.violations.filter((v) => v.severity === 'block').map((v) => v.code) },
       cardLint: { passed: cardLint.passed, codes: cardLint.violations.filter((v) => v.severity === 'block').map((v) => v.code) },
-      curriculum: item.unitId ? verifyCurriculumText(composition.caption, { pack: pack.id, version: packVersion(pack), unitId: item.unitId }) : null,
+      curriculum: item.unitId ? verifyCurriculumText(composition.caption, curriculumRef(pack, item.unitId, composition)) : null,
       claimIds: composition.claimIds,
       link: composition.link,
     };
@@ -352,7 +363,7 @@ export async function draftPlannedPost(deps: CoreDeps, tenantId: string, args: {
     // The card becomes a tenant asset with its provenance, rights and QA (M14 decides eligibility).
     const sha = sha256Hex(card.png);
     const put = await deps.store.put(tenantKey(tenantId, 'assets', sha), card.png, 'image/png');
-    const unitRef = item.unitId ? { pack: pack.id, version: packVersion(pack), unitId: item.unitId } : null;
+    const unitRef = item.unitId ? curriculumRef(pack, item.unitId, composition) : null;
     const prov = await admitInternalEvidence(t, tenantId, AUTOPILOT, {
       kind: 'document',
       owner: 'futuregrow-content-studio',
@@ -513,7 +524,8 @@ export async function syncPlanResults(deps: CoreDeps, tenantId: string, programI
         const age = post.verifiedAt ? now.getTime() - post.verifiedAt.getTime() : 0;
         if (r?.observedAt && !metrics.frozenAt && age >= MEASURE_AFTER_MS) {
           const m = r.metrics;
-          const engagement = m.reactions !== null && m.comments !== null ? m.reactions + 2 * m.comments + 3 * (m.shares ?? 0) : null;
+          // Unknown is never zero: when Meta does not return a counter (often `shares`), the post has no score.
+          const engagement = m.reactions !== null && m.comments !== null && m.shares !== null ? m.reactions + 2 * m.comments + 3 * m.shares : null;
           set.metrics = { ...metrics, reactions: m.reactions, comments: m.comments, shares: m.shares, observedAt: r.observedAt, evidenceId: r.evidenceId, url: r.url, ageHours: Math.round(age / 3_600_000), ...(age >= FREEZE_AFTER_MS ? { frozenAt: now.toISOString() } : {}) };
           set.engagement = engagement;
         }

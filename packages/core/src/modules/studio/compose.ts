@@ -1,5 +1,5 @@
 import { type CardSpec, type PaletteId, toBengaliDigits } from '@futuregrow/visuals';
-import { type Pair, seedOf, type Unit } from './curriculum.js';
+import { seedOf, type Unit } from './curriculum.js';
 
 /**
  * Captions and card specs (D-040). Bangla copy is written from educator-authored phrase banks and
@@ -111,37 +111,38 @@ export const HOOKS: Record<Unit['kind'] | 'feature', { id: string; text: string 
 };
 
 const ENGAGE: Record<Unit['kind'] | 'feature', { id: string; text: string }[]> = {
+  // Each prompt is one question (quiz and notice prompts ask for the answer to the card's question).
   vocab: [
-    { id: 've1', text: '✍️ {ko} দিয়ে নিজে একটা বাক্য বানিয়ে কমেন্টে লিখুন।' },
-    { id: 've2', text: '🗣️ উচ্চারণটা একবার জোরে বলুন, তারপর কমেন্টে {ko} লিখে অনুশীলন করুন।' },
+    { id: 've1', text: '✍️ {ko} দিয়ে নিজে একটা বাক্য বানাতে পারবেন? কমেন্টে লিখুন।' },
+    { id: 've2', text: '💬 শব্দটা মনে রাখতে আপনার কোনো কৌশল আছে? কমেন্টে জানান।' },
     { id: 've3', text: '💬 শব্দটা আগে জানতেন? কমেন্টে হ্যাঁ বা না লিখুন।' },
   ],
   hangul: [
     { id: 'he1', text: '✍️ {letter} দিয়ে আর কোন শব্দ জানেন? কমেন্টে লিখুন।' },
-    { id: 'he2', text: '📝 খাতায় {letter} পাঁচবার লিখে অনুশীলন করুন।' },
+    { id: 'he2', text: '💬 {letter} পড়া না লেখা — কোনটা বেশি কঠিন লাগে? কমেন্টে জানান।' },
   ],
   grammar: [
-    { id: 'ge1', text: '✍️ এই নিয়মে নিজে একটা বাক্য লিখে কমেন্টে দিন।' },
+    { id: 'ge1', text: '✍️ এই নিয়মে নিজে একটা বাক্য বানাতে পারবেন? কমেন্টে লিখুন।' },
     { id: 'ge2', text: '💬 কোন অংশটা কঠিন লাগছে? কমেন্টে জানান।' },
   ],
   quiz: [
     { id: 'qe1', text: '💬 আপনার উত্তর (১/২/৩/৪) কমেন্টে লিখুন।' },
-    { id: 'qe2', text: '💬 উত্তর কমেন্টে দিন, তারপর নিচে মিলিয়ে নিন।' },
+    { id: 'qe2', text: '💬 কোনটা ঠিক মনে হচ্ছে? নম্বরটা কমেন্টে লিখুন।' },
   ],
   mistake: [
     { id: 'me1', text: '💬 এই ভুলটা আগে করেছেন? কমেন্টে জানান।' },
-    { id: 'me2', text: '✍️ সঠিক বাক্যটা নিজের খাতায় লিখে নিন।' },
+    { id: 'me2', text: '💬 এমন আর কোন ভুল আপনার প্রায়ই হয়? কমেন্টে লিখুন।' },
   ],
   dialogue: [
-    { id: 'de1', text: '🗣️ দুজন মিলে A আর B হয়ে পড়ে দেখুন।' },
+    { id: 'de1', text: '💬 এই কথোপকথনের কোন বাক্যটা আগে জানতেন? কমেন্টে লিখুন।' },
     { id: 'de2', text: '💬 এই পরিস্থিতিতে আর কী বলা যায়? কমেন্টে লিখুন।' },
   ],
   reading: [
     { id: 're1', text: '💬 আপনার উত্তর (১/২/৩/৪) কমেন্টে লিখুন।' },
-    { id: 're2', text: '💬 নোটিশের কোন শব্দটা চিনতে পারলেন? কমেন্টে লিখুন।' },
+    { id: 're2', text: '💬 কোনটা ঠিক মনে হচ্ছে? নম্বরটা কমেন্টে লিখুন।' },
   ],
   challenge: [
-    { id: 'ce1', text: '✍️ যেকটা পারেন, বাক্য বানিয়ে কমেন্টে লিখুন।' },
+    { id: 'ce1', text: '✍️ কয়টা শব্দ দিয়ে বাক্য বানাতে পারলেন? কমেন্টে লিখুন।' },
     { id: 'ce2', text: '💬 কোন শব্দটা ভুলে গিয়েছিলেন? কমেন্টে জানান।' },
   ],
   feature: [{ id: 'fe1', text: '💬 কোন বিষয়ের অনুশীলন বেশি দরকার? কমেন্টে জানান।' }],
@@ -194,6 +195,24 @@ export function pickPhrase<T extends { id: string }>(pool: T[], recent: string[]
 }
 
 const MARKS = ['১', '২', '৩', '৪'];
+const ANSWER_LATER = '🔎 সঠিক উত্তর থাকবে পরের পোস্টে।';
+
+/**
+ * The answer to a quiz or notice-reading post. It is not in that post's caption: the Page's next
+ * post reveals it (one post a day, no automated comment replies).
+ */
+export function answerReveal(unit: Unit): string | null {
+  if (unit.kind === 'quiz') {
+    const q = unit.data;
+    return `✅ আগের কুইজের উত্তর: ${MARKS[q.answer]}) ${q.options[q.answer]}\n${q.vocab.ko} (${q.vocab.rr}) = ${q.vocab.bn}`;
+  }
+  if (unit.kind === 'reading') {
+    const r = unit.data;
+    const ans = r.order.indexOf(r.answer);
+    return `✅ আগের নোটিশের উত্তর: ${MARKS[ans]}) ${r.options[r.answer]}\n${r.explainBn}`;
+  }
+  return null;
+}
 
 /* ------------------------------------------------------------------ */
 /* Compose                                                             */
@@ -215,6 +234,8 @@ export interface ComposeInput {
   recentHooks: string[];
   recentPrompts: string[];
   salt: string;
+  /** The Page's previous published lesson; a quiz or notice question gets its answer in this post. */
+  previous?: Unit | null;
 }
 
 export interface Composition {
@@ -227,6 +248,8 @@ export interface Composition {
   ctaFeature: Feature | null;
   /** Korean strings the card may show (the studio checks the rendered text against them). */
   cardKorean: string[];
+  /** The earlier quiz or notice unit whose answer this caption reveals. */
+  revealUnitId: string | null;
 }
 
 /** Play listing link tagged for Play Console's campaign (UTM) reports. */
@@ -237,8 +260,6 @@ export function taggedListingUrl(base: string, campaign: string, content: string
   return u.toString();
 }
 
-const dash = (p: Pair) => `${p.ko} — ${p.bn}`;
-
 export function compose(input: ComposeInput): Composition | null {
   const { unit, kind, objective } = input;
   const footerRight = `#${toBengaliDigits(input.serial)}`;
@@ -246,7 +267,8 @@ export function compose(input: ComposeInput): Composition | null {
   const lines: string[] = [];
   let card: CardSpec;
   let fillVars: Fill = {};
-  let answer: string | null = null;
+  // The caption gives a hook, one short takeaway and one question; the card carries the lesson.
+  let asksAnswer = false;
   let cardKorean: string[] = [];
 
   if (kind === 'feature') {
@@ -261,14 +283,14 @@ export function compose(input: ComposeInput): Composition | null {
       .slice(0, 3);
     card = { ...base, template: 'feature', footerLeft: android ? 'Google Play-তে EPS Topik Bangla' : 'EPS Topik Bangla', headlineBn: FEATURE_HEADLINES[pick.feature], bodyBn: pick.claim.text, points: points.length >= 2 ? points : [], footnoteBn: 'আপনার পছন্দের অনুশীলন কোনটা?' };
     lines.push(pick.claim.text);
-    return finish(input, card, lines, null, pick, android ? [android] : [], fillVars, []);
+    return finish(input, card, lines, false, pick, android ? [android] : [], fillVars, []);
   }
   if (!unit) return null;
   switch (unit.kind) {
     case 'vocab': {
       const v = unit.data;
       fillVars = { ko: v.ko, gloss: v.gloss, topic: input.topicNames[v.topic] ?? '' };
-      lines.push(`🇰🇷 ${v.ko} (${v.rr})`, `🇧🇩 অর্থ: ${v.bn}`, `🗣️ উচ্চারণ (কাছাকাছি): ${v.bnSound}`, '', '✍️ উদাহরণ:', v.example.ko, `→ ${v.example.bn}`);
+      lines.push(`📌 ${v.ko} (${v.rr}) — ${v.bn}`);
       card = { ...base, template: 'vocab', footerLeft: `বিষয়: ${input.topicNames[v.topic] ?? ''}`, word: v.ko, romanization: v.rr, pronunciationBn: v.bnSound, meaningBn: v.bn, example: v.example };
       cardKorean = [v.ko, v.example.ko];
       break;
@@ -276,7 +298,7 @@ export function compose(input: ComposeInput): Composition | null {
     case 'hangul': {
       const h = unit.data;
       fillVars = { letter: h.letter };
-      lines.push(`🔤 ${h.letter} — নাম: ${h.nameKo} (${h.nameBn})`, `🔊 উচ্চারণ: ${h.soundBn}`, '', 'উদাহরণ:', ...h.examples.map((e) => `• ${dash(e)}`));
+      lines.push(`🔤 ${h.letter} — উচ্চারণ: ${h.soundBn}`);
       card = { ...base, template: 'hangul', footerLeft: h.kind === 'consonant' ? 'হাঙ্গুল ব্যঞ্জনবর্ণ' : 'হাঙ্গুল স্বরবর্ণ', letter: h.letter, nameLine: `নাম: ${h.nameKo} (${h.nameBn})`, soundBn: h.soundBn, examples: h.examples };
       cardKorean = [h.letter, h.nameKo, h.soundBn, ...h.examples.map((e) => e.ko)];
       break;
@@ -284,7 +306,9 @@ export function compose(input: ComposeInput): Composition | null {
     case 'grammar': {
       const g = unit.data;
       fillVars = { pattern: g.pattern };
-      lines.push(`📌 ${g.pattern} — ${g.titleBn}`, g.explainBn, '', ...g.rules.map((r) => `• ${r.when}: ${r.use}`), '', 'উদাহরণ:', ...g.examples.flatMap((e) => [e.ko, `→ ${e.bn}`]));
+      // The card shows the rules and the first example; the caption adds the explanation and one more example.
+      const more = g.examples[1];
+      lines.push(`📌 ${g.pattern}: ${g.explainBn}`, ...(more ? ['', `আরেকটা উদাহরণ: ${more.ko} → ${more.bn}`] : []));
       card = { ...base, template: 'grammar', footerLeft: g.titleBn, pattern: g.pattern, titleBn: g.titleBn, rules: g.rules, examples: g.examples.slice(0, 1) };
       cardKorean = [g.pattern, ...g.rules.flatMap((r) => [r.when, r.use]), g.examples[0]!.ko];
       break;
@@ -292,7 +316,7 @@ export function compose(input: ComposeInput): Composition | null {
     case 'mistake': {
       const m = unit.data;
       fillVars = { title: m.titleBn };
-      lines.push(`📌 ${m.titleBn}`, '', `❌ ${m.wrong.ko}`, `(${m.wrong.bn})`, '', `✅ ${m.right.ko}`, `→ ${m.right.bn}`, '', `💡 ${m.tipBn}`);
+      lines.push(`✅ ঠিক: ${m.right.ko} → ${m.right.bn}`, `💡 ${m.tipBn}`);
       card = { ...base, template: 'mistake', footerLeft: 'ভুল থেকে শিখি', titleBn: m.titleBn, wrong: m.wrong, right: m.right, tipBn: m.tipBn };
       cardKorean = [m.titleBn, m.wrong.ko, m.wrong.bn, m.right.ko, m.tipBn];
       break;
@@ -300,7 +324,8 @@ export function compose(input: ComposeInput): Composition | null {
     case 'dialogue': {
       const d = unit.data;
       fillVars = { title: d.titleBn, situation: `${d.situationBn},` };
-      lines.push(`💬 ${d.titleBn} (${d.situationBn})`, '', ...d.lines.flatMap((l) => [`${l.speaker}: ${l.ko}`, `   ${l.bn}`]));
+      const first = d.lines[0]!;
+      lines.push(`🗣️ ${first.ko} — ${first.bn}`);
       card = { ...base, template: 'dialogue', footerLeft: d.situationBn, titleBn: d.titleBn, lines: d.lines };
       cardKorean = d.lines.map((l) => l.ko);
       break;
@@ -308,9 +333,8 @@ export function compose(input: ComposeInput): Composition | null {
     case 'reading': {
       const r = unit.data;
       const opts = r.order.map((i) => r.options[i]!);
-      const ans = r.order.indexOf(r.answer);
-      lines.push('🪧 নোটিশ:', ...r.notice.split('\n'), '', `❓ ${r.questionBn}`, ...opts.map((o, i) => `${MARKS[i]}) ${o}`));
-      answer = `✅ উত্তর: ${MARKS[ans]}) ${opts[ans]}\n${r.explainBn}`;
+      lines.push(`🪧 ${r.notice.split('\n')[0]}`, `❓ ${r.questionBn}`);
+      asksAnswer = true;
       card = { ...base, template: 'reading', footerLeft: 'নোটিশ পড়ার অনুশীলন', titleBn: 'নোটিশটি পড়ুন', notice: r.notice, questionBn: r.questionBn, options: opts };
       cardKorean = [r.notice];
       break;
@@ -319,8 +343,9 @@ export function compose(input: ComposeInput): Composition | null {
       const q = unit.data;
       const v = q.vocab;
       const question = q.form === 'meaning' ? `${v.ko} শব্দটির অর্থ কী?` : `“${v.gloss}” কোরিয়ানে কোনটি?`;
-      lines.push(`❓ ${question}`, ...q.options.map((o, i) => `${MARKS[i]}) ${o}`));
-      answer = `✅ উত্তর: ${MARKS[q.answer]}) ${q.options[q.answer]}\n${v.ko} (${v.rr}) = ${v.bn}\nউদাহরণ: ${v.example.ko} → ${v.example.bn}`;
+      // The options stay in the caption (a word quiz quotes the word only among them); the answer does not.
+      lines.push(`❓ ${question}`, q.options.map((o, i) => `${MARKS[i]}) ${o}`).join('   '));
+      asksAnswer = true;
       card =
         q.form === 'meaning'
           ? { ...base, template: 'quiz', footerLeft: 'EPS-TOPIK ধাঁচের অনুশীলন', questionBn: 'নিচের শব্দটির অর্থ কী?', prompt: v.ko, options: q.options, footnoteBn: 'উত্তর কমেন্টে লিখুন' }
@@ -330,7 +355,7 @@ export function compose(input: ComposeInput): Composition | null {
     }
     case 'challenge': {
       const items = unit.data.items;
-      lines.push('এই সপ্তাহের শব্দ:', ...items.map((v, i) => `${toBengaliDigits(i + 1)}. ${v.ko} — ${v.gloss}`), '', 'চ্যালেঞ্জ: শব্দগুলো দিয়ে নিজের বাক্য লিখুন।');
+      lines.push(`এই সপ্তাহের শব্দ: ${items.map((v) => v.ko).join(' · ')}`);
       card = { ...base, template: 'challenge', footerLeft: 'এই সপ্তাহের শব্দ', titleBn: `${toBengaliDigits(items.length)}টি শব্দ, ${toBengaliDigits(items.length)}টি বাক্য`, items: items.map((v) => ({ ko: v.ko, bn: v.gloss })), footnoteBn: 'শব্দগুলো দিয়ে বাক্য লিখুন' };
       cardKorean = items.map((v) => v.ko);
       break;
@@ -338,13 +363,15 @@ export function compose(input: ComposeInput): Composition | null {
   }
   const cta = objective === 'EDUCATE' || objective === 'ENGAGE' ? null : featureFor(unit.kind, input.claims, input.salt);
   const extra = objective === 'VISIT_APP' || objective === 'INSTALL_APP' ? [claimFor('android', input.claims), claimFor('free', input.claims)].filter((c): c is ClaimRef => Boolean(c)) : [];
-  return finish(input, card, lines, answer, cta, extra, fillVars, cardKorean);
+  return finish(input, card, lines, asksAnswer, cta, extra, fillVars, cardKorean);
 }
 
-function finish(input: ComposeInput, card: CardSpec, lines: string[], answer: string | null, cta: { feature: Feature; claim: ClaimRef } | null, extra: ClaimRef[], fillVars: Fill, cardKorean: string[]): Composition {
+function finish(input: ComposeInput, card: CardSpec, lines: string[], asksAnswer: boolean, cta: { feature: Feature; claim: ClaimRef } | null, extra: ClaimRef[], fillVars: Fill, cardKorean: string[]): Composition {
   const hook = pickPhrase(HOOKS[input.kind], input.recentHooks, `${input.salt}:hook`);
   const prompt = pickPhrase(ENGAGE[input.kind], input.recentPrompts, `${input.salt}:prompt`);
-  const out: string[] = [fill(hook.text, fillVars), '', ...lines, '', fill(prompt.text, fillVars)];
+  const out: string[] = [fill(hook.text, fillVars), '', ...lines, '', fill(prompt.text, fillVars), ...(asksAnswer ? [ANSWER_LATER] : [])];
+  // Lesson posts (they carry a curriculum reference) reveal the previous quiz or notice answer.
+  const reveal = input.unit && input.previous ? answerReveal(input.previous) : null;
   const claimIds: string[] = [];
   let link: string | null = null;
   const wantsLink = input.objective === 'VISIT_APP' || input.objective === 'INSTALL_APP';
@@ -363,7 +390,7 @@ function finish(input: ComposeInput, card: CardSpec, lines: string[], answer: st
     }
   }
   if (input.objective === 'RETAIN' && cta) out.push('আজকের অনুশীলন করেছেন? 😊');
-  if (answer) out.push('', '.', '.', '.', answer);
+  if (reveal) out.push('', reveal);
   out.push('', `#কোরিয়ান_শিখি ${HASHTAGS[input.kind]}`);
   return {
     caption: out
@@ -377,5 +404,6 @@ function finish(input: ComposeInput, card: CardSpec, lines: string[], answer: st
     promptId: prompt.id,
     ctaFeature: cta?.feature ?? null,
     cardKorean,
+    revealUnitId: reveal ? input.previous!.id : null,
   };
 }

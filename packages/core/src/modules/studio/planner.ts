@@ -59,6 +59,26 @@ export const dayOffset = (day: string, n: number) => new Date(Date.parse(`${day}
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY);
 /** Calendar day in Bangladesh (UTC+6), where the audience is. */
 export const localDay = (d: Date) => new Date(d.getTime() + 6 * 3_600_000).toISOString().slice(0, 10);
+
+/**
+ * Bangladesh local hours in which the day's lesson goes out: the evening, when learners are
+ * online. A goal's cycle time follows when it was resumed, so without a window posts went out
+ * around 01:00 Bangladesh time.
+ */
+export const POST_WINDOW = { startHour: 19, endHour: 22 } as const;
+
+/** The posting window of the Bangladesh day that contains `now`, as UTC instants. */
+export function postingWindow(now: Date): { start: Date; end: Date } {
+  const midnight = Date.parse(`${localDay(now)}T00:00:00Z`) - 6 * 3_600_000;
+  return { start: new Date(midnight + POST_WINDOW.startHour * 3_600_000), end: new Date(midnight + POST_WINDOW.endHour * 3_600_000) };
+}
+
+/** null inside today's posting window; otherwise when the next window opens. */
+export function nextPostingSlot(now: Date): Date | null {
+  const w = postingWindow(now);
+  if (now < w.start) return w.start;
+  return now < w.end ? null : new Date(w.start.getTime() + DAY);
+}
 const weekday = (day: string) => new Date(`${day}T00:00:00Z`).getUTCDay();
 
 const PUBLISHED = new Set(['drafted', 'submitted', 'published']);
@@ -117,7 +137,8 @@ function baseRotation(days: string[], lettersLeft: boolean): PlanKind[] {
 export function planDays(pack: CurriculumPack, days: string[], history: HistoryItem[], opts: PlanOptions): { items: PlannedItem[]; learning: Learning; notes: string[] } {
   const all = packUnits(pack);
   const today = days[0]!;
-  const done = history.filter((h) => PUBLISHED.has(h.status));
+  // A draft from an earlier day never went out: its unit was not taught, so it is not reviewed.
+  const done = history.filter((h) => PUBLISHED.has(h.status) && !(h.status === 'drafted' && h.day < today));
   const recentlyUsed = new Map<string, string>();
   for (const h of done) if (h.unitId && daysBetween(h.day, today) < REUSE_AFTER_DAYS) recentlyUsed.set(h.unitId, h.day);
   const lettersLeft = all.some((u) => u.kind === 'hangul' && !recentlyUsed.has(u.id));

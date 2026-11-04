@@ -1303,8 +1303,19 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     };
     const modelCalls = provider.calls.length;
 
+    // Outside the Bangladesh evening window the day's lesson waits for it (cycles follow when the goal was resumed).
+    let slot = contentStudio.nextPostingSlot(h.clock.now());
+    while (!slot || slot.getTime() - h.clock.now().getTime() < 2 * 3_600_000) {
+      h.clock.advance(3_600_000);
+      slot = contentStudio.nextPostingSlot(h.clock.now());
+    }
     await runCycle();
     let k = await kinds();
+    expect(k.content).toMatchObject({ status: 'waiting', detail: expect.stringMatching(/between 19:00 and 22:00 Bangladesh time/) });
+    expect(published).toHaveLength(0);
+    h.clock.current = new Date(slot.getTime() + 60_000);
+    await runCycle();
+    k = await kinds();
     expect(k.observe!.output.studio).toMatchObject({ programId: program.id, pack: 'eps-topik-bn' });
     expect(k.ideas).toMatchObject({ status: 'skipped', detail: expect.stringMatching(/content studio/) });
     expect(k.content).toMatchObject({ status: 'completed', output: { studio: true } });
@@ -1354,10 +1365,18 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(k.content!.detail).toMatch(/Today's planned post is (published|submitted)/);
     expect(published).toHaveLength(1);
 
-    // Next day: a different lesson and a different card go out; the first post's counters (a day old) feed the calendar.
-    h.clock.advance(DAY);
+    // Next day, before 24 h have passed since the first post: the lesson waits for its window, then for the
+    // rolling one-post-a-day limit, and goes out that evening instead of being skipped.
+    h.clock.current = new Date(Date.parse(published[0]!.at) + DAY - 30 * 60_000);
+    await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'run_now'));
     await runCycle();
     k = await kinds();
+    expect(k.content).toMatchObject({ status: 'waiting' });
+    expect(published).toHaveLength(1);
+    h.clock.current = new Date(contentStudio.postingWindow(h.clock.now()).start.getTime() + 1_000);
+    await runCycle();
+    k = await kinds();
+    expect(Date.parse(published[1]!.at) - Date.parse(published[0]!.at)).toBeGreaterThanOrEqual(DAY);
     expect(k.track).toMatchObject({ status: 'completed', output: { status: 'VERIFIED' } });
     expect(published).toHaveLength(2);
     expect(Buffer.compare(published[0]!.png, published[1]!.png)).not.toBe(0);
@@ -1366,8 +1385,9 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     overview = await contentStudio.overview(h.deps, org, program.id);
     expect(overview.measurement.publishedPosts).toBe(2);
     const first = overview.history.find((i) => i.postId === post!.id)!;
-    expect(first).toMatchObject({ status: 'published', engagement: 3 + 2 * 1 + 0 });
-    expect(first.metrics).toMatchObject({ reactions: 3, comments: 1 });
+    // The fixture Page returns no share counter: it stays unknown and the post has no engagement score.
+    expect(first).toMatchObject({ status: 'published', engagement: null });
+    expect(first.metrics).toMatchObject({ reactions: 3, comments: 1, shares: null });
     expect(overview.measurement.notes.join(' ')).toMatch(/no install or conversion figure is shown/);
     // A post the Page made without the studio uses that day's slot: the calendar plans around it.
     h.clock.advance(DAY);
