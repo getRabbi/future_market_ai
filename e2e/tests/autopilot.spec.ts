@@ -1,5 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { type Browser, test as base, expect, type Page } from '@playwright/test';
-import { E2E_ORIGIN, OWNER } from '../fixtures.js';
+import pg from 'pg';
+import { E2E_ORIGIN, ORG, OWNER } from '../fixtures.js';
 
 /**
  * The Autopilot home in a real browser against the real API, database and a running Graphile
@@ -40,6 +44,56 @@ async function signIn(page: Page) {
 }
 
 const SENTENCE = "Grow my app's organic downloads over the next 30 days with a $0 advertising budget.";
+
+/**
+ * Store reports need a real Google account to import, so this browser test seeds the rows an
+ * import produces (one account, two apps, three reported days) directly into the e2e database.
+ */
+async function seedStoreReports() {
+  const url = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.data/e2e-database-url'), 'utf8').trim();
+  const db = new pg.Client({ connectionString: url });
+  await db.connect();
+  try {
+    const org = (await db.query<{ id: string }>(`select id from organization where slug = $1`, [ORG.slug])).rows[0]!.id;
+    const conn = (await db.query<{ id: string }>(`insert into connections (tenant_id, provider, external_account_id, display_name, created_by) values ($1, 'google_play', 'pubsite_prod_rev_e2e', 'E2E Play account', 'e2e') returning id`, [org])).rows[0]!.id;
+    const acct = (
+      await db.query<{ id: string }>(
+        `insert into store_accounts (tenant_id, connection_id, provider, account_ref, display_name, health_status, last_success_at, next_sync_at, created_by) values ($1, $2, 'google_play', 'pubsite_prod_rev_e2e', 'E2E Play account', 'ok', now(), now() + interval '1 day', 'e2e') returning id`,
+        [org, conn],
+      )
+    ).rows[0]!.id;
+    for (const [pkg, name, base] of [
+      ['com.example.alpha', 'Alpha Lessons', 12],
+      ['com.example.beta', 'Beta Words', 4],
+    ] as const) {
+      const app = (await db.query<{ id: string }>(`insert into store_apps (tenant_id, store_account_id, platform, app_id, display_name, status, discovered_via, confirmed_by, confirmed_at) values ($1, $2, 'android', $3, $4, 'confirmed', '{report_bucket}', 'e2e', now()) returning id`, [org, acct, pkg, name])).rows[0]!
+        .id;
+      const file = (
+        await db.query<{ id: string }>(
+          `insert into store_report_files (tenant_id, store_account_id, store_app_id, provider, family, dimension, period, source_uri, source_version, source_rank, size_bytes, sha256, status) values ($1, $2, $3, 'google_play', 'play.installs', 'country', to_char(now(), 'YYYY-MM'), $4, '1', 1, 1, 'e2e', 'imported') returning id`,
+          [org, acct, app, `gs://pubsite_prod_rev_e2e/stats/installs/installs_${pkg}_x_country.csv`],
+        )
+      ).rows[0]!.id;
+      for (const ago of [5, 4, 3]) {
+        const part = (
+          await db.query<{ id: string }>(`insert into store_report_partitions (tenant_id, store_app_id, family, dimension, observation_date, report_file_id, source_rank, rows, digest, status) values ($1, $2, 'play.installs', 'country', current_date - $3::int, $4, 1, 1, 'e2e', 'provisional') returning id`, [
+            org,
+            app,
+            ago,
+            file,
+          ])
+        ).rows[0]!.id;
+        await db.query(
+          `insert into store_metric_observations (tenant_id, partition_id, store_app_id, store_account_id, platform, app_id, provider, family, dimension, metric_key, source_metric, observation_date, dims, dims_key, value, report_file_id)
+           values ($1, $2, $3, $4, 'android', $5, 'google_play', 'play.installs', 'country', 'play.daily_user_installs', 'Daily User Installs', current_date - $6::int, '{"country":"BD"}', '[["country","BD"]]', $7, $8)`,
+          [org, part, app, acct, pkg, ago, base + ago, file],
+        );
+      }
+    }
+  } finally {
+    await db.end();
+  }
+}
 
 test('an owner turns the Autopilot on and starts a goal from one sentence; the worker runs it and the blockers are explained', async ({ page }) => {
   test.setTimeout(180_000);
@@ -102,6 +156,24 @@ test('on a 390 px phone the Autopilot home fits the screen and the goal is reada
   expect(overflow).toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: /AI activity/ }).click();
   await expect(page.getByRole('heading', { name: 'Blocked — needs you' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+  expect(problems.get(page) ?? []).toEqual([]);
+
+  // App intelligence (D-045): two apps of one developer account, seeded as imported report rows.
+  await seedStoreReports();
+  await page.getByRole('button', { name: /App intelligence/ }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'App intelligence' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Alpha Lessons/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Beta Words/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+  await page.getByRole('button', { name: /Alpha Lessons/ }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Alpha Lessons' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Report coverage and freshness' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+  await page.getByRole('button', { name: 'Developer accounts & apps' }).click();
+  await expect(page.getByText('E2E Play account')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Connect a developer account' })).toBeVisible();
+  await expect(page.getByLabel('Service account key (JSON file)')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
   expect(problems.get(page) ?? []).toEqual([]);
 

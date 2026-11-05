@@ -151,3 +151,11 @@ Then in the control plane: Audit trail → **Verify chain now** (valid), Evidenc
 2. Migrations 0014/0015 run on api start (advisory-locked); check the `{"ok":true,…,"lockWaitMs":…}` line in the api log and the new routes in `/v1/openapi.json` (`/v1/brands`, `/v1/social/platforms`, `/v1/media/providers`).
 3. Deploy Pages from the merged tree (`npm run build -w @futuregrow/web`, `wrangler@4.147.0 pages deploy dist --project-name futuregrow-web --branch main --commit-hash <sha>`); note the previous deployment id as the rollback target.
 4. Read-only checks: platform status shows Facebook `live_verified` only if a post was verified in the last 14 days, X `disabled`, Reddit `owner_assisted`; media providers show only the template renderer enabled; the EPS goal keeps its schedule (no extra post).
+
+## 12. App intelligence release (D-045)
+
+1. Merge through a PR after CI is green; the push to `main` builds api and worker. Migration 0016 (additive: seven `store_*` tables and `campaign_links.report_scope` defaulting to `content`) runs on api start; check the `migrate ok` log line and the `/v1/app-intelligence/*` routes in `/v1/openapi.json`.
+2. The worker registers `store_reporting_tick` (every 10 minutes) and `store_report_retention` (04:47 UTC). With no developer account connected they do nothing.
+3. Deploy Pages from the merged tree (as in §11) for the App intelligence tab; note the previous deployment id as the rollback target.
+4. Read-only checks: `GET /v1/app-intelligence/accounts` returns an empty list for orgs without an account; the EPS program keeps `campaignIdentity` `shared` (links still carry `utm_campaign=eps_daily`); the EPS goal keeps its schedule.
+5. Owner step to go live: connect a Play account and/or an App Store Connect key (docs/APP_INTELLIGENCE.md). Rollback to the previous binary needs no schema change; the new tables are simply unused.

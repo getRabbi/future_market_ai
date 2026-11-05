@@ -1,4 +1,5 @@
-import { appGrowth, discovery, lifecycle, paidMedia, social } from '@futuregrow/core';
+import { randomUUID } from 'node:crypto';
+import { appGrowth, appIntelligence, discovery, lifecycle, paidMedia, social } from '@futuregrow/core';
 import { connections, withTenant } from '@futuregrow/db';
 import { and, inArray } from 'drizzle-orm';
 import { forEachTenant, registerTasks } from './tasks.js';
@@ -110,6 +111,32 @@ registerTasks((deps) => ({
       }
     });
   },
+
+  /** M19 app intelligence (D-045): queue developer accounts whose store-report sync is due. */
+  store_reporting_tick: async (_payload, helpers) => {
+    await forEachTenant(deps, async (tenantId) => {
+      for (const a of await appIntelligence.dueStoreAccounts(deps, tenantId)) {
+        await helpers.addJob(appIntelligence.STORE_SYNC_TASK, { tenantId, accountId: a.id, mode: a.backfill ? 'backfill' : 'incremental' }, { jobKey: `store-sync:${a.id}`, maxAttempts: 3 });
+      }
+    });
+  },
+
+  /** One account: discovery, report import (backfill continues in follow-up runs), coverage, then the M08 KPI series. */
+  store_account_sync: async (payload) => {
+    const { tenantId, accountId, mode } = payload as { tenantId: string; accountId: string; mode?: 'discovery' | 'incremental' | 'backfill' };
+    const r = await appIntelligence.runStoreAccountSync(deps, tenantId, accountId, { mode: mode ?? 'incremental', triggeredBy: 'system:scheduler', owner: `worker:${process.pid}:${randomUUID().slice(0, 8)}` });
+    if (!r.skipped) {
+      deps.logger.info({ tenantId, accountId, outcome: r.outcome, health: r.health, imported: r.stats.filesImported, deferred: r.stats.deferred }, 'store report sync finished');
+      if (r.stats.filesImported > 0) await withTenant(deps.db, { tenantId, actor: 'system:store-reporting' }, (tx) => appIntelligence.syncStoreKpiSeries(tx, tenantId, deps.clock.now()));
+    }
+  },
+
+  /** Raw store report copies are deleted after 400 days; normalized aggregates and evidence remain. */
+  store_report_retention: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      await appIntelligence.pruneStoreReportObjects(deps, tenantId);
+    });
+  },
 }));
 
-export const CHANNEL_CRONTAB = ['* * * * * social_dispatch', '* * * * * journey_tick', '25 11 * * * page_insights_sync', '37 */6 * * * ads_sync', '15 7 * * * spend_reconcile', '45 5 * * * search_console_sync', '5 9 * * * app_store_sales_sync'];
+export const CHANNEL_CRONTAB = ['* * * * * social_dispatch', '* * * * * journey_tick', '25 11 * * * page_insights_sync', '37 */6 * * * ads_sync', '15 7 * * * spend_reconcile', '45 5 * * * search_console_sync', '5 9 * * * app_store_sales_sync', '*/10 * * * * store_reporting_tick', '47 4 * * * store_report_retention'];

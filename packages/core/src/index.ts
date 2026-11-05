@@ -33,6 +33,7 @@ export * as social from './modules/m16-social/index.js';
 export * as paidMedia from './modules/m17-paid/index.js';
 export * as discovery from './modules/m18-discovery/index.js';
 export * as appGrowth from './modules/m19-app-growth/index.js';
+export * as appIntelligence from './modules/m19-app-growth/store/index.js';
 export * as lifecycle from './modules/m20-lifecycle/index.js';
 export * as conversationsModule from './modules/m21-conversations/index.js';
 export * as creatorsModule from './modules/m22-creators/index.js';

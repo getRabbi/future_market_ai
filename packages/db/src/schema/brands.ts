@@ -96,9 +96,21 @@ export const campaignLinks = pgTable(
     campaign: text('campaign').notNull(),
     content: text('content').notNull(),
     url: text('url').notNull(),
+    /**
+     * What a store report can tell apart: `content` = (campaign, content) as the device referrer
+     * carries it; `campaign` = utm_campaign alone identifies this post (D-045), so Play's
+     * store-performance report (which has no utm_content) can still name the post.
+     */
+    reportScope: text('report_scope').notNull().default('content'),
     createdBy: text('created_by').notNull(),
     createdAt: createdAt(),
     retiredAt: ts('retired_at'),
   },
-  (t) => [uniqueIndex('campaign_links_identity_uq').on(t.tenantId, t.appPlatform, t.appId, t.campaign, t.content), index('campaign_links_brand_idx').on(t.tenantId, t.brandId, t.createdAt), oneOf('campaign_links_app_platform_chk', t.appPlatform, BRAND_APP_PLATFORMS)],
+  (t) => [
+    uniqueIndex('campaign_links_identity_uq').on(t.tenantId, t.appPlatform, t.appId, t.campaign, t.content),
+    uniqueIndex('campaign_links_campaign_scope_uq').on(t.tenantId, t.appPlatform, t.appId, t.campaign).where(sql`${t.reportScope} = 'campaign'`),
+    oneOf('campaign_links_report_scope_chk', t.reportScope, ['content', 'campaign']),
+    index('campaign_links_brand_idx').on(t.tenantId, t.brandId, t.createdAt),
+    oneOf('campaign_links_app_platform_chk', t.appPlatform, BRAND_APP_PLATFORMS),
+  ],
 );

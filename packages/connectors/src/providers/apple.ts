@@ -1,4 +1,4 @@
-import { createPrivateKey, sign } from 'node:crypto';
+import { createHash, createPrivateKey, sign } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { ProviderHttpError, preWrite } from '../http.js';
 import { type ActionExecutor, type ConnectorContext, compareProof, type HealthResult, type ReadConnector } from '../types.js';
@@ -141,3 +141,104 @@ export const appStoreRead: ReadConnector = {
     }
   },
 };
+
+/* ------------------------------------------------------------------ */
+/* App discovery and the Analytics Reports API (D-045)                  */
+/* ------------------------------------------------------------------ */
+
+interface JsonApiPage<A> {
+  data?: { id?: string; attributes?: A }[];
+  links?: { next?: string };
+}
+
+/** Follows `links.next` only within the configured App Store Connect origin. */
+async function listAll<A>(ctx: ConnectorContext, first: string, maxPages = 20): Promise<{ id: string; attributes: A }[]> {
+  const origin = new URL(ctx.endpoints.appStoreConnect).origin;
+  const out: { id: string; attributes: A }[] = [];
+  let next: string | undefined = first;
+  for (let page = 0; next && page < maxPages; page++) {
+    if (new URL(next).origin !== origin) throw new ProviderHttpError('App Store Connect pagination left the API origin', { status: null, phase: 'rejected' });
+    const res: { data: JsonApiPage<A> } = await ctx.http.request<JsonApiPage<A>>({ method: 'GET', url: next, headers: auth(ctx), idempotent: true });
+    for (const d of res.data.data ?? []) if (typeof d.id === 'string' && d.attributes) out.push({ id: d.id, attributes: d.attributes });
+    next = res.data.links?.next;
+  }
+  return out;
+}
+
+/** Apps visible to the API key (`GET /v1/apps`). */
+export async function listAscApps(ctx: ConnectorContext): Promise<{ id: string; bundleId: string; name: string | null }[]> {
+  const rows = await listAll<{ bundleId?: string; name?: string }>(ctx, `${url(ctx, 'apps')}?fields[apps]=bundleId,name&limit=200`);
+  return rows.filter((r) => /^\d{1,20}$/.test(r.id) && typeof r.attributes.bundleId === 'string').map((r) => ({ id: r.id, bundleId: r.attributes.bundleId!.slice(0, 200), name: r.attributes.name?.slice(0, 200) ?? null }));
+}
+
+export type AnalyticsAccessType = 'ONGOING' | 'ONE_TIME_SNAPSHOT';
+export interface AnalyticsReportRequest {
+  id: string;
+  accessType: AnalyticsAccessType;
+  stoppedDueToInactivity: boolean;
+}
+
+const ASC_ID = /^[A-Za-z0-9-]{1,100}$/;
+const ascId = (id: string, what: string) => {
+  if (!ASC_ID.test(id)) throw new Error(`invalid ${what} id`);
+  return encodeURIComponent(id);
+};
+
+export async function listAnalyticsReportRequests(ctx: ConnectorContext, appResourceId: string): Promise<AnalyticsReportRequest[]> {
+  const rows = await listAll<{ accessType?: string; stoppedDueToInactivity?: boolean }>(ctx, `${url(ctx, `apps/${ascId(appResourceId, 'app')}/analyticsReportRequests`)}?limit=200`);
+  return rows.filter((r) => r.attributes.accessType === 'ONGOING' || r.attributes.accessType === 'ONE_TIME_SNAPSHOT').map((r) => ({ id: r.id, accessType: r.attributes.accessType as AnalyticsAccessType, stoppedDueToInactivity: r.attributes.stoppedDueToInactivity === true }));
+}
+
+/** `POST /v1/analyticsReportRequests`. Needs an Admin API key; Apple generates the first reports in 1–2 days. */
+export async function createAnalyticsReportRequest(ctx: ConnectorContext, appResourceId: string, accessType: AnalyticsAccessType): Promise<AnalyticsReportRequest> {
+  const res = await ctx.http.request<{ data?: { id?: string; attributes?: { accessType?: string; stoppedDueToInactivity?: boolean } } }>({
+    method: 'POST',
+    url: url(ctx, 'analyticsReportRequests'),
+    headers: auth(ctx),
+    json: { data: { type: 'analyticsReportRequests', attributes: { accessType }, relationships: { app: { data: { type: 'apps', id: appResourceId } } } } },
+    idempotent: false,
+  });
+  const id = res.data.data?.id;
+  if (!id) throw new ProviderHttpError('App Store Connect returned no report request id', { status: res.status, phase: 'ambiguous' });
+  return { id, accessType, stoppedDueToInactivity: res.data.data?.attributes?.stoppedDueToInactivity === true };
+}
+
+export async function listAnalyticsReports(ctx: ConnectorContext, requestId: string): Promise<{ id: string; name: string; category: string }[]> {
+  const rows = await listAll<{ name?: string; category?: string }>(ctx, `${url(ctx, `analyticsReportRequests/${ascId(requestId, 'report request')}/reports`)}?limit=200`);
+  return rows.filter((r) => typeof r.attributes.name === 'string').map((r) => ({ id: r.id, name: r.attributes.name!.slice(0, 200), category: r.attributes.category ?? '' }));
+}
+
+export async function listReportInstances(ctx: ConnectorContext, reportId: string, granularity: 'DAILY' | 'WEEKLY' | 'MONTHLY'): Promise<{ id: string; granularity: string; processingDate: string }[]> {
+  const rows = await listAll<{ granularity?: string; processingDate?: string }>(ctx, `${url(ctx, `analyticsReports/${ascId(reportId, 'report')}/instances`)}?filter[granularity]=${granularity}&limit=200`);
+  return rows.filter((r) => typeof r.attributes.processingDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.attributes.processingDate)).map((r) => ({ id: r.id, granularity: r.attributes.granularity ?? granularity, processingDate: r.attributes.processingDate! }));
+}
+
+export interface ReportSegment {
+  id: string;
+  url: string;
+  checksum: string | null;
+  sizeInBytes: number | null;
+}
+
+export async function listInstanceSegments(ctx: ConnectorContext, instanceId: string): Promise<ReportSegment[]> {
+  const rows = await listAll<{ url?: string; checksum?: string; sizeInBytes?: number }>(ctx, `${url(ctx, `analyticsReportInstances/${ascId(instanceId, 'report instance')}/segments`)}?limit=200`);
+  return rows.filter((r) => typeof r.attributes.url === 'string').map((r) => ({ id: r.id, url: r.attributes.url!, checksum: typeof r.attributes.checksum === 'string' ? r.attributes.checksum.toLowerCase() : null, sizeInBytes: typeof r.attributes.sizeInBytes === 'number' ? r.attributes.sizeInBytes : null }));
+}
+
+/**
+ * Downloads one segment from its pre-signed URL. The API token is never sent there. Size and the
+ * documented MD5 checksum are verified; the gzip body is expanded later with a bounded output size.
+ */
+export async function downloadReportSegment(ctx: ConnectorContext, seg: ReportSegment, maxBytes: number): Promise<Uint8Array> {
+  const target = new URL(seg.url);
+  const sameApi = target.origin === new URL(ctx.endpoints.appStoreConnect).origin;
+  if (!sameApi && (target.protocol !== 'https:' || /^[\d.]+$|^\[|^localhost$/i.test(target.hostname))) throw new ProviderHttpError('report segment URL is not an https host', { status: null, phase: 'rejected' });
+  if (seg.sizeInBytes !== null && seg.sizeInBytes > maxBytes) throw new ProviderHttpError(`report segment is ${seg.sizeInBytes} bytes, above the ${maxBytes}-byte import limit`, { status: 413, phase: 'rejected' });
+  const res = await ctx.http.request({ method: 'GET', url: seg.url, headers: { accept: 'application/a-gzip, application/octet-stream' }, binary: true, idempotent: true, maxResponseBytes: maxBytes, timeoutMs: 120_000 });
+  if (seg.sizeInBytes !== null && res.bytes.byteLength !== seg.sizeInBytes) throw new ProviderHttpError('report segment size mismatch', { status: 502, phase: 'rejected' });
+  if (seg.checksum) {
+    const md5 = createHash('md5').update(res.bytes).digest();
+    if (seg.checksum !== md5.toString('hex') && seg.checksum !== md5.toString('base64').toLowerCase()) throw new ProviderHttpError('report segment checksum mismatch', { status: 502, phase: 'rejected' });
+  }
+  return res.bytes;
+}

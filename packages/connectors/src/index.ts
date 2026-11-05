@@ -1,6 +1,7 @@
 import type { Provider } from '@futuregrow/contracts';
 import { appStoreRead, appStoreUpdateLocalization } from './providers/apple.js';
 import { googleAdsRead, googleSetCampaignStatus, googleUpdateCampaignBudget } from './providers/google.js';
+import { googlePlayRead } from './providers/google-play.js';
 import { linkedinPublishPost, linkedinRead } from './providers/linkedin.js';
 import { facebookPublishPost, facebookReplyComment, instagramPublishMedia, metaRead, metaSetCampaignStatus, metaUpdateCampaignBudget } from './providers/meta.js';
 import { resendRead, resendSendEmail } from './providers/resend.js';
@@ -14,8 +15,23 @@ export * from './capabilities.js';
 export * from './deprecations.js';
 export * from './html.js';
 export * from './http.js';
-export { appStoreConnectJwt, fetchSalesReport, readLocalization } from './providers/apple.js';
+export {
+  type AnalyticsAccessType,
+  type AnalyticsReportRequest,
+  appStoreConnectJwt,
+  createAnalyticsReportRequest,
+  downloadReportSegment,
+  fetchSalesReport,
+  listAnalyticsReportRequests,
+  listAnalyticsReports,
+  listAscApps,
+  listInstanceSegments,
+  listReportInstances,
+  type ReportSegment,
+  readLocalization,
+} from './providers/apple.js';
 export { clearGoogleTokenCache, gaqlSearch, googleAccessToken } from './providers/google.js';
+export * from './providers/google-play.js';
 export { fromLittle, toLittle } from './providers/linkedin.js';
 export { fetchPageInsights, fetchPagePosts, fetchPageProfile, PAGE_INSIGHT_METRICS, PAGE_POST_METRICS, type PageInsightMetricResult, type PagePostCounter, type PagePostMetric, type PagePostObservation, type PageProfile } from './providers/meta.js';
 export { chatwootCreateHandoff, posthogCaptureBatch, searchConsoleQuery } from './providers/misc.js';
@@ -42,5 +58,6 @@ export const READ_CONNECTORS: Partial<Record<Provider, ReadConnector>> = {
   x: xRead,
   shopify: shopifyRead,
   app_store_connect: appStoreRead,
+  google_play: googlePlayRead,
   resend: resendRead,
 };

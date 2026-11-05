@@ -52,6 +52,13 @@ export const ProgramSettingsSchema = z
       .string()
       .regex(/^[a-z0-9_]{3,40}$/)
       .default('eps_daily'),
+    /**
+     * `shared`: every store link carries the program's campaign and a per-day utm_content (D-041).
+     * `per_post`: each post gets its own compact utm_campaign, the only campaign field Play's store
+     * performance report exposes, so Play can attribute acquisitions to that post (D-045). Programs
+     * created before D-045 read as `shared` and keep their links; new programs default to per_post.
+     */
+    campaignIdentity: z.enum(['shared', 'per_post']).default('shared'),
   })
   .strict();
 
@@ -60,13 +67,23 @@ export const ProgramInputSchema = z
     connectionId: z.string().uuid(),
     pack: z.string().refine((p) => Boolean(PACKS[p]), 'unknown curriculum pack'),
     status: z.enum(['active', 'paused']).default('active'),
-    settings: ProgramSettingsSchema.default({ appCtaPerWeek: 2, linkPerWeek: 1, campaign: 'eps_daily' }),
+    settings: ProgramSettingsSchema.default({ appCtaPerWeek: 2, linkPerWeek: 1, campaign: 'eps_daily', campaignIdentity: 'shared' }),
     /** The brand the program publishes for (D-041); its channel account must already be that brand's. */
     brandId: z.string().uuid().nullable().optional(),
   })
   .strict();
 
 export type Program = typeof studioPrograms.$inferSelect;
+
+/**
+ * Compact per-post campaign (D-045): `<campaign>_<yymmdd>_<4 hex>`. The day is unique per program
+ * (content_plan_day_uq), the campaign name per tenant, and the hex (from the tenant id) keeps two
+ * organizations that promote the same app apart in Google's report.
+ */
+export function postCampaign(campaign: string, day: string, tenantHash: string): string {
+  return `${campaign}_${day.slice(2).replaceAll('-', '')}_${tenantHash.slice(0, 4)}`;
+}
+const tenantKeyOf = (program: Program) => sha256Hex(program.tenantId);
 
 export async function listPrograms(t: DbOrTx) {
   return t.select().from(studioPrograms).orderBy(desc(studioPrograms.createdAt));
@@ -84,6 +101,9 @@ export async function upsertProgram(t: Tx, tenantId: string, actor: Actor, raw: 
   const [conn] = await t.select().from(connections).where(eq(connections.id, input.connectionId));
   if (!conn || conn.provider !== 'meta') throw invalid('the content studio needs a Facebook Page connection');
   const [current] = await t.select().from(studioPrograms).where(eq(studioPrograms.connectionId, input.connectionId));
+  // An omitted identity keeps the existing program's choice; a new program gets report-compatible per-post campaigns.
+  const rawIdentity = (raw as { settings?: { campaignIdentity?: unknown } } | null)?.settings?.campaignIdentity;
+  if (rawIdentity === undefined) input.settings = { ...input.settings, campaignIdentity: current ? ProgramSettingsSchema.parse(current.settings ?? {}).campaignIdentity : 'per_post' };
   // Store-link identities are (app, campaign, content): two programs sharing a campaign name could collide.
   if (!current || (current.settings as { campaign?: string }).campaign !== input.settings.campaign) {
     const [clash] = await t
@@ -271,7 +291,7 @@ async function prepare(t: DbOrTx, deps: CoreDeps, item: PlanRow, program: Progra
       topicNames: pack.topics,
       claims: brand.claims,
       appUrl: brand.appUrl,
-      campaign: settings.campaign,
+      campaign: settings.campaignIdentity === 'per_post' ? postCampaign(settings.campaign, item.day, tenantKeyOf(program)) : settings.campaign,
       palette: look.palette,
       variant: look.variant,
       serial,
@@ -506,7 +526,8 @@ export async function draftPlannedPost(deps: CoreDeps, tenantId: string, args: {
       .set({ status: 'drafted', statusReason: null, postId: post!.id, assetId: asset.id, dhash: card.dhash, hookId: composition.hookId, promptId: composition.promptId, ctaFeature: composition.ctaFeature, palette: used.palette, variant: used.variant, metrics: { attempts }, updatedAt: now })
       .where(eq(contentPlanItems.id, item.id));
     // A store link's campaign identity is registered with the post it belongs to (D-041); unmapped links stay unmapped.
-    const campaignLink = composition.link ? await registerCampaignLink(t, tenantId, { programId: program.id, planItemId: item.id, postId: post!.id, connectionId: conn.id, channelPlatform: 'facebook', url: composition.link, createdBy: ACTOR_REF }) : null;
+    const reportScope = ProgramSettingsSchema.parse(program.settings ?? {}).campaignIdentity === 'per_post' ? 'campaign' : 'content';
+    const campaignLink = composition.link ? await registerCampaignLink(t, tenantId, { programId: program.id, planItemId: item.id, postId: post!.id, connectionId: conn.id, channelPlatform: 'facebook', url: composition.link, createdBy: ACTOR_REF, reportScope }) : null;
     await audit(t, tenantId, AUTOPILOT, 'studio.post.drafted', { type: 'content_plan_item', id: item.id }, { postId: post!.id, assetId: asset.id, kind: item.kind, unitId: item.unitId, objective: item.objective, claimIds: composition.claimIds, attempts: attempts.length, ...(campaignLink ? { campaignLink } : {}) });
     return { ok: true as const, postId: post!.id, assetId: asset.id, evidenceIds, template: composition.card.template };
   });
@@ -616,7 +637,7 @@ export async function overview(deps: CoreDeps, tenantId: string, programId: stri
         notes: [
           'Missing counters are unavailable, never zero. Scores require observed reactions, comments and shares with evidence. Learning uses only frozen seven-day windows observed at age 144–168 hours; provisional, incomplete and legacy scores are excluded. Comparisons are descriptive, not causal or statistical winners.',
           'Reactions, top-level comments and shares are read from the Page once a day; reach, impressions and link clicks need the read_insights permission, which the Page token does not have.',
-          'Store links carry a Google Play referrer (utm_source=facebook, utm_medium=organic_social, utm_campaign, utm_content = lesson and post number). Installs by campaign appear in Play Console acquisition reports; they are not imported, so no install or conversion figure is shown here.',
+          'Store links carry a Google Play referrer (utm_source=facebook, utm_medium=organic_social, utm_campaign, utm_content). Google Play reports acquisitions by UTM source and campaign only; with a connected Play developer account they appear in Autopilot › App intelligence (per post only for programs with per-post campaigns), so no install or conversion figure is shown here.',
         ],
       },
     };

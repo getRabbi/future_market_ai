@@ -1,0 +1,55 @@
+# App intelligence: official store reports (D-045)
+
+FUTUREGROW imports each developer account's **official aggregate store reports**. Existing apps need no new release, SDK or code change. One connected account covers every app it publishes, including apps added later.
+
+| Layer | Source | Needs an app update? | What it measures |
+|---|---|---|---|
+| 1 — store reports (this document) | Google Play bulk reports in the account's Cloud Storage bucket, the Play Developer Reporting API (vitals) and App Store Connect Analytics Reports | No | Installs/uninstalls, installed audience, store listing visitors and acquisitions by country and traffic source (with UTM source/campaign), crashes/ANRs, ratings; Apple downloads, impressions, page views, installations, sessions and crashes |
+| 2 — app telemetry (optional, `APP_INSTALL_INTEGRATION.md`) | The app backend's consented Play Install Referrer, first open, activation and session events | Yes | Per-installation attribution, activation and retention |
+
+The two layers are shown side by side and are **never added together**. Layer 2 is not derived from Layer 1.
+
+## What is imported
+
+* **Google Play** (`support.google.com/googleplay/android-developer/answer/6135870`): `stats/installs/installs_<pkg>_<yyyyMM>_<dim>.csv` (country, app_version, and overview when Google publishes one; device/language/os_version/carrier can be enabled), `stats/store_performance/store_performance_<pkg>_<yyyyMM>_{country,traffic_source}.csv`, `stats/crashes/…_{overview,app_version}.csv` and `stats/ratings/…_{overview,country,app_version}.csv`. Files are UTF-16 and are matched by column name, not position. Unknown columns are listed on the file record and are never mapped by guessing. Google posts statistics within 3 to 7 days. A day counts as final 7 days after the object's last update.
+* **Play vitals** (Reporting API v1beta1): daily crash and ANR rates (`crashRateMetricSet`, `anrRateMetricSet`), on America/Los_Angeles days (the only time zone the API supports for DAILY data).
+* **Apple** (Analytics Reports, *Standard* content level, DAILY instances): App Store Downloads, Discovery and Engagement, Installations and Deletions, App Sessions and App Crashes. A newer instance replaces older rows for the same Date, as Apple specifies. A day is complete after the report's completeness window (2–5 days). Instances are deleted by Apple after 35 days; older history needs a one-time snapshot (one per month, data from 2024-01-01).
+
+Not available, so not shown: `utm_content` in any Play report (Play reports UTM source and UTM campaign only), campaign tokens in Apple Standard reports (Detailed reports only), and the time zone of Play statistics days (not documented by Google).
+
+## Data semantics
+
+* **Unknown is null, never zero.** An empty or "NA" cell, a missing day, a report not yet posted and a permission problem all show as "—" with a coverage status: pending, not yet published, unavailable, permission denied, partial, complete or revised. A reported 0 stays 0.
+* Each metric keeps its provider column name, definition, population and aggregation rule (`GET /v1/app-intelligence/definitions`). Daily counts add up over days. Installed-base levels take the latest day. Rates and averages are used only as reported for one day and are never recomputed from breakdown rows. Store listing visitors are daily unique counts, so a range total is not a count of unique people.
+* Totals add **the same metric across apps of one platform**, and only when every app has the full period. Android and iOS are never added together.
+* Revisions: each (app, report, breakdown, day) has one current source. A newer generation or instance replaces the day's rows, an older one is skipped, and an identical one changes nothing. Re-importing the same version is a no-op. Revised days are counted and audited.
+* Campaigns: Play traffic-source rows with a UTM campaign are mapped through the D-041 registry to `post` (a per-post campaign), `program` (a shared campaign such as `eps_daily`) or `unregistered`. This is **attribution reported by Google**, not proof that a post caused installs.
+* Growth Brain: per-app series `app.store.android.user_installs`, `app.store.android.listing_acquisitions` and `app.store.ios.first_time_downloads` (and per-app `…:<app id>`) feed M08 forecasts and Autopilot install goals. Change signals compare the last 28 final days with the 28 before, using quasi-Poisson intervals. They abstain when data is stale (over 12 days) or thin (under 24 days or 10 events per window). A change is an observation, never a causal effect.
+
+## Owner setup (once per developer account)
+
+### Google Play — read-only
+
+1. **Service account.** In the Google Cloud console (any project you own), open IAM & Admin › Service accounts › Create service account. No Google Cloud role is needed. Open the account › Keys › Add key › JSON, and download the key file. (If your organization blocks key creation, an admin must allow it for this project.)
+2. **Play permission.** In Play Console › Users and permissions › Invite new users, enter the service account's email (`…@….iam.gserviceaccount.com`). Under Account permissions, tick only **View app information and download bulk reports (read-only)**, shown as "View app information" set to Global. Do not grant release, store presence, financial or admin permissions. Google can take up to 24 hours to apply new access.
+3. **Optional, for app names and vitals.** In the same Google Cloud project, enable the **Google Play Developer Reporting API**. Without it, reports still import; app names and crash/ANR rates are skipped and the account shows a note.
+4. **Report bucket.** In Play Console › Download reports › Statistics, choose **Copy Cloud Storage URI** (it looks like `gs://pubsite_prod_rev_…`).
+5. **Connect.** In FUTUREGROW, open Autopilot › App intelligence › Developer accounts & apps › Connect a developer account. Choose Google Play, paste the URI and select the JSON key file. You must be an owner or admin signed in with two-factor. Access is checked with read-only calls before anything is saved. The key is encrypted server-side and never shown again.
+6. **Apps.** The first sync lists every app found in the bucket and confirms it. An app the key can see only through the API (for example from another developer account) waits for "Report this app". An app already reported by another of your accounts becomes a conflict; resolve it with "Report it from this account". Link apps to brands in the same table.
+7. **Verify one real import.** After the first sync (minutes), open All apps. The app's card shows "Data through <date>", and the detail view lists imported files with status `imported` and coverage `complete` or `partial` for recent months. `GET /v1/app-intelligence/apps/<id>?from=…&to=…` returns the same data. A wrong permission shows `permission_denied` with the fix.
+
+### App Store Connect
+
+1. **Key.** In App Store Connect › Users and Access › Integrations › App Store Connect API, create a team key. **Sales and Reports** is enough to read reports. Asking Apple to start generating Analytics Reports for an app needs an **Admin** key once per app (Apple's rule). Download the `.p8` file (it can be downloaded only once) and note the Issuer ID and Key ID.
+2. **Connect.** Choose App Store Connect in the connect form. Either reuse the existing App Store Connect connection or enter the Issuer ID and Key ID and select the `.p8` file.
+3. **Request reports.** For each iOS app, click "Request Apple reports" (ongoing; this needs the Admin key). Apple generates the first reports in 1–2 days, then daily.
+4. **Verify one real import.** After Apple's first instances appear, the next sync imports them. The app detail shows App Store first-time downloads with "Data through <date>".
+
+Rotating or revoking a key: connect again with the new key (the old connection can be disabled). A deleted key shows `auth_failed`, and syncs back off (30 min doubling to 24 h).
+
+## Operations
+
+* Worker cron `*/10 * * * * store_reporting_tick` queues each due account (`store_account_sync`, one job key per account). Syncs run daily at 06:00–06:40 UTC. A run imports at most 40 files; history continues in follow-up runs 2 minutes apart.
+* A lease on the account row serializes syncs. A crashed worker's lease expires after 15 minutes and the next run resumes; each file imports in its own transaction.
+* Raw report copies are kept 400 days in object storage (`t/<tenant>/reports/store/…`, `47 4 * * * store_report_retention`). Normalized aggregates, file records and evidence remain. Reports are aggregate; no personal data is imported.
+* Routes: `GET/POST /v1/app-intelligence/accounts`, `PATCH /v1/app-intelligence/accounts/:id`, `POST …/accounts/:id/sync` (`{"mode":"incremental"|"backfill"|"discovery"}`), `POST …/accounts/:id/apps`, `POST …/apps/:id/decision`, `POST …/apps/:id/apple-analytics`, `GET …/overview`, `GET …/apps/:id`, `GET …/signals`, `GET …/definitions`.

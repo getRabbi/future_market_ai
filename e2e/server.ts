@@ -51,6 +51,8 @@ await admin.query(`create database fg_e2e encoding 'UTF8' template template0`);
 await admin.end();
 const databaseUrl = `postgres://postgres:fg-e2e-only@localhost:${pgPort}/fg_e2e`;
 await runAllMigrations(databaseUrl);
+// Specs that seed fixture rows (e.g. store reports, which need a real provider to import) read this.
+fs.writeFileSync(path.join(root, '.data', 'e2e-database-url'), databaseUrl);
 
 const env = loadEnv({
   NODE_ENV: 'development',

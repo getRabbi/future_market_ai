@@ -152,6 +152,10 @@ These are authenticated backend reports, not independently verified Google Play 
 
 The Studio's images come from `MediaProvider`s; only the template renderer is enabled today. Stock and AI sources enable only with credentials plus a rights record (licence registry / model registry), and every candidate passes `mediaQa`. The planner's learning compares Gamma–Poisson posteriors with overdispersion and minimum samples (`studio/learning.ts`); a calendar slot moves only on a ≥95% posterior difference, and reports are labelled associations.
 
+## 4g. App intelligence from official store reports (D-045)
+
+A developer account (Play Console bucket + service account, or an App Store Connect team key) is a `store_accounts` row over an encrypted connection. Each sync, leased per account, lists the account's reports, discovers apps (confirmed automatically when found in the account's own reports), and imports each new object version into `store_report_files` (raw copy in R2, evidence in M01). The current source per (app, report, breakdown, day) lives in `store_report_partitions`: a newer generation or instance replaces that day's `store_metric_observations`, an older one is skipped, and identical content is a no-op, so restatements never double count. Coverage per month (pending, not yet published, unavailable, permission denied, partial, complete, revised) and the dashboard keep unknown values null. Totals add only like metrics of one platform. Store KPI series feed M08, Autopilot install goals and descriptive change signals for the Brain. Layer 2 telemetry (4c) is shown beside them and never merged. Details and owner setup: [APP_INTELLIGENCE.md](APP_INTELLIGENCE.md).
+
 ## 5. Evidence (M01)
 
 Every fact that can drive a decision is an evidence record with source, licence/usage rights, PII class, lawful basis, permitted/prohibited uses, confidence, observed time and freshness SLA. Records missing rights or lawful basis are quarantined until a reviewer resolves them. Automation needs current evidence permitted for `autonomous_execution`; system producers (journeys, syncs, audits, reports) declare SLAs explicitly.
@@ -190,6 +194,8 @@ Identity resolution uses keyed hashes (pepper) and explainable merge rules. Cons
 | `15 7 * * *` | spend reconciliation (last 7 settled days) |
 | `45 5 * * *` | Search Console sync |
 | `5 9 * * *` | App Store Connect sales report |
+| `*/10 * * * *` | store reporting tick: queue due developer-account syncs (D-045) |
+| `47 4 * * *` | store report retention (raw copies after 400 days) |
 
 * The **analytics job** claims queued analytics requests with `FOR UPDATE SKIP LOCKED`, runs each inside RLS, records results as evidence, and then takes/verifies the daily encrypted backup (D-030).
 * The **media job** claims render jobs, re-checks the Remotion licence attestation and input hashes, renders with a prebuilt bundle, runs technical QA and writes the asset with an inherited rights manifest and provenance evidence.

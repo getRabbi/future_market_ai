@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { buildApp } from '../../api/src/app.js';
 import { APP_CONVERSION_CALLS } from '../src/components/AppConversions.js';
+import { APP_INTELLIGENCE_CALLS } from '../src/components/AppIntelligence.js';
 import { AUTOPILOT_CALLS } from '../src/components/Autopilot.js';
 import { BRAND_CALLS } from '../src/components/BrandStudio.js';
 import { CONNECTION_CALLS } from '../src/components/Connections.js';
@@ -72,6 +73,7 @@ function calls() {
   for (const c of CONTENT_CALLS) out.push({ where: 'content studio screen', method: c.method, path: c.path });
   for (const c of APP_CONVERSION_CALLS) out.push({ where: 'app conversions screen', method: c.method, path: c.path });
   for (const c of BRAND_CALLS) out.push({ where: 'brands screen', method: c.method, path: c.path });
+  for (const c of APP_INTELLIGENCE_CALLS) out.push({ where: 'app intelligence screen', method: c.method, path: c.path });
   return out;
 }
 

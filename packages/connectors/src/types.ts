@@ -11,6 +11,8 @@ export type ProviderCredentials =
   | { provider: 'x'; accessToken: string }
   | { provider: 'shopify'; shopDomain: string; accessToken: string }
   | { provider: 'app_store_connect'; issuerId: string; keyId: string; privateKeyPem: string; vendorNumber?: string }
+  /** Google service account (key file fields); read-only Play report access (D-045). */
+  | { provider: 'google_play'; clientEmail: string; privateKeyPem: string; privateKeyId?: string | null; projectId?: string | null }
   | { provider: 'resend'; apiKey: string }
   | { provider: 'posthog'; projectApiKey: string; host: string }
   | { provider: 'chatwoot'; baseUrl: string; apiAccessToken: string; accountId: string }
@@ -35,6 +37,10 @@ export interface ProviderEndpoints {
   linkedin: string;
   x: string;
   appStoreConnect: string;
+  /** Cloud Storage JSON API (Play bulk report bucket). */
+  cloudStorage: string;
+  /** Play Developer Reporting API. */
+  playReporting: string;
   resend: string;
   searchConsole: string;
   /** Shopify host override (tests); production uses https://{shop}.myshopify.com */
@@ -51,6 +57,8 @@ export const DEFAULT_ENDPOINTS: ProviderEndpoints = {
   linkedin: 'https://api.linkedin.com',
   x: 'https://api.x.com',
   appStoreConnect: 'https://api.appstoreconnect.apple.com',
+  cloudStorage: 'https://storage.googleapis.com',
+  playReporting: 'https://playdeveloperreporting.googleapis.com',
   resend: 'https://api.resend.com',
   searchConsole: 'https://www.googleapis.com/webmasters/v3',
   shopifyOverride: null,
