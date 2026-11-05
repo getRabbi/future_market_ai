@@ -324,9 +324,21 @@ export type CampaignRegistration = { registered: true; linkId: string } | { regi
  * failing the draft) when the program has no brand, the app is not that brand's, or the identity is
  * already registered to different content: such links stay unmapped instead of being misattributed.
  */
-export async function registerCampaignLink(t: Tx, tenantId: string, args: { programId: string; planItemId: string; postId: string; connectionId: string; channelPlatform: string; url: string; createdBy: string }): Promise<CampaignRegistration> {
+export async function registerCampaignLink(t: Tx, tenantId: string, args: { programId: string; planItemId: string; postId: string; connectionId: string; channelPlatform: string; url: string; createdBy: string; reportScope?: 'content' | 'campaign' }): Promise<CampaignRegistration> {
   const id = linkIdentity(args.url);
   if (!id) return { registered: false, reason: 'the link carries no parsable store campaign identity' };
+  const reportScope = args.reportScope ?? 'content';
+  // Store reports see utm_campaign without utm_content (D-045): a campaign that names one post must
+  // not be shared with any other content of the app, and a shared one must not reuse such a name.
+  await t.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`campaign:${tenantId}:${id.appPlatform}:${id.appId}:${id.campaign}`}, 0))`);
+  const clash = one(
+    await t
+      .select({ planItemId: campaignLinks.planItemId, reportScope: campaignLinks.reportScope })
+      .from(campaignLinks)
+      .where(and(eq(campaignLinks.appPlatform, id.appPlatform), eq(campaignLinks.appId, id.appId), eq(campaignLinks.campaign, id.campaign), reportScope === 'campaign' ? ne(campaignLinks.planItemId, args.planItemId) : eq(campaignLinks.reportScope, 'campaign')))
+      .limit(1),
+  );
+  if (clash) return { registered: false, reason: `campaign ${id.campaign} already identifies other content of ${id.appId}; a store report could not tell them apart` };
   const program = one(await t.select({ brandId: studioPrograms.brandId }).from(studioPrograms).where(eq(studioPrograms.id, args.programId)));
   if (!program?.brandId) return { registered: false, reason: 'the program is not assigned to a brand' };
   const app = one(
@@ -351,6 +363,7 @@ export async function registerCampaignLink(t: Tx, tenantId: string, args: { prog
       campaign: id.campaign,
       content: id.content,
       url: args.url,
+      reportScope,
       createdBy: args.createdBy,
     })
     .onConflictDoNothing()

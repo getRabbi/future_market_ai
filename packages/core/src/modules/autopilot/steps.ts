@@ -19,6 +19,7 @@ import {
   metricSeries,
   seoAudits,
   socialPosts,
+  storeReportFiles,
   type Tx,
   trends,
   withTenant,
@@ -50,6 +51,7 @@ import {
 } from '../m16-social/index.js';
 import { keywordOpportunities, queueSeoAudit } from '../m18-discovery/index.js';
 import { DOWNLOADS_SERIES_KEY, syncDownloadsSeries } from '../m19-app-growth/index.js';
+import { isStoreSeriesKey, syncStoreKpiSeries } from '../m19-app-growth/store/signals.js';
 import { approvedJurisdictionScopes, getTenantPolicy } from '../m24-governance/index.js';
 import { draftPlannedPost, learnFrom, nextPostingSlot, POST_WINDOW, postingWindow, programForConnection, programHistory, syncPlanResults } from '../studio/index.js';
 import { type GoalRow, goalActions, goalCategories, goalKpi, limitsOf } from './goals.js';
@@ -111,6 +113,7 @@ const fmtDate = (d: Date | string | null | undefined) => (d ? new Date(d).toISOS
 const money = (micros: number, currency: string) => `${(micros / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currency}`;
 
 function dataHint(metricKey: string): string {
+  if (isStoreSeriesKey(metricKey)) return 'This series comes from official store reports. Connect the developer account in Autopilot › App intelligence; Google posts Play statistics within 3 to 7 days, so the newest days arrive later.';
   if (metricKey === DOWNLOADS_SERIES_KEY) return 'Connect App Store Connect in Connections (daily sales reports become this series) or upload the daily values in Advanced › Analytics.';
   if (isFacebookInsightsKey(metricKey)) return 'This series comes from the daily Page insights sync of a Facebook Page in Connections. Meta returns values only when the Page token has the read_insights permission, and may withhold them for small Pages.';
   return 'Upload the daily values of this metric in Advanced › Analytics (metric series), or connect the source that produces it.';
@@ -217,12 +220,17 @@ function bootstrapOf(c: StepContext): { active: boolean; reason: string | null }
   return (c.prior.observe?.output.bootstrap as { active: boolean; reason: string | null } | undefined) ?? { active: false, reason: null };
 }
 
+const storeBridge = (written: { key: string; points: number }[], key: string) => {
+  const w = written.find((x) => x.key === key);
+  return w ? { seriesId: '', points: w.points } : null;
+};
+
 const observe: StepExecutor = async (c) => {
   const insights = isFacebookInsightsKey(goalKpi(c.goal).metricKey) ? await refreshPageInsights(c, goalKpi(c.goal).metricKey) : null;
   const organic = c.goal.channels.includes('organic_social') ? await refreshOrganicPages(c) : null;
   return tx(c, async (t) => {
     const kpi = goalKpi(c.goal);
-    const bridged = kpi.metricKey === DOWNLOADS_SERIES_KEY ? await syncDownloadsSeries(t, c.tenantId) : null;
+    const bridged = kpi.metricKey === DOWNLOADS_SERIES_KEY ? await syncDownloadsSeries(t, c.tenantId) : isStoreSeriesKey(kpi.metricKey) ? storeBridge(await syncStoreKpiSeries(t, c.tenantId, c.now), kpi.metricKey) : null;
     const [series] = await t.select().from(metricSeries).where(eq(metricSeries.key, kpi.metricKey));
     const [stats] = series
       ? await t
@@ -246,7 +254,7 @@ const observe: StepExecutor = async (c) => {
     const scopes = await approvedJurisdictionScopes(t, policy);
     const neededDomains = [...new Set(c.goal.channels.flatMap((ch) => CHANNEL_JURISDICTION_DOMAINS[ch as GoalChannel] ?? []))];
     const missingDomains = neededDomains.filter((d) => !(scopes[c.goal.market] ?? []).includes(d));
-    const reports = kpi.metricKey === DOWNLOADS_SERIES_KEY ? ((await t.select({ n: sql<number>`count(*)::int` }).from(appStoreReports))[0]?.n ?? 0) : null;
+    const reports = kpi.metricKey === DOWNLOADS_SERIES_KEY ? ((await t.select({ n: sql<number>`count(*)::int` }).from(appStoreReports))[0]?.n ?? 0) : isStoreSeriesKey(kpi.metricKey) ? ((await t.select({ n: sql<number>`count(*)::int` }).from(storeReportFiles))[0]?.n ?? 0) : null;
     const points = stats?.n ?? 0;
     const warnings: string[] = [...(insights?.notes ?? []), ...(organic?.notes ?? [])];
     const bootstrap = organic?.pages.length && points < MIN_KPI_POINTS ? { active: true, reason: `${kpi.label} has ${points} of the ${MIN_KPI_POINTS} daily values a forecast needs` } : { active: false, reason: null };
@@ -270,7 +278,9 @@ const observe: StepExecutor = async (c) => {
     if (!c.deps.models) warnings.push('No approved AI model is available, so ideas and decisions cannot be generated.');
     const active = conns.filter((x) => x.status === 'active');
     const detail = [
-      series ? `${kpi.label}: ${points} data point${points === 1 ? '' : 's'} (latest ${fmtDate(stats?.last)})${bridged ? `, ${bridged.points} from App Store reports` : ''}${insights?.points ? `, ${insights.points} daily values just synced from Facebook Page insights` : ''}.` : `No ${kpi.label} data yet.`,
+      series
+        ? `${kpi.label}: ${points} data point${points === 1 ? '' : 's'} (latest ${fmtDate(stats?.last)})${bridged ? `, ${bridged.points} from ${isStoreSeriesKey(kpi.metricKey) ? 'official store' : 'App Store'} reports` : ''}${insights?.points ? `, ${insights.points} daily values just synced from Facebook Page insights` : ''}.`
+        : `No ${kpi.label} data yet.`,
       `${active.length} of ${conns.length} connection${conns.length === 1 ? '' : 's'} active${active.length ? ` (${[...new Set(active.map((x) => x.provider))].join(', ')})` : ''}.`,
       `${ev?.n ?? 0} admitted evidence records, ${cl?.n ?? 0} approved claims, ${ideas?.n ?? 0} open ideas for this KPI, ${open.length} open action${open.length === 1 ? '' : 's'}.`,
       ...pageLines,

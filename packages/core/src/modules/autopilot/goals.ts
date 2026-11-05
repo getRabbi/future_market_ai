@@ -319,6 +319,25 @@ export interface GoalDraft {
  * dates and budgets are taken literally (a $0 budget never becomes paid ads), unknowns are
  * listed for the owner to confirm, and nothing starts until the owner saves the goal.
  */
+const STORE_INSTALL_SERIES = { android: 'app.store.android.user_installs', ios: 'app.store.ios.first_time_downloads' } as const;
+
+/**
+ * Picks the store-report series for an install goal. Android user installs and iOS first-time
+ * downloads are different measures, so one goal tracks one platform; the note says which.
+ */
+function pickStoreSeries(text: string, series: { key: string }[]): { key: string; note: string | null } | null {
+  const has = (k: string) => series.some((s) => s.key === k);
+  const android = has(STORE_INSTALL_SERIES.android);
+  const ios = has(STORE_INSTALL_SERIES.ios);
+  if (!android && !ios) return null;
+  const wantsIos = /\b(ios|iphone|ipad|app store)\b/i.test(text);
+  const wantsAndroid = /\b(android|google play|play store)\b/i.test(text);
+  const key = (wantsIos && ios && !wantsAndroid) || !android ? STORE_INSTALL_SERIES.ios : STORE_INSTALL_SERIES.android;
+  const note =
+    android && ios ? `Android installs and iOS first-time downloads are measured differently and are not added together; this goal tracks ${key === STORE_INSTALL_SERIES.android ? 'Google Play user installs' : 'App Store first-time downloads'} across your apps. Create a second goal for the other platform.` : null;
+  return { key, note };
+}
+
 export function interpretGoal(text: string, ctx: { now: Date; series: { key: string; name: string; unit: string }[]; market: string | null }): GoalDraft {
   const t = text.trim();
   const understood: string[] = [];
@@ -351,11 +370,14 @@ export function interpretGoal(text: string, ctx: { now: Date; series: { key: str
   }
 
   const tpl = KPI_TEMPLATES.find((k) => k.re.test(t) && (!k.when || k.when.test(t)));
+  // Install goals use official store-report series when a developer account is connected (D-045).
+  const store = tpl?.kpi.metricKey === DOWNLOADS_SERIES_KEY ? pickStoreSeries(t, ctx.series) : null;
+  if (store?.note) assumptions.push(store.note);
   let kpi: GoalKpi;
   let channels: GoalChannel[];
   if (tpl) {
     const words = tpl.kpi.label.toLowerCase().split(/\s+/);
-    const existing = ctx.series.find((s) => s.key === tpl.kpi.metricKey) ?? (tpl.exact ? undefined : ctx.series.find((s) => words.some((w) => w.length > 3 && `${s.key} ${s.name}`.toLowerCase().includes(w.replace(/s$/, '')))));
+    const existing = (store ? ctx.series.find((s) => s.key === store.key) : undefined) ?? ctx.series.find((s) => s.key === tpl.kpi.metricKey) ?? (tpl.exact ? undefined : ctx.series.find((s) => words.some((w) => w.length > 3 && `${s.key} ${s.name}`.toLowerCase().includes(w.replace(/s$/, '')))));
     kpi = { ...tpl.kpi, metricKey: existing?.key ?? tpl.kpi.metricKey, label: existing?.name ?? tpl.kpi.label, unit: existing?.unit ?? tpl.kpi.unit, direction: 'increase', target: null, targetChangePct: null };
     channels = [...tpl.channels];
     understood.push(`Measure: ${kpi.label} (${kpi.metricKey})${existing ? ', using your existing data series' : ''}`);

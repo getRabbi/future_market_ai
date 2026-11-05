@@ -51,6 +51,8 @@ export function testConfig(endpointBase?: string): CoreConfig {
         youtubeData: `${endpointBase}/youtube/v3`,
         youtubeUpload: `${endpointBase}/upload/youtube/v3`,
         appStoreConnect: endpointBase,
+        cloudStorage: endpointBase,
+        playReporting: endpointBase,
         resend: endpointBase,
         searchConsole: `${endpointBase}/webmasters/v3`,
         shopifyOverride: endpointBase,
