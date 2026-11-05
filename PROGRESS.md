@@ -149,15 +149,21 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] D-044 provider-neutral media registry with one QA gate; stock and AI sources disabled until licensed.
 - [x] Brands & channels tab in the Autopilot UI.
 
+### App intelligence: official store reports (2026-11-06) — ◐ (implemented and tested; awaiting a real developer account, B-022)
+- [x] D-045 developer accounts and apps (multi-account, multi-app, multi-tenant; discovery, owner confirmation, conflicts), migration 0016.
+- [x] Google Play bulk-report importer (installs, store performance by country and traffic source with UTM source/campaign, crashes/ANRs, ratings), Reporting API vitals and app discovery; Apple Analytics Reports workflow (request, reports, instances, segments).
+- [x] Revision-safe imports (newest source per day), coverage/freshness states, leased scheduler with backfill and backoff, raw-copy retention.
+- [x] App intelligence tab (All apps, per-app detail, Developer accounts & apps); store KPI series for M08/Autopilot; abstaining change signals; per-post `utm_campaign` for new Studio programs.
+
 **Capability status (2026-11-05):**
 
 | Status | Capabilities |
 |---|---|
 | Production-verified | Facebook Page photo/text posts through M23 with read-back verification (EPS-topik-Bangla, Development-mode app; public visibility not independently verified); daily Page post counters; Studio calendar, branded cards, evening window, rolling 24 h limit; conversion ingestion routes deployed (no live app traffic yet). |
 | Implemented, fixture-tested only | Instagram, TikTok, YouTube, LinkedIn publishing executors; X executor; brand/campaign registry and brand-scoped reports; platform readiness; learning comparisons; media registry; spam screen. |
-| Configured, awaiting credentials | Google Ads, Shopify, App Store Connect, Resend, PostHog, Chatwoot; Play Console reporting; stock media vendor. |
+| Configured, awaiting credentials | Google Ads, Shopify, App Store Connect (sales and Analytics Reports), Resend, PostHog, Chatwoot; Google Play bulk reports and vitals (D-045, B-022); stock media vendor. |
 | Awaiting external approval or owner decision | Meta App Review / Live mode and `read_insights`; TikTok audit; LinkedIn Community Management API (B-020); X spend (B-019); Reddit API (B-021); image model approval (B-011). |
-| Not implemented | Video production for YouTube/TikTok; Play Console report importer; independent device/store install verification; engagement/analytics ingestion for non-Meta platforms; stock/AI vendor adapters. |
+| Not implemented | Video production for YouTube/TikTok; independent device/store install verification; engagement/analytics ingestion for non-Meta platforms; stock/AI vendor adapters. |
 
 ## Completion summary
 

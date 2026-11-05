@@ -1,5 +1,7 @@
 # Existing Android install ingestion contract
 
+> **Optional Layer 2 (D-045):** official store reports (Google Play bulk reports, App Store Analytics Reports) now give every app aggregate installs, acquisitions, sources, UTM campaigns and quality without any app change; see [APP_INTELLIGENCE.md](APP_INTELLIGENCE.md). The telemetry described here stays optional, is shown beside those reports and is never added to them.
+
 > **Campaign identity (D-041):** links the content studio puts on posts now carry `utm_content=<kind>-<yyyymmdd>` (one per program per day) and are registered with the brand, program, plan item, post and channel. Pass the Play Install Referrer string through unchanged; FUTUREGROW maps `(appId, utm_campaign, utm_content)` to that registry. The application must be linked to the brand (`POST /v1/brands/:id/apps` with its Play listing URL) for installs to be attributed; otherwise they appear as `unregistered`.
 
 Status: FUTUREGROW supports application-scoped, evidence-backed backend installs, conversion events, completeness reconciliation and campaign reports. No mobile repository was inspected or modified. Play Console import, account/program mapping and conversion-driven Studio optimization remain unfinished. Backend declarations do not independently verify device instrumentation or total store coverage.
@@ -109,8 +111,7 @@ Campaign reports add `reconciledWindows.firstOpens7d`, `activations7d` and `reta
 
 - Backend interval reconciliation is implemented. Independent store coverage, device instrumentation verification and account-qualified comparable rates still need genuine connected sources and explicit mappings.
 - Add explicit program/channel-account mappings; the new reports isolate application/platform/campaign dimensions but do not infer which Page or account owns an arbitrary campaign label. Legacy cohorts remain separate historical summaries.
-- Build a supported, credential-gated Play Console report adapter, with source verification and honest availability labels. Existing `syncAppStoreSales()` imports Apple's reports, not Google Play reports.
-- The supported source to evaluate is the account's private Google Cloud Storage reporting bucket, using a service account granted the appropriate Play Console access. Google documents monthly CSV exports, delayed daily updates and UTF-16 conversion requirements; this is a separate source from device referrers. See [Google's report-export documentation](https://support.google.com/googleplay/android-developer/answer/6135870?hl=en). No credentials, reports or access permission were fabricated or connected here.
+- The Play Console report adapter is built (D-045, Cloud Storage bucket + service account, read-only); it is fixture-tested and waits for a real connected account (B-022).
 - Connect sufficiently supported, app/program/account-scoped observations to Studio learning. Do not treat a generated referrer URL as evidence of a click or install.
 
 Code anchors: `packages/core/src/modules/m19-app-growth/index.ts` (`InstallSchema`, `recordInstall`, `acquisitionCohorts`), `apps/api/src/routes/public-channel-routes.ts`, `apps/api/src/routes/public-routes.ts`, and `apps/api/test/public-channels.test.ts`.
