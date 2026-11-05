@@ -149,7 +149,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] D-044 provider-neutral media registry with one QA gate; stock and AI sources disabled until licensed.
 - [x] Brands & channels tab in the Autopilot UI.
 
-### App intelligence: official store reports (2026-11-06) — ◐ (implemented and tested; awaiting a real developer account, B-022)
+### App intelligence: official store reports (2026-11-06) — ◐ (released as `1401553`, live; awaiting a real developer account, B-022)
 - [x] D-045 developer accounts and apps (multi-account, multi-app, multi-tenant; discovery, owner confirmation, conflicts), migration 0016.
 - [x] Google Play bulk-report importer (installs, store performance by country and traffic source with UTM source/campaign, crashes/ANRs, ratings), Reporting API vitals and app discovery; Apple Analytics Reports workflow (request, reports, instances, segments).
 - [x] Revision-safe imports (newest source per day), coverage/freshness states, leased scheduler with backfill and backoff, raw-copy retention.
