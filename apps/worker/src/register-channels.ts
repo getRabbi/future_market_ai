@@ -127,7 +127,8 @@ registerTasks((deps) => ({
     const r = await appIntelligence.runStoreAccountSync(deps, tenantId, accountId, { mode: mode ?? 'incremental', triggeredBy: 'system:scheduler', owner: `worker:${process.pid}:${randomUUID().slice(0, 8)}` });
     if (!r.skipped) {
       deps.logger.info({ tenantId, accountId, outcome: r.outcome, health: r.health, imported: r.stats.filesImported, deferred: r.stats.deferred }, 'store report sync finished');
-      if (r.stats.filesImported > 0) await withTenant(deps.db, { tenantId, actor: 'system:store-reporting' }, (tx) => appIntelligence.syncStoreKpiSeries(tx, tenantId, deps.clock.now()));
+      // Always reconcile: an import, a revision, an app confirmed or ignored, or evidence no longer admitted all change the KPI series.
+      await withTenant(deps.db, { tenantId, actor: 'system:store-reporting' }, (tx) => appIntelligence.syncStoreKpiSeries(tx, tenantId, deps.clock.now()));
     }
   },
 

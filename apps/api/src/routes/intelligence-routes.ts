@@ -18,8 +18,20 @@ export function registerIntelligenceRoutes(app: FastifyInstance, ctx: ApiContext
   const { deps } = ctx;
 
   r.get('/v1/analytics/series', { schema: { tags: ['analytics'] } }, async (req) => tenantTx(ctx, req, (tx) => tx.select().from(metricSeries).orderBy(metricSeries.key)));
-  r.post('/v1/analytics/series', { schema: { tags: ['analytics'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => analytics.upsertSeries(tx, tenantOf(req), actorOf(req), req.body))));
-  r.post('/v1/analytics/series/:id/points', { schema: { tags: ['analytics'], params: Id, body: z.object({ points: z.array(z.unknown()).min(1).max(20000) }) } }, async (req) => tenantTx(ctx, req, (tx) => analytics.appendPoints(tx, tenantOf(req), req.params.id, req.body.points)));
+  r.post('/v1/analytics/series', { schema: { tags: ['analytics'], body: Body } }, async (req, reply) =>
+    reply.status(201).send(
+      await tenantTx(ctx, req, async (tx) => {
+        await analytics.assertUserWritableSeries(tx, { key: req.body.key });
+        return analytics.upsertSeries(tx, tenantOf(req), actorOf(req), req.body);
+      }),
+    ),
+  );
+  r.post('/v1/analytics/series/:id/points', { schema: { tags: ['analytics'], params: Id, body: z.object({ points: z.array(z.unknown()).min(1).max(20000) }) } }, async (req) =>
+    tenantTx(ctx, req, async (tx) => {
+      await analytics.assertUserWritableSeries(tx, { seriesId: req.params.id });
+      return analytics.appendPoints(tx, tenantOf(req), req.params.id, req.body.points);
+    }),
+  );
   r.get('/v1/analytics/series/:id/points', { schema: { tags: ['analytics'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => analytics.getSeriesPoints(tx, req.params.id)));
 
   r.post('/v1/analytics/requests', { schema: { tags: ['analytics'], body: z.object({ kind: z.enum(ANALYTICS_KINDS), params: Body, priority: z.number().int().min(1).max(1000).default(100) }) } }, async (req, reply) =>
