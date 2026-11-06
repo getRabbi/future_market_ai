@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { auditLog, campaignLinks, connections, contentPlanItems, metricPoints, metricSeries, organization, socialPosts, storeAccounts, storeApps, storeMetricObservations, storeReportCoverage, storeReportFiles, storeReportPartitions, storeSyncRuns, withTenant } from '@futuregrow/db';
+import { auditLog, campaignLinks, connections, contentPlanItems, evidenceRecords, metricPoints, metricSeries, organization, socialPosts, storeAccounts, storeApps, storeMetricObservations, storeReportCoverage, storeReportFiles, storeReportPartitions, storeSyncRuns, withTenant } from '@futuregrow/db';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import { ascKey, csv, DOWNLOADS_HEADER, FakeApple, FakePlay, INSTALLS_HEADER, monthDays, serviceAccountKey, TRAFFIC_HEADER, tsv, utf16 } from '../../../test/helpers/store-fixtures.js';
-import { clearPlayTokenCache } from '../../connectors/src/index.js';
-import { interpretGoal } from '../src/modules/autopilot/goals.js';
+import { classifyPlayError, clearPlayTokenCache, ProviderHttpError } from '../../connectors/src/index.js';
+import { interpretForTenant, interpretGoal } from '../src/modules/autopilot/goals.js';
+import { EXECUTORS, measureGoal, storeTrendLines } from '../src/modules/autopilot/steps.js';
 import { assignProgram, bindApp, bindChannel, createBrand, registerCampaignLink } from '../src/modules/brands/index.js';
+import { rotateConnectionCredentials } from '../src/modules/connections.js';
+import { assertUserWritableSeries } from '../src/modules/m08-analytics/index.js';
 import { recordInstall } from '../src/modules/m19-app-growth/index.js';
 import {
   appIntelligenceDetail,
@@ -19,12 +22,15 @@ import {
   PLAY_FAMILIES,
   parsePlayReport,
   requestAppleAnalytics,
+  rotateStoreAccountKey,
   runStoreAccountSync,
   STORE_SYNC_TASK,
   storeKpiSignals,
+  storeTrendContext,
   syncStoreKpiSeries,
 } from '../src/modules/m19-app-growth/store/index.js';
 import { upsertProgram } from '../src/modules/studio/index.js';
+import { loadCredentials } from '../src/secrets.js';
 
 let h: CoreHarness;
 let server: FixtureServer;
@@ -485,7 +491,10 @@ describe('dashboard, campaigns, telemetry and the Growth Brain', () => {
 
   it('feeds evidence-backed KPI series to M08 and abstains on stale data', async () => {
     const written = await tx((t) => syncStoreKpiSeries(t, h.tenantId, h.clock.now()));
-    expect(written.map((w) => w.key)).toEqual(expect.arrayContaining(['app.store.android.user_installs', `app.store.android.user_installs:${ALPHA}`, 'app.store.ios.first_time_downloads']));
+    const keys = written.map((w) => w.key);
+    expect(keys).toEqual(expect.arrayContaining(['app.store.android.user_installs', `app.store.android.user_installs:${ALPHA}`, 'app.store.ios.first_time_downloads:com.example.alpha.ios']));
+    // The second confirmed iOS app (com.example.locked) has no report: no all-apps iOS total is published.
+    expect(keys).not.toContain('app.store.ios.first_time_downloads');
     const [series] = await tx((t) => t.select().from(metricSeries).where(eq(metricSeries.key, 'app.store.android.user_installs')));
     const pts = await tx((t) => t.select().from(metricPoints).where(eq(metricPoints.seriesId, series!.id)));
     expect(pts.length).toBeGreaterThan(30);
@@ -495,6 +504,10 @@ describe('dashboard, campaigns, telemetry and the Growth Brain', () => {
     expect(alpha.length).toBeGreaterThan(0);
     // Latest final Play day is weeks old here: no trend is claimed.
     expect(alpha.every((s) => s.status === 'stale' || s.status === 'insufficient_data')).toBe(true);
+    // Freshness follows the analysed metric: installs are final through 10-10 (10-11..10-14 are provisional),
+    // listing acquisitions only through 08-31; the fresher vitals partitions (10-16) do not count for either.
+    expect(alpha.find((s) => s.metricKey === 'play.daily_user_installs')).toMatchObject({ status: 'insufficient_data', latestFinalDay: '2026-10-10' });
+    expect(alpha.find((s) => s.metricKey === 'play.store_listing_acquisitions')).toMatchObject({ status: 'stale', latestFinalDay: '2026-08-31' });
   });
 
   it('resolves an all-apps install goal to one platform series and says why', () => {
@@ -509,5 +522,270 @@ describe('dashboard, campaigns, telemetry and the Growth Brain', () => {
     expect(draft.draft.kpi).toMatchObject({ metricKey: 'app.store.android.user_installs', targetChangePct: 20 });
     expect(draft.draft.adBudget.amountMicros).toBe(0);
     expect(draft.assumptions.join(' ')).toMatch(/not added together/);
+  });
+});
+
+describe('final completion: KPI correctness, store context for the Growth Brain, connection maintenance', () => {
+  const ALL = 'app.store.android.user_installs';
+  const A = `app.store.android.user_installs:${ALPHA}`;
+  const B = `app.store.android.user_installs:${BETA}`;
+  const resync = (tenantId = h.tenantId) => tx((t) => syncStoreKpiSeries(t, tenantId, h.clock.now()), tenantId);
+  const points = async (key: string, tenantId = h.tenantId) => {
+    const [s] = await tx((t) => t.select().from(metricSeries).where(eq(metricSeries.key, key)), tenantId);
+    if (!s) return new Map<string, { value: number; evidenceId: string | null }>();
+    const pts = await tx((t) => t.select().from(metricPoints).where(eq(metricPoints.seriesId, s.id)), tenantId);
+    return new Map(pts.map((p) => [p.ts.toISOString().slice(0, 10), { value: p.value, evidenceId: p.evidenceId }]));
+  };
+  const confirmedApp = async (appId: string) =>
+    (
+      await tx((t) =>
+        t
+          .select()
+          .from(storeApps)
+          .where(and(eq(storeApps.appId, appId), eq(storeApps.status, 'confirmed'))),
+      )
+    )[0]!;
+  const playAccount = async () => (await tx((t) => t.select().from(storeAccounts).where(eq(storeAccounts.accountRef, BUCKET))))[0]!;
+  const invalidations = async () => (await tx((t) => t.select().from(auditLog).where(eq(auditLog.action, 'analytics.series.points_invalidated')))).length;
+
+  it('publishes an all-apps value only on days every confirmed app has a final value; Android and iOS stay apart', async () => {
+    await resync();
+    const [all, a, b] = [await points(ALL), await points(A), await points(B)];
+    for (const d of ['2026-08-01', '2026-08-15', '2026-08-31']) expect(all.get(d)!.value).toBe(a.get(d)!.value + b.get(d)!.value);
+    // October: only Alpha reported. Beta's missing days make the total unknown, never Alpha alone.
+    expect(a.get('2026-10-05')).toBeDefined();
+    expect(all.has('2026-10-05')).toBe(false);
+    // July: Beta alone has one day: no total either.
+    expect(b.has('2026-07-01')).toBe(true);
+    expect(all.has('2026-07-01')).toBe(false);
+    // Provisional days (fewer than 7 days old when the file was posted) are not KPI values.
+    expect(a.has('2026-10-10')).toBe(true);
+    expect(a.has('2026-10-11')).toBe(false);
+    // iOS values live only in iOS series.
+    expect([...(await points('app.store.ios.first_time_downloads:com.example.alpha.ios')).keys()]).toEqual(['2026-10-08', '2026-10-09']);
+    expect((await points('app.store.ios.first_time_downloads')).size).toBe(0);
+  });
+
+  it("cites the admitted evidence of the winning report version of the metric's own family", async () => {
+    const alpha = await confirmedApp(ALPHA);
+    const files = await tx((t) => t.select({ id: storeReportFiles.id, family: storeReportFiles.family, evidenceId: storeReportFiles.evidenceId }).from(storeReportFiles).where(eq(storeReportFiles.storeAppId, alpha.id)));
+    const familyOf = new Map(files.map((f) => [f.evidenceId, f.family]));
+    const a = await points(A);
+    // Alpha also has store-performance, crash and vitals reports for these days; none of them is cited for installs.
+    expect([...a.values()].every((p) => familyOf.get(p.evidenceId) === 'play.installs')).toBe(true);
+    const [part] = await tx((t) =>
+      t
+        .select()
+        .from(storeReportPartitions)
+        .where(and(eq(storeReportPartitions.storeAppId, alpha.id), eq(storeReportPartitions.family, 'play.installs'), eq(storeReportPartitions.dimension, 'country'), eq(storeReportPartitions.observationDate, '2026-08-15'))),
+    );
+    expect(a.get('2026-08-15')!.evidenceId).toBe(files.find((f) => f.id === part!.reportFileId)!.evidenceId);
+  });
+
+  it('is idempotent, serializes concurrent runs and isolates organizations', async () => {
+    const before = await points(ALL);
+    const audits = await invalidations();
+    const runs = await Promise.all([resync(), resync()]);
+    expect(runs.every((w) => w.every((x) => x.removed === 0))).toBe(true);
+    expect(await points(ALL)).toEqual(before);
+    expect(await invalidations()).toBe(audits);
+    // Another organization has no confirmed apps: its run writes nothing and touches nothing here.
+    expect(await resync(other)).toEqual([]);
+    expect(await tx((t) => t.select().from(metricSeries), other)).toHaveLength(0);
+    expect(await points(ALL)).toEqual(before);
+  });
+
+  it('updates a revised day in place (value and evidence) and ignores an older replay', async () => {
+    const before = await points(A);
+    const allBefore = await points(ALL);
+    play.put(`stats/installs/installs_${ALPHA}_202608_country.csv`, installsFile(ALPHA, '2026-08', undefined, { override: { '2026-08-15|BD': 100, '2026-08-16|BD': 50 }, blankUninstallsOn: '2026-08-20', zeroUninstallsOn: '2026-08-21' }), '2026-09-12T03:00:00Z');
+    expect(await sync((await playAccount()).id)).toMatchObject({ outcome: 'succeeded' });
+    const written = await resync();
+    const after = await points(A);
+    const delta = 50 - userInstalls('2026-08-16', 'BD');
+    expect(after.get('2026-08-16')!.value).toBe(before.get('2026-08-16')!.value + delta);
+    expect(after.get('2026-08-16')!.evidenceId).not.toBe(before.get('2026-08-16')!.evidenceId);
+    expect(after.get('2026-08-17')!.value).toBe(before.get('2026-08-17')!.value);
+    expect((await points(ALL)).get('2026-08-16')!.value).toBe(allBefore.get('2026-08-16')!.value + delta);
+    expect(written.find((w) => w.key === A)).toMatchObject({ removed: 0 });
+    // An older version of the same file never overwrites the newer one, so the KPI does not move.
+    const alpha = await confirmedApp(ALPHA);
+    const fam = PLAY_FAMILIES.find((f) => f.family === 'play.installs')!;
+    const old = parsePlayReport(Buffer.from(installsFile(ALPHA, '2026-08', undefined, { override: { '2026-08-16|BD': 1 } }).subarray(2)).toString('utf16le'), fam, fam.dimensions.find((d) => d.key === 'country')!, ALPHA);
+    await tx((t) =>
+      importParsedReport(
+        t,
+        { tenantId: h.tenantId, storeAccountId: alpha.storeAccountId, storeAppId: alpha.id, platform: 'android', appId: ALPHA, provider: 'google_play' },
+        { uri: `gs://${BUCKET}/stats/installs/installs_${ALPHA}_202608_country.csv`, version: 'replay-1', rank: 2, period: '2026-08', updatedAt: new Date('2026-09-02T00:00:00Z'), checksum: null, sizeBytes: 1, sha256: 'y', encoding: 'utf-16le', objectKey: null },
+        old,
+        { now: h.clock.now(), completeAfterDays: 7, evidence: { uri: 'gs://test#replay', license: 'test', freshnessSlaHours: 24 } },
+      ),
+    );
+    await resync();
+    expect(await points(A)).toEqual(after);
+  });
+
+  it('removes points whose report evidence is no longer admitted, keeps raw reports, and restores them', async () => {
+    const alpha = await confirmedApp(ALPHA);
+    const [oct] = await tx((t) =>
+      t
+        .select()
+        .from(storeReportFiles)
+        .where(and(eq(storeReportFiles.storeAppId, alpha.id), eq(storeReportFiles.family, 'play.installs'), eq(storeReportFiles.period, '2026-10'))),
+    );
+    const observations = async () => (await tx((t) => t.select({ n: sql<number>`count(*)::int` }).from(storeMetricObservations).where(eq(storeMetricObservations.reportFileId, oct!.id))))[0]!.n;
+    const obsBefore = await observations();
+    const audits = await invalidations();
+    await tx((t) => t.update(evidenceRecords).set({ status: 'rejected' }).where(eq(evidenceRecords.id, oct!.evidenceId!)));
+    const written = await resync();
+    const a = await points(A);
+    expect([...a.keys()].filter((d) => d.startsWith('2026-10'))).toEqual([]);
+    expect(a.has('2026-08-15')).toBe(true);
+    expect(written.find((w) => w.key === A)).toMatchObject({ removed: 10 });
+    expect(await invalidations()).toBe(audits + 1);
+    expect(await observations()).toBe(obsBefore);
+    await tx((t) => t.update(evidenceRecords).set({ status: 'admitted' }).where(eq(evidenceRecords.id, oct!.evidenceId!)));
+    await resync();
+    expect([...(await points(A)).keys()].filter((d) => d.startsWith('2026-10'))).toHaveLength(10);
+  });
+
+  it('makes all-apps days unknown when a confirmed app has no data, and clears an ignored app; both are reversible', async () => {
+    const gamma = (await tx((t) => t.select().from(storeApps).where(eq(storeApps.appId, 'com.other.gamma'))))[0]!;
+    await decideStoreApp(h.deps, h.tenantId, h.users.owner, gamma.id, { decision: 'confirm' });
+    let w = await resync();
+    expect((await points(ALL)).size).toBe(0);
+    expect(w.find((x) => x.key === ALL)!.removed).toBeGreaterThanOrEqual(31);
+    expect((await points(A)).size).toBeGreaterThan(30);
+    await decideStoreApp(h.deps, h.tenantId, h.users.owner, gamma.id, { decision: 'ignore' });
+    const beta = await confirmedApp(BETA);
+    await decideStoreApp(h.deps, h.tenantId, h.users.owner, beta.id, { decision: 'ignore' });
+    w = await resync();
+    // Beta is no longer reported: its own series keeps no current points, and the total is Alpha's alone.
+    expect((await points(B)).size).toBe(0);
+    expect(w.find((x) => x.key === B)!.removed).toBeGreaterThan(30);
+    expect((await points(ALL)).get('2026-08-15')!.value).toBe((await points(A)).get('2026-08-15')!.value);
+    await decideStoreApp(h.deps, h.tenantId, h.users.owner, beta.id, { decision: 'confirm' });
+    await resync();
+    expect((await points(B)).size).toBeGreaterThan(30);
+    expect((await points(ALL)).get('2026-08-15')!.value).toBe((await points(A)).get('2026-08-15')!.value + (await points(B)).get('2026-08-15')!.value);
+  });
+
+  it('keeps store series system-owned: the public series API cannot write them', async () => {
+    const [s] = await tx((t) => t.select().from(metricSeries).where(eq(metricSeries.key, ALL)));
+    await expect(tx((t) => assertUserWritableSeries(t, { key: ALL }))).rejects.toThrow(/official store reports/);
+    await expect(tx((t) => assertUserWritableSeries(t, { seriesId: s!.id }))).rejects.toThrow(/official store reports/);
+    await expect(tx((t) => assertUserWritableSeries(t, { key: 'kpi.signups' }))).resolves.toBeUndefined();
+  });
+
+  it('resolves a goal that names one app to that app only, and an all-apps goal to the complete platform series', async () => {
+    const draft = (text: string) => tx((t) => interpretForTenant(t, h.deps, text, 'BD'));
+    const one = await draft('Grow installs of Alpha Lessons by 20% in 60 days with no ads');
+    expect(one.draft.kpi).toMatchObject({ metricKey: A, targetChangePct: 20 });
+    expect(one.assumptions.join(' ')).toMatch(/Only Alpha Lessons \(com\.example\.alpha\) is measured.*second goal for the iOS app/);
+    // The brand linked to the Android listing names the same app.
+    expect((await draft('Grow Alpha installs by 10% in 30 days')).draft.kpi.metricKey).toBe(A);
+    expect((await draft('Grow iPhone downloads of Alpha Lessons by 10% in 30 days')).draft.kpi.metricKey).toBe('app.store.ios.first_time_downloads:com.example.alpha.ios');
+    const all = await draft('Grow organic installs for all my apps by 20% over the next 90 days');
+    expect(all.draft.kpi.metricKey).toBe(ALL);
+    const two = await draft(`Grow installs of ${ALPHA} and ${BETA} by 20% in 30 days`);
+    expect(two.check).toContain('kpi');
+    expect(two.assumptions.join(' ')).toMatch(/Several apps match/);
+  });
+
+  it('measures an app goal from final store values, and states no change when the baseline is incomplete', async () => {
+    const goal = (startsAt: string, targetDate: string) => ({ id: randomUUID(), kpi: { metricKey: A, label: 'Alpha installs', unit: 'installs', direction: 'increase', target: null, targetChangePct: 20 }, startsAt: new Date(startsAt), targetDate: new Date(targetDate) }) as unknown as Parameters<typeof measureGoal>[1];
+    const a = await points(A);
+    const m = await tx((t) => measureGoal(t, goal('2026-08-16T00:00:00Z', '2026-08-31T00:00:00Z'), h.clock.now()));
+    const expected = [...a.entries()].filter(([d]) => d >= '2026-08-16' && d < '2026-08-31').reduce((s, [, p]) => s + p.value, 0);
+    expect(m).toMatchObject({ status: 'measured', daysObserved: 15, actual: expected });
+    expect(m.baselinePerDay).not.toBeNull();
+    expect(m.changeVsBaselinePct).not.toBeNull();
+    // Starting 2026-10-05: the 20-day baseline has only 4 final days (10-01..10-04), so nothing is claimed against it.
+    const partial = await tx((t) => measureGoal(t, goal('2026-10-05T00:00:00Z', '2026-10-25T00:00:00Z'), h.clock.now()));
+    expect(partial).toMatchObject({ status: 'measured', daysObserved: 6, baselinePerDay: null, changeVsBaselinePct: null, target: null });
+    expect(partial.note).toMatch(/baseline has 4 of the 16 daily values/);
+    expect(partial.note).toMatch(/missing days are not counted as zero/);
+  });
+
+  it('gives the Growth Brain only supported store trends, and does not forecast a stale store series', async () => {
+    const ctx = await tx((t) => storeTrendContext(t, ALL, h.clock.now()));
+    expect(ctx).toMatchObject({ scope: 'all_apps', stated: [] });
+    expect(ctx!.withheld.map((w) => [w.appId, w.status]).sort()).toEqual([
+      [ALPHA, 'insufficient_data'],
+      [BETA, 'stale'],
+    ]);
+    expect((await tx((t) => storeTrendContext(t, A, h.clock.now())))!.withheld.map((w) => w.appId)).toEqual([ALPHA]);
+    const lines = storeTrendLines({ observe: { output: { storeTrend: ctx } } as never });
+    expect(lines).toMatch(/No trend is stated for .*com\.example\.alpha \(insufficient data\)/);
+    expect(lines).toMatch(/no post is credited with installs/);
+    const step = (now: Date) => EXECUTORS.forecast({ deps: h.deps, tenantId: h.tenantId, goal: { id: randomUUID(), kpi: { metricKey: A, label: 'Alpha installs', unit: 'installs' }, targetDate: new Date(now.getTime() + 30 * 86_400_000) }, cycle: {}, task: { refs: {} }, prior: {}, aiCallsLeft: 0, now } as never);
+    const stale = await step(new Date('2026-11-30T12:00:00Z'));
+    expect(stale).toMatchObject({ kind: 'blocked', needs: 'data', detail: expect.stringMatching(/newest final .* is from 2026-10-10/) });
+    expect((await step(h.clock.now())).kind).toBe('waiting');
+  });
+
+  it('classifies provider failures with actionable, sanitized messages', () => {
+    const e = (status: number | null, body: unknown = null, phase: 'rejected' | 'ambiguous' | 'before_send' = 'rejected') => new ProviderHttpError(`provider responded ${status}`, { status, phase, body, retryAfterMs: status === 429 ? 30_000 : null });
+    expect(classifyPlayError(e(401))).toMatchObject({ access: 'auth_failed', message: expect.stringMatching(/new JSON key/) });
+    expect(classifyPlayError(e(403))).toMatchObject({ access: 'permission_denied', message: expect.stringMatching(/View app information/) });
+    expect(classifyPlayError(e(403, { error: { status: 'PERMISSION_DENIED', details: [{ reason: 'SERVICE_DISABLED' }], message: 'secret-ish free text' } }), 'reporting')).toMatchObject({
+      access: 'permission_denied',
+      reason: 'SERVICE_DISABLED',
+      message: expect.stringMatching(/not enabled.*bulk reports are not affected/),
+    });
+    expect(classifyPlayError(e(404))).toMatchObject({ access: 'not_found', message: expect.stringMatching(/Copy|Cloud Storage URI/) });
+    expect(classifyPlayError(e(429))).toMatchObject({ access: 'rate_limited', message: expect.stringMatching(/retry after 30 s/) });
+    expect(classifyPlayError(e(503, null, 'ambiguous'))).toMatchObject({ access: 'error', status: 503, message: expect.stringMatching(/server error \(HTTP 503\)/) });
+    expect(classifyPlayError(e(null, null, 'before_send'))).toMatchObject({ access: 'error', status: null, message: expect.stringMatching(/could not reach Google/) });
+    const all = [401, 403, 404, 429, 500].map((s) => classifyPlayError(e(s, { error: { message: `-----BEGIN PRIVATE KEY----- ya29.token ${KEY.json.client_email}` } })).message).join(' ');
+    expect(all).not.toMatch(/PRIVATE KEY|ya29|secret-ish/);
+  });
+
+  it('connects when bulk reports work even if the optional Reporting API is unavailable, and names each failure', async () => {
+    play.install(); // its routes answer again (a later fixture registered its own Reporting API route)
+    play.denyReporting = true;
+    clearPlayTokenCache();
+    const acct = await connectStoreAccount(h.deps, other, h.users.owner, { provider: 'google_play', displayName: 'Reports only', bucket: BUCKET, serviceAccountKey: KEY.json, settings: { vitals: false } });
+    play.denyReporting = false;
+    expect(acct).toMatchObject({ health: 'ok', healthDetail: { reportingError: expect.stringMatching(/Reporting API/) } });
+    const [conn] = await tx((t) => t.select().from(connections).where(eq(connections.id, acct.connectionId)), other);
+    expect(conn).toMatchObject({ healthStatus: 'degraded', grantedScopes: ['https://www.googleapis.com/auth/devstorage.read_only'] });
+    play.denyBucket = true;
+    clearPlayTokenCache();
+    const err = await connectStoreAccount(h.deps, other, h.users.owner, { provider: 'google_play', displayName: 'Denied', bucket: BUCKET, serviceAccountKey: KEY.json }).catch((x: unknown) => x);
+    play.denyBucket = false;
+    expect(err).toMatchObject({ code: 'PROVIDER_PERMISSION_DENIED', httpStatus: 422, details: { reports: 'permission_denied', httpStatus: 403 } });
+    expect(JSON.stringify(err)).not.toContain('PRIVATE KEY');
+  });
+
+  it('replaces a Play key in place: tested first, same account and history, admin with two-factor only', async () => {
+    const a = await playAccount();
+    const count = async (q: typeof storeAccounts | typeof storeMetricObservations) => (await tx((t) => t.select({ n: sql<number>`count(*)::int` }).from(q)))[0]!.n;
+    const [accounts, observations, kpi] = [await count(storeAccounts), await count(storeMetricObservations), await points(A)];
+    const next = serviceAccountKey('fg-reports-2@fixture-project.iam.gserviceaccount.com');
+    await expect(rotateStoreAccountKey(h.deps, h.tenantId, h.users.operator, a.id, { serviceAccountKey: next.json })).rejects.toThrow();
+    await expect(rotateStoreAccountKey(h.deps, h.tenantId, { ...h.users.admin, mfaVerified: false }, a.id, { serviceAccountKey: next.json })).rejects.toThrow();
+    await expect(rotateStoreAccountKey(h.deps, h.tenantId, h.users.admin, a.id, { serviceAccountKey: { ...next.json, type: 'authorized_user' } })).rejects.toThrow(/service account key/);
+    // A key that cannot read the bucket is refused and nothing is stored.
+    play.denyBucket = true;
+    clearPlayTokenCache();
+    await expect(rotateStoreAccountKey(h.deps, h.tenantId, h.users.admin, a.id, { serviceAccountKey: next.json })).rejects.toMatchObject({ code: 'PROVIDER_PERMISSION_DENIED' });
+    play.denyBucket = false;
+    const stored = async () => (await tx((t) => loadCredentials(t, h.deps.config, h.tenantId, a.connectionId)))!.creds as { clientEmail: string };
+    expect((await stored()).clientEmail).toBe(KEY.json.client_email);
+    const view = await rotateStoreAccountKey(h.deps, h.tenantId, h.users.admin, a.id, { serviceAccountKey: JSON.stringify(next.json) });
+    expect(view).toMatchObject({ id: a.id, connectionId: a.connectionId, accountRef: BUCKET, health: 'ok', consecutiveFailures: 0 });
+    expect(JSON.stringify(view)).not.toContain('PRIVATE KEY');
+    expect((await stored()).clientEmail).toBe('fg-reports-2@fixture-project.iam.gserviceaccount.com');
+    const [conn] = await tx((t) => t.select().from(connections).where(eq(connections.id, a.connectionId)));
+    expect(conn!.metadata).toMatchObject({ bucket: BUCKET, serviceAccount: 'fg-reports-2@fixture-project.iam.gserviceaccount.com' });
+    expect([await count(storeAccounts), await count(storeMetricObservations)]).toEqual([accounts, observations]);
+    expect(await tx((t) => t.select().from(auditLog).where(eq(auditLog.action, 'store.account.key_rotated')))).toHaveLength(1);
+    // The new key syncs; nothing is imported twice and the KPI history is unchanged.
+    expect(await sync(a.id)).toMatchObject({ outcome: 'succeeded', stats: { filesImported: 0 } });
+    await resync();
+    expect(await points(A)).toEqual(kpi);
+    // The generic credential route cannot store an untested Play key.
+    await expect(rotateConnectionCredentials(h.deps, h.tenantId, h.users.admin, a.connectionId, { credentials: { clientEmail: 'x@y.iam.gserviceaccount.com', privateKeyPem: 'nope' } })).rejects.toThrow(/Replace key/);
   });
 });
