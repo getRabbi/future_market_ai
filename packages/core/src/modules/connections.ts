@@ -75,6 +75,8 @@ export async function rotateConnectionCredentials(deps: CoreDeps, tenantId: stri
   return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
     const [c] = await tx.select().from(connections).where(eq(connections.id, id));
     if (!c) throw notFound('connection');
+    // A Play key is only stored after it is tested against the account's report bucket (D-045).
+    if (c.provider === 'google_play') throw invalid('replace a Google Play service-account key in Autopilot › App intelligence › Developer accounts (Replace key): it is tested against the report bucket before it is stored');
     await storeCredentials(tx, deps.config, tenantId, c.id, { ...raw.credentials, provider: c.provider } as ProviderCredentials, raw.credentialsExpireAt ? new Date(raw.credentialsExpireAt) : null);
     const metadata = raw.metadata ? { ...c.metadata, ...raw.metadata } : c.metadata;
     const [u] = await tx.update(connections).set({ status: 'active', metadata, updatedAt: new Date() }).where(eq(connections.id, id)).returning();

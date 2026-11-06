@@ -1,6 +1,6 @@
 import { createAnalyticsReportRequest, listAnalyticsReportRequests, normalizeReportBucket, type ProviderCredentials, parseServiceAccountKey, probePlayAccess, READ_CONNECTORS } from '@futuregrow/connectors';
 import { connections, storeAccounts, storeApps, type Tx, withTenant } from '@futuregrow/db';
-import { conflict, invalid, notFound } from '@futuregrow/observability';
+import { conflict, FgError, invalid, notFound } from '@futuregrow/observability';
 import { and, eq, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../../deps.js';
@@ -108,6 +108,29 @@ export function appView(a: AppRow) {
   };
 }
 
+type PlayProbe = Awaited<ReturnType<typeof probePlayAccess>>;
+
+/**
+ * A distinct, actionable error per bulk-report failure (key rejected, bucket missing, permission,
+ * rate limit, Google unreachable) instead of one generic message. Details carry only the access
+ * state, HTTP status and the Reporting API state; never key material.
+ */
+function playAccessError(probe: PlayProbe, serviceAccount: string): FgError {
+  const details = { provider: 'google_play', reports: probe.reports, httpStatus: probe.details.reportsHttpStatus ?? null, reporting: probe.reporting, reportingError: probe.details.reportingError ?? null };
+  switch (probe.reports) {
+    case 'auth_failed':
+      return new FgError('PROVIDER_AUTH_FAILED', 'Google rejected this service account key (deleted, disabled or rotated). Create a new JSON key for the service account and try again.', 422, details);
+    case 'not_found':
+      return new FgError('PROVIDER_NOT_FOUND', 'The report bucket was not found. In Play Console open Download reports › Statistics and use "Copy Cloud Storage URI".', 422, details);
+    case 'permission_denied':
+      return new FgError('PROVIDER_PERMISSION_DENIED', `The service account ${serviceAccount} cannot read this bucket. In Play Console › Users and permissions, invite it with "View app information" (Global), then wait up to 24 hours for access to apply.`, 422, details);
+    case 'rate_limited':
+      return new FgError('PROVIDER_RATE_LIMITED', 'Google is rate-limiting this service account. Nothing was saved; try again in a few minutes.', 429, details);
+    default:
+      return new FgError('PROVIDER_UNAVAILABLE', `Google could not be reached or failed (${String(probe.details.reportsError ?? 'unknown error')}). Nothing was saved; try again shortly.`, 502, details);
+  }
+}
+
 async function enqueueSync(deps: CoreDeps, tenantId: string, accountId: string, mode: 'discovery' | 'incremental' | 'backfill', runAt?: Date) {
   await deps.jobs.add(STORE_SYNC_TASK, { tenantId, accountId, mode }, { jobKey: `store-sync:${accountId}`, maxAttempts: 3, ...(runAt ? { runAt } : {}) });
 }
@@ -140,15 +163,7 @@ export async function connectStoreAccount(deps: CoreDeps, tenantId: string, acto
     const probeConn = { id: 'store-account-test', provider: 'google_play', externalAccountId: bucket, metadata: { bucket }, appAudited: null } as unknown as typeof connections.$inferSelect;
     const probe = await probePlayAccess(connectorContext(deps, tenantId, creds, probeConn), bucket);
     await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (t) => audit(t, tenantId, actor, 'store.account.tested', { type: 'store_account', id: `google_play:${bucket}` }, { reports: probe.reports, reporting: probe.reporting }));
-    if (probe.reports !== 'ok') {
-      throw invalid(
-        probe.reports === 'auth_failed'
-          ? 'Google rejected this service account key. Create a new JSON key for the service account and try again.'
-          : probe.reports === 'not_found'
-            ? 'The report bucket was not found. In Play Console open Download reports › Statistics and use "Copy Cloud Storage URI".'
-            : `The service account ${key.clientEmail} cannot read this bucket. In Play Console › Users and permissions, invite it with "View app information" (Global), then wait up to 24 hours for access to apply.`,
-      );
-    }
+    if (probe.reports !== 'ok') throw playAccessError(probe, key.clientEmail);
     return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (t) => {
       const [conn] = await t
         .insert(connections)
@@ -278,6 +293,57 @@ export async function requestStoreSync(deps: CoreDeps, tenantId: string, actor: 
   });
 }
 
+export const RotatePlayKeySchema = z.object({ serviceAccountKey: z.union([z.string().min(20).max(20_000), z.record(z.string(), z.unknown())]) }).strict();
+
+/**
+ * Replaces the service-account key of a Google Play developer account in place. The new key is
+ * tested read-only against the account's own report bucket before anything is stored, then saved
+ * encrypted on the same connection: the account, its apps, imported reports and KPI history keep
+ * their identity (no second account, nothing re-imported). Admin with two-factor only.
+ */
+export async function rotateStoreAccountKey(deps: CoreDeps, tenantId: string, actor: Actor, id: string, raw: unknown) {
+  requireRole(actor, ADMIN_ROLES, 'replacing a developer account key');
+  requireMfa(actor, 'replacing a developer account key');
+  const input = RotatePlayKeySchema.parse(raw);
+  const { a, conn } = await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (t) => {
+    const a = await account(t, id);
+    const [conn] = await t.select().from(connections).where(eq(connections.id, a.connectionId));
+    return { a, conn };
+  });
+  if (a.provider !== 'google_play' || !conn) throw invalid('only a Google Play developer account key is replaced here; replace an App Store Connect key in Connections');
+  const key = (() => {
+    try {
+      return parseServiceAccountKey(input.serviceAccountKey);
+    } catch (err) {
+      throw invalid((err as Error).message);
+    }
+  })();
+  const creds: ProviderCredentials = { provider: 'google_play', clientEmail: key.clientEmail, privateKeyPem: key.privateKeyPem, privateKeyId: key.privateKeyId, projectId: key.projectId };
+  const probe = await probePlayAccess(connectorContext(deps, tenantId, creds, conn), a.accountRef);
+  await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (t) => audit(t, tenantId, actor, 'store.account.tested', { type: 'store_account', id }, { reports: probe.reports, reporting: probe.reporting, rotation: true }));
+  if (probe.reports !== 'ok') throw playAccessError(probe, key.clientEmail);
+  const now = deps.clock.now();
+  return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (t) => {
+    await storeCredentials(t, deps.config, tenantId, conn.id, creds, null);
+    await t
+      .update(connections)
+      .set({
+        status: 'active',
+        metadata: { ...conn.metadata, serviceAccount: key.clientEmail, projectId: key.projectId },
+        grantedScopes: ['https://www.googleapis.com/auth/devstorage.read_only', ...(probe.reporting === 'ok' ? ['https://www.googleapis.com/auth/playdeveloperreporting'] : [])],
+        healthStatus: probe.reporting === 'ok' ? 'healthy' : 'degraded',
+        lastHealthCheckAt: now,
+        updatedAt: now,
+      })
+      .where(eq(connections.id, conn.id));
+    const [u] = await t.update(storeAccounts).set({ healthStatus: 'ok', healthDetail: probe.details, healthCheckedAt: now, consecutiveFailures: 0, nextSyncAt: now, updatedAt: now }).where(eq(storeAccounts.id, id)).returning();
+    await audit(t, tenantId, actor, 'connector.connection.credentials_rotated', { type: 'connection', id: conn.id }, { provider: 'google_play', serviceAccount: key.clientEmail });
+    await audit(t, tenantId, actor, 'store.account.key_rotated', { type: 'store_account', id }, { previousServiceAccount: (conn.metadata as { serviceAccount?: string }).serviceAccount ?? null, serviceAccount: key.clientEmail, reporting: probe.reporting });
+    if (a.status === 'active') await enqueueSync(deps, tenantId, id, 'incremental');
+    return accountView(u!);
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* Apps                                                                */
 /* ------------------------------------------------------------------ */
@@ -360,6 +426,8 @@ export async function decideStoreApp(deps: CoreDeps, tenantId: string, actor: Ac
     if (decision === 'ignore') {
       const [u] = await t.update(storeApps).set({ status: 'ignored', updatedAt: now }).where(eq(storeApps.id, row.id)).returning();
       await audit(t, tenantId, actor, 'store.app.ignored', { type: 'store_app', id: row.id }, { appId: row.appId, platform: row.platform });
+      // The follow-up sync reconciles the KPI series (an ignored app's values leave the all-apps totals).
+      await enqueueSync(deps, tenantId, row.storeAccountId, 'incremental');
       return appView(u!);
     }
     const others = await t
