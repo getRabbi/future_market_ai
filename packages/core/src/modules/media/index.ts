@@ -42,11 +42,22 @@ export interface MediaCandidate {
 export interface MediaProviderStatus {
   id: string;
   kind: MediaProviderKind;
+  /** True only when FUTUREGROW can actually produce media from it now (adapter built and prerequisites met). */
   enabled: boolean;
   reason: string;
   /** What must exist before this provider can be enabled. */
   requires: string[];
+  /** Whether FUTUREGROW has code that fetches or generates media from this provider. */
+  adapter: 'available' | 'not_built';
+  /** Credentials and rights records exist (independent of the adapter). */
+  prerequisitesMet: boolean;
 }
+
+/**
+ * Stock and AI images have readiness checks but no execution adapter yet (deferred scope, D-044):
+ * meeting their prerequisites never makes them usable on its own.
+ */
+const NO_ADAPTER = 'no FUTUREGROW adapter fetches or generates these images yet (deferred), so the branded templates are used';
 
 export interface MediaContext {
   t: DbOrTx;
@@ -88,7 +99,7 @@ export const templateCards: MediaProvider = {
   id: 'futuregrow-cards',
   kind: 'template_card',
   async status() {
-    return { id: this.id, kind: this.kind, enabled: true, reason: 'Bundled renderer: tenant-owned templates, Noto fonts under SIL OFL 1.1, rendered locally with QA (contrast, overflow, minimum text size).', requires: [] };
+    return { id: this.id, kind: this.kind, enabled: true, reason: 'Bundled renderer: tenant-owned templates, Noto fonts under SIL OFL 1.1, rendered locally with QA (contrast, overflow, minimum text size).', requires: [], adapter: 'available', prerequisitesMet: true };
   },
 };
 
@@ -106,8 +117,16 @@ export const verifiedAssets: MediaProvider = {
         .limit(50)
     ).length;
     return eligible
-      ? { id: this.id, kind: this.kind, enabled: true, reason: `${eligible} uploaded image${eligible === 1 ? '' : 's'} with recorded rights are publish-eligible.`, requires: [] }
-      : { id: this.id, kind: this.kind, enabled: false, reason: 'No uploaded image (for example an app screenshot) has recorded rights and passed publish eligibility.', requires: ['an uploaded image asset', 'asset rights covering every component', 'publish eligibility (M14)'] };
+      ? { id: this.id, kind: this.kind, enabled: true, reason: `${eligible} uploaded image${eligible === 1 ? '' : 's'} with recorded rights are publish-eligible.`, requires: [], adapter: 'available', prerequisitesMet: true }
+      : {
+          id: this.id,
+          kind: this.kind,
+          enabled: false,
+          reason: 'No uploaded image (for example an app screenshot) has recorded rights and passed publish eligibility.',
+          requires: ['an uploaded image asset', 'asset rights covering every component', 'publish eligibility (M14)'],
+          adapter: 'available',
+          prerequisitesMet: false,
+        };
   },
 };
 
@@ -122,8 +141,11 @@ export const stockImages: MediaProvider = {
       .from(artifactLicenses)
       .where(and(eq(artifactLicenses.artifactType, 'stock_media'), eq(artifactLicenses.commercialUse, 'allowed'), eq(artifactLicenses.approvedForProduction, true)))
       .limit(1);
-    const requires = [...(vendor ? [] : ['a configured stock vendor and API key']), ...(licence ? [] : ['an approved stock_media licence record with commercial use allowed'])];
-    return requires.length ? { id: this.id, kind: this.kind, enabled: false, reason: 'No licensed stock library is configured; the branded templates are used instead.', requires } : { id: this.id, kind: this.kind, enabled: true, reason: `${vendor} under licence "${licence!.name}".`, requires: [] };
+    const missing = [...(vendor ? [] : ['a configured stock vendor and API key']), ...(licence ? [] : ['an approved stock_media licence record with commercial use allowed'])];
+    const requires = [...missing, 'a stock-library adapter (not built yet)'];
+    return missing.length
+      ? { id: this.id, kind: this.kind, enabled: false, reason: 'No licensed stock library is configured; the branded templates are used instead.', requires, adapter: 'not_built', prerequisitesMet: false }
+      : { id: this.id, kind: this.kind, enabled: false, reason: `${vendor} under licence "${licence!.name}" is configured, but ${NO_ADAPTER}.`, requires, adapter: 'not_built', prerequisitesMet: true };
   },
 };
 
@@ -135,8 +157,16 @@ export const aiImages: MediaProvider = {
     const models = await ctx.t.select().from(modelRegistry).where(eq(modelRegistry.approvedForProduction, true));
     const usable = models.find((m) => m.purposes.includes('image_generation') && m.commercialUse === 'allowed' && m.trainingOnCustomerData === 'no');
     return usable
-      ? { id: this.id, kind: this.kind, enabled: true, reason: `${usable.provider}/${usable.modelId} is approved for image generation; images carry the AI-generated disclosure.`, requires: [] }
-      : { id: this.id, kind: this.kind, enabled: false, reason: 'No image-generation model is approved for production (B-011); illustrations come from the branded templates.', requires: ['an image model approved for image_generation', 'commercial use allowed', 'no training on customer data'] };
+      ? { id: this.id, kind: this.kind, enabled: false, reason: `${usable.provider}/${usable.modelId} is approved for image generation, but ${NO_ADAPTER}.`, requires: ['an image-generation adapter (not built yet)'], adapter: 'not_built', prerequisitesMet: true }
+      : {
+          id: this.id,
+          kind: this.kind,
+          enabled: false,
+          reason: 'No image-generation model is approved for production (B-011); illustrations come from the branded templates.',
+          requires: ['an image model approved for image_generation', 'commercial use allowed', 'no training on customer data', 'an image-generation adapter (not built yet)'],
+          adapter: 'not_built',
+          prerequisitesMet: false,
+        };
   },
 };
 
