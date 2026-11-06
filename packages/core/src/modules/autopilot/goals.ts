@@ -1,5 +1,5 @@
 import { CHANNEL_CATEGORIES, GOAL_CHANNELS, type GoalChannel, type GoalInput, GoalInputSchema, type GoalKpi, type GoalLimits, GoalLimitsSchema, type RiskCategory } from '@futuregrow/contracts';
-import { actionRequests, creativeBriefs, type DbOrTx, goalCycles, goalTasks, growthDecisions, growthGoals, growthIdeas, metricSeries, type Tx, tenantSettings } from '@futuregrow/db';
+import { actionRequests, brandApps, brands, creativeBriefs, type DbOrTx, goalCycles, goalTasks, growthDecisions, growthGoals, growthIdeas, metricSeries, storeApps, type Tx, tenantSettings } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
 import { defaultTenantPolicy } from '@futuregrow/policies';
 import { and, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
@@ -7,6 +7,7 @@ import { type Actor, actorRef, type CoreConfig, type CoreDeps } from '../../deps
 import { audit, record, requireRole } from '../../util.js';
 import { FACEBOOK_ENGAGEMENT_SERIES_KEY, FACEBOOK_INSIGHT_SERIES, listPostDrafts } from '../m16-social/index.js';
 import { DOWNLOADS_SERIES_KEY } from '../m19-app-growth/index.js';
+import { perAppKey } from '../m19-app-growth/store/signals.js';
 
 export type GoalRow = typeof growthGoals.$inferSelect;
 export const GOAL_EDITORS = ['owner', 'admin', 'growth_operator'] as const;
@@ -321,24 +322,67 @@ export interface GoalDraft {
  */
 const STORE_INSTALL_SERIES = { android: 'app.store.android.user_installs', ios: 'app.store.ios.first_time_downloads' } as const;
 
-/**
- * Picks the store-report series for an install goal. Android user installs and iOS first-time
- * downloads are different measures, so one goal tracks one platform; the note says which.
- */
-function pickStoreSeries(text: string, series: { key: string }[]): { key: string; note: string | null } | null {
-  const has = (k: string) => series.some((s) => s.key === k);
-  const android = has(STORE_INSTALL_SERIES.android);
-  const ios = has(STORE_INSTALL_SERIES.ios);
-  if (!android && !ios) return null;
-  const wantsIos = /\b(ios|iphone|ipad|app store)\b/i.test(text);
-  const wantsAndroid = /\b(android|google play|play store)\b/i.test(text);
-  const key = (wantsIos && ios && !wantsAndroid) || !android ? STORE_INSTALL_SERIES.ios : STORE_INSTALL_SERIES.android;
-  const note =
-    android && ios ? `Android installs and iOS first-time downloads are measured differently and are not added together; this goal tracks ${key === STORE_INSTALL_SERIES.android ? 'Google Play user installs' : 'App Store first-time downloads'} across your apps. Create a second goal for the other platform.` : null;
-  return { key, note };
+/** A confirmed store app the goal text may name (by package/bundle ID, store name or linked brand). */
+export interface GoalApp {
+  platform: 'android' | 'ios';
+  appId: string;
+  displayName: string | null;
+  brandNames: string[];
 }
 
-export function interpretGoal(text: string, ctx: { now: Date; series: { key: string; name: string; unit: string }[]; market: string | null }): GoalDraft {
+type StorePick = { key: string; label: string | null; unit: string; appScoped: boolean; ambiguous: boolean; note: string | null };
+
+const wordsOf = (s: string) =>
+  ` ${s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()} `;
+/** Apps whose package/bundle ID, store name or brand name appears in the text as whole words. */
+function namedApps(text: string, apps: GoalApp[]): GoalApp[] {
+  const t = wordsOf(text);
+  return apps.filter((a) => [a.appId, a.displayName, ...a.brandNames].some((n) => n && wordsOf(n).trim().length >= 3 && t.includes(wordsOf(n))));
+}
+
+/**
+ * Picks the store-report series for an install goal. Android user installs and iOS first-time
+ * downloads are different measures, so one goal tracks one platform; the note says which. A goal
+ * that names one app measures that app's own series only (never a total that includes other
+ * apps); one that names several apps, or none, uses the platform series and says so.
+ */
+function pickStoreSeries(text: string, series: { key: string }[], apps: GoalApp[]): StorePick | null {
+  const has = (k: string) => series.some((s) => s.key === k);
+  const wantsIos = /\b(ios|iphone|ipad|app store)\b/i.test(text);
+  const wantsAndroid = /\b(android|google play|play store)\b/i.test(text);
+  const wantsAll = /\ball\s+(of\s+)?(my|our|the)?\s*apps\b/i.test(text);
+  const named = wantsAll ? [] : namedApps(text, apps).filter((a) => (wantsIos && !wantsAndroid ? a.platform === 'ios' : wantsAndroid && !wantsIos ? a.platform === 'android' : true));
+  const preferred = named.length > 1 ? named.filter((a) => a.platform === (wantsIos && !wantsAndroid ? 'ios' : 'android')) : named;
+  if (preferred.length === 1) {
+    const a = preferred[0]!;
+    const name = a.displayName ?? a.appId;
+    const other = named.length > 1 ? ` Android installs and iOS first-time downloads are not added together; create a second goal for the ${a.platform === 'android' ? 'iOS' : 'Android'} app.` : '';
+    return {
+      key: perAppKey(STORE_INSTALL_SERIES[a.platform], a.appId),
+      label: `${a.platform === 'android' ? 'Google Play user installs' : 'App Store first-time downloads, Analytics Reports'}: ${name}`,
+      unit: a.platform === 'android' ? 'installs' : 'downloads',
+      appScoped: true,
+      ambiguous: false,
+      note: `Only ${name} (${a.appId}) is measured, from its own store reports; your other apps are not included.${other}`,
+    };
+  }
+  const android = has(STORE_INSTALL_SERIES.android);
+  const ios = has(STORE_INSTALL_SERIES.ios);
+  const ambiguous = named.length > 1;
+  const ambiguousNote = ambiguous ? `Several apps match (${named.map((a) => a.appId).join(', ')}); choose the app to measure before saving.` : null;
+  if (!android && !ios) return ambiguous ? { key: DOWNLOADS_SERIES_KEY, label: null, unit: 'downloads', appScoped: false, ambiguous, note: ambiguousNote } : null;
+  const key = (wantsIos && ios && !wantsAndroid) || !android ? STORE_INSTALL_SERIES.ios : STORE_INSTALL_SERIES.android;
+  const note =
+    ambiguousNote ??
+    (android && ios ? `Android installs and iOS first-time downloads are measured differently and are not added together; this goal tracks ${key === STORE_INSTALL_SERIES.android ? 'Google Play user installs' : 'App Store first-time downloads'} across your apps. Create a second goal for the other platform.` : null);
+  return { key, label: null, unit: key === STORE_INSTALL_SERIES.android ? 'installs' : 'downloads', appScoped: false, ambiguous, note };
+}
+
+export function interpretGoal(text: string, ctx: { now: Date; series: { key: string; name: string; unit: string }[]; market: string | null; apps?: GoalApp[] }): GoalDraft {
   const t = text.trim();
   const understood: string[] = [];
   const assumptions: string[] = [];
@@ -371,18 +415,22 @@ export function interpretGoal(text: string, ctx: { now: Date; series: { key: str
 
   const tpl = KPI_TEMPLATES.find((k) => k.re.test(t) && (!k.when || k.when.test(t)));
   // Install goals use official store-report series when a developer account is connected (D-045).
-  const store = tpl?.kpi.metricKey === DOWNLOADS_SERIES_KEY ? pickStoreSeries(t, ctx.series) : null;
+  const store = tpl?.kpi.metricKey === DOWNLOADS_SERIES_KEY ? pickStoreSeries(t, ctx.series, ctx.apps ?? []) : null;
   if (store?.note) assumptions.push(store.note);
   let kpi: GoalKpi;
   let channels: GoalChannel[];
   if (tpl) {
     const words = tpl.kpi.label.toLowerCase().split(/\s+/);
-    const existing = (store ? ctx.series.find((s) => s.key === store.key) : undefined) ?? ctx.series.find((s) => s.key === tpl.kpi.metricKey) ?? (tpl.exact ? undefined : ctx.series.find((s) => words.some((w) => w.length > 3 && `${s.key} ${s.name}`.toLowerCase().includes(w.replace(/s$/, '')))));
-    kpi = { ...tpl.kpi, metricKey: existing?.key ?? tpl.kpi.metricKey, label: existing?.name ?? tpl.kpi.label, unit: existing?.unit ?? tpl.kpi.unit, direction: 'increase', target: null, targetChangePct: null };
+    const storeSeries = store ? ctx.series.find((s) => s.key === store.key) : undefined;
+    // An app-scoped goal never falls back to another series (that would measure other apps).
+    const existing = store?.appScoped ? storeSeries : (storeSeries ?? ctx.series.find((s) => s.key === tpl.kpi.metricKey) ?? (tpl.exact ? undefined : ctx.series.find((s) => words.some((w) => w.length > 3 && `${s.key} ${s.name}`.toLowerCase().includes(w.replace(/s$/, ''))))));
+    const fallback = store?.appScoped ? { metricKey: store.key, label: store.label ?? tpl.kpi.label, unit: store.unit } : { metricKey: tpl.kpi.metricKey, label: tpl.kpi.label, unit: tpl.kpi.unit };
+    kpi = { ...tpl.kpi, metricKey: existing?.key ?? fallback.metricKey, label: existing?.name ?? fallback.label, unit: existing?.unit ?? fallback.unit, direction: 'increase', target: null, targetChangePct: null };
     channels = [...tpl.channels];
     understood.push(`Measure: ${kpi.label} (${kpi.metricKey})${existing ? ', using your existing data series' : ''}`);
-    if (!existing) check.push('kpi');
-    if (!existing && tpl.pending) assumptions.push(`No ${kpi.label} data yet: ${tpl.pending}`);
+    if (!existing || store?.ambiguous) check.push('kpi');
+    if (!existing && store?.appScoped) assumptions.push(`No final ${kpi.label} values yet: they arrive from the developer account's official reports (Google posts Play statistics within 3 to 7 days).`);
+    else if (!existing && tpl.pending) assumptions.push(`No ${kpi.label} data yet: ${tpl.pending}`);
   } else {
     const first = ctx.series[0];
     kpi = { metricKey: first?.key ?? 'kpi.signups', label: first?.name ?? 'Sign-ups', unit: first?.unit ?? 'count', direction: 'increase', target: null, targetChangePct: null };
@@ -436,5 +484,20 @@ export function interpretGoal(text: string, ctx: { now: Date; series: { key: str
 
 export async function interpretForTenant(tx: DbOrTx, deps: CoreDeps, text: string, market: string | null): Promise<GoalDraft> {
   const series = await tx.select({ key: metricSeries.key, name: metricSeries.name, unit: metricSeries.unit }).from(metricSeries).where(eq(metricSeries.kind, 'kpi')).limit(200);
-  return interpretGoal(text, { now: deps.clock.now(), series, market });
+  // Confirmed store apps with their linked brands, so a goal naming one app measures only that app.
+  const rows = await tx
+    .select({ platform: storeApps.platform, appId: storeApps.appId, displayName: storeApps.displayName, brandName: brands.name })
+    .from(storeApps)
+    .leftJoin(brandApps, and(eq(brandApps.platform, storeApps.platform), or(eq(brandApps.appId, storeApps.appId), and(eq(storeApps.platform, 'ios'), eq(brandApps.appId, storeApps.storeAppId)))))
+    .leftJoin(brands, eq(brands.id, brandApps.brandId))
+    .where(eq(storeApps.status, 'confirmed'))
+    .limit(500);
+  const apps = new Map<string, GoalApp>();
+  for (const r of rows) {
+    const k = `${r.platform}|${r.appId}`;
+    const a = apps.get(k) ?? { platform: r.platform as GoalApp['platform'], appId: r.appId, displayName: r.displayName, brandNames: [] };
+    if (r.brandName && !a.brandNames.includes(r.brandName)) a.brandNames.push(r.brandName);
+    apps.set(k, a);
+  }
+  return interpretGoal(text, { now: deps.clock.now(), series, market, apps: [...apps.values()] });
 }
