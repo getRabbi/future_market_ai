@@ -149,13 +149,23 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] D-044 provider-neutral media registry with one QA gate; stock and AI sources disabled until licensed.
 - [x] Brands & channels tab in the Autopilot UI.
 
-### App intelligence: official store reports (2026-11-06) — ◐ (released as `1401553`, live; awaiting a real developer account, B-022)
+### App intelligence: official store reports (2026-11-06) — ☑ Google Play (released as `1401553`; real account connected and EPS reports imported, owner-verified by 2026-11-07); iOS awaiting a key (B-022), Reporting API pending (B-023)
 - [x] D-045 developer accounts and apps (multi-account, multi-app, multi-tenant; discovery, owner confirmation, conflicts), migration 0016.
 - [x] Google Play bulk-report importer (installs, store performance by country and traffic source with UTM source/campaign, crashes/ANRs, ratings), Reporting API vitals and app discovery; Apple Analytics Reports workflow (request, reports, instances, segments).
 - [x] Revision-safe imports (newest source per day), coverage/freshness states, leased scheduler with backfill and backoff, raw-copy retention.
 - [x] App intelligence tab (All apps, per-app detail, Developer accounts & apps); store KPI series for M08/Autopilot; abstaining change signals; per-post `utm_campaign` for new Studio programs.
+- [x] Final completion pass (D-046, branch `fix/final-completion`, 2026-11-07). KPI points come only from final, evidence-backed values of the metric's own report. All-apps days require every confirmed app. Unsupported points are invalidated and audited. Freshness is judged per metric. App-scoped install goals, a stale-series forecast guard, 80% baseline coverage and store-trend context for the Idea Lab and Brain are added. Play keys are replaced in place after a bucket test, Play errors are classified specifically and media adapter status is truthful. No migration.
 
-**Capability status (2026-11-05):**
+**Capability status (2026-11-07):**
+
+| Status | Capabilities |
+|---|---|
+| Production-verified | Facebook Page photo/text posts through M23 with read-back verification (EPS-topik-Bangla); scheduled EPS image posts; daily Page post counters; Studio calendar, branded cards, evening window, rolling 24 h limit; Google Play bulk-report import for the real developer account (EPS app discovered and brand-linked, install reports imported; owner-verified). |
+| Implemented, fixture-tested only | Store KPI correctness rules of D-046 (await the final production audit); Instagram, TikTok, YouTube, LinkedIn and X executors; brand/campaign registry; platform readiness; learning comparisons; media registry; spam screen. |
+| Configured, awaiting credentials or permission | Play Developer Reporting API vitals and app names (B-023); App Store Connect (B-022); Google Ads, Shopify, Resend, PostHog, Chatwoot; stock media vendor. |
+| Deferred scope (not a coding failure) | Per-post install outcomes for Studio optimization (needs per-post campaign links and enough reported acquisitions); stock/AI media adapters (B-011); video production; new networks, paid-ad creation, Ecoms BD work. |
+
+**Capability status (2026-11-05, superseded by the 2026-11-07 table above):**
 
 | Status | Capabilities |
 |---|---|

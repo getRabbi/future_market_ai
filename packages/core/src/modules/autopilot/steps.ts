@@ -51,7 +51,7 @@ import {
 } from '../m16-social/index.js';
 import { keywordOpportunities, queueSeoAudit } from '../m18-discovery/index.js';
 import { DOWNLOADS_SERIES_KEY, syncDownloadsSeries } from '../m19-app-growth/index.js';
-import { isStoreSeriesKey, syncStoreKpiSeries } from '../m19-app-growth/store/signals.js';
+import { isStoreSeriesKey, SIGNAL_RULES, storeTrendContext, syncStoreKpiSeries } from '../m19-app-growth/store/signals.js';
 import { approvedJurisdictionScopes, getTenantPolicy } from '../m24-governance/index.js';
 import { draftPlannedPost, learnFrom, nextPostingSlot, POST_WINDOW, postingWindow, programForConnection, programHistory, syncPlanResults } from '../studio/index.js';
 import { type GoalRow, goalActions, goalCategories, goalKpi, limitsOf } from './goals.js';
@@ -222,8 +222,23 @@ function bootstrapOf(c: StepContext): { active: boolean; reason: string | null }
 
 const storeBridge = (written: { key: string; points: number }[], key: string) => {
   const w = written.find((x) => x.key === key);
-  return w ? { seriesId: '', points: w.points } : null;
+  return w?.points ? { seriesId: '', points: w.points } : null;
 };
+
+type StoreTrend = NonNullable<Awaited<ReturnType<typeof storeTrendContext>>>;
+
+/**
+ * Store-report trends found by this cycle's observe step, as prompt context for the Idea Lab and
+ * the Growth Brain: only trends with enough final, fresh, evidence-backed days are stated; the rest
+ * are named as withheld so the model does not read a trend into missing or provisional data.
+ */
+export function storeTrendLines(prior: Partial<Record<TaskKind, TaskRow>>): string {
+  const s = prior.observe?.output.storeTrend as StoreTrend | null | undefined;
+  if (!s) return '';
+  const lines = s.stated.map((x) => x.statement);
+  if (s.withheld.length) lines.push(`No trend is stated for ${s.withheld.map((x) => `${x.appId} (${x.status.replaceAll('_', ' ')})`).join(', ')}.`);
+  return lines.length ? `\nOfficial store reports (observational; not an effect of any post or action, and no post is credited with installs): ${lines.join(' ')}` : '';
+}
 
 const observe: StepExecutor = async (c) => {
   const insights = isFacebookInsightsKey(goalKpi(c.goal).metricKey) ? await refreshPageInsights(c, goalKpi(c.goal).metricKey) : null;
@@ -231,6 +246,7 @@ const observe: StepExecutor = async (c) => {
   return tx(c, async (t) => {
     const kpi = goalKpi(c.goal);
     const bridged = kpi.metricKey === DOWNLOADS_SERIES_KEY ? await syncDownloadsSeries(t, c.tenantId) : isStoreSeriesKey(kpi.metricKey) ? storeBridge(await syncStoreKpiSeries(t, c.tenantId, c.now), kpi.metricKey) : null;
+    const storeTrend = isStoreSeriesKey(kpi.metricKey) ? await storeTrendContext(t, kpi.metricKey, c.now) : null;
     const [series] = await t.select().from(metricSeries).where(eq(metricSeries.key, kpi.metricKey));
     const [stats] = series
       ? await t
@@ -281,6 +297,7 @@ const observe: StepExecutor = async (c) => {
       series
         ? `${kpi.label}: ${points} data point${points === 1 ? '' : 's'} (latest ${fmtDate(stats?.last)})${bridged ? `, ${bridged.points} from ${isStoreSeriesKey(kpi.metricKey) ? 'official store' : 'App Store'} reports` : ''}${insights?.points ? `, ${insights.points} daily values just synced from Facebook Page insights` : ''}.`
         : `No ${kpi.label} data yet.`,
+      storeTrend ? `Store-report trends: ${storeTrend.stated.length} stated, ${storeTrend.withheld.length} withheld (not enough final, fresh days).` : '',
       `${active.length} of ${conns.length} connection${conns.length === 1 ? '' : 's'} active${active.length ? ` (${[...new Set(active.map((x) => x.provider))].join(', ')})` : ''}.`,
       `${ev?.n ?? 0} admitted evidence records, ${cl?.n ?? 0} approved claims, ${ideas?.n ?? 0} open ideas for this KPI, ${open.length} open action${open.length === 1 ? '' : 's'}.`,
       ...pageLines,
@@ -313,6 +330,7 @@ const observe: StepExecutor = async (c) => {
         brand,
         bootstrap,
         studio,
+        storeTrend,
         warnings,
       },
     };
@@ -330,6 +348,21 @@ const forecast: StepExecutor = async (c) =>
     if (!series) return { kind: 'blocked', needs: 'data', detail: `There is no ${kpi.label} series yet, so no forecast can be made. ${dataHint(kpi.metricKey)}` };
     const [{ n } = { n: 0 }] = await t.select({ n: sql<number>`count(*)::int` }).from(metricPoints).where(eq(metricPoints.seriesId, series.id));
     if (n < MIN_KPI_POINTS) return { kind: 'blocked', needs: 'data', detail: `${kpi.label} has ${n} of the ${MIN_KPI_POINTS} daily values a forecast needs. ${dataHint(kpi.metricKey)}`, output: { points: n } };
+    if (isStoreSeriesKey(kpi.metricKey)) {
+      // Store series hold only final report days; a series that stopped updating is not forecast from.
+      const [{ last } = { last: null }] = await t
+        .select({ last: max(metricPoints.ts) })
+        .from(metricPoints)
+        .where(eq(metricPoints.seriesId, series.id));
+      const age = last ? Math.floor((c.now.getTime() - new Date(last).getTime()) / DAY) : null;
+      if (age === null || age > SIGNAL_RULES.staleAfterDays)
+        return {
+          kind: 'blocked',
+          needs: 'data',
+          detail: `The newest final ${kpi.label} value is from ${fmtDate(last)} (${age ?? '?'} days old; at most ${SIGNAL_RULES.staleAfterDays} allowed), so no forecast or decision is made from it. ${dataHint(kpi.metricKey)}`,
+          output: { points: n, lastPointAt: last ? new Date(last).toISOString() : null },
+        };
+    }
     const reqId = c.task.refs.analyticsRequestId;
     if (!reqId) {
       const [recent] = await t
@@ -456,9 +489,9 @@ const ideas: StepExecutor = async (c) => {
     ? {
         evidenceIds: c.goal.autoSubmit && brand!.autonomousEvidenceIds.length ? brand!.autonomousEvidenceIds : brand!.evidenceIds,
         exploratory: boot.reason!,
-        constraints: `${goalConstraints(c.goal, c.now)}\nBootstrap (exploratory): ${boot.reason}. No forecast or measured result supports any idea yet. Propose low-effort organic Facebook content tests for this Page and its product only, using only the evidence given, without expected numbers.${observations.length ? `\nObserved Page activity: ${observations.join(' ')}` : ''}`,
+        constraints: `${goalConstraints(c.goal, c.now)}\nBootstrap (exploratory): ${boot.reason}. No forecast or measured result supports any idea yet. Propose low-effort organic Facebook content tests for this Page and its product only, using only the evidence given, without expected numbers.${observations.length ? `\nObserved Page activity: ${observations.join(' ')}` : ''}${storeTrendLines(c.prior)}`,
       }
-    : { constraints: goalConstraints(c.goal, c.now) };
+    : { constraints: `${goalConstraints(c.goal, c.now)}${storeTrendLines(c.prior)}` };
   const r = await generateIdeas(c.deps, c.tenantId, AUTOPILOT, { maxIdeas: 3, focus: { objective: c.goal.title, targetMetric: kpi.metricKey, channels: c.goal.channels, ...focus } });
   if (r.status === 'abstained') return { kind: 'blocked', needs: r.reason === 'MODEL_UNAVAILABLE' ? 'model' : 'evidence', detail: `The Idea Lab abstained (${r.reason}).`, aiCalls: 1, refs: { agentRunId: r.runId } };
   if (r.status === 'failed') return { kind: 'retry', detail: 'The Idea Lab failed; will retry.', error: r.error, aiCalls: 1 };
@@ -501,7 +534,7 @@ const decide: StepExecutor = async (c) => {
     market: c.goal.market,
     horizon: { value: Math.min(52, daysLeft(c)), unit: 'day' },
     ...(seriesId ? { seriesId } : {}),
-    goal: { id: c.goal.id, constraints: goalConstraints(c.goal, c.now), allowedCategories: goalCategories(c.goal.channels, c.goal.adBudgetMicros) },
+    goal: { id: c.goal.id, constraints: `${goalConstraints(c.goal, c.now)}${storeTrendLines(c.prior)}`, allowedCategories: goalCategories(c.goal.channels, c.goal.adBudgetMicros) },
   });
   if (r.status === 'abstained')
     return { kind: 'blocked', needs: r.reason === 'MODEL_UNAVAILABLE' ? 'model' : 'evidence', detail: `The Growth Brain abstained on "${idea.title}" (${r.reason}); the next cycle tries another idea.`, aiCalls: 2, refs: { agentRunId: r.runId }, output: { ideaId: idea.id, abstained: r.reason } };
@@ -783,6 +816,9 @@ const track: StepExecutor = async (c) => {
 /* measure: KPI since the goal started vs baseline and forecast (M08)  */
 /* ------------------------------------------------------------------ */
 
+/** Share of the pre-goal window (at least 7 days) that must have daily values before a baseline (and a % target from it) is stated. */
+export const MEASURE_RULES = { minBaselineCoverage: 0.8 } as const;
+
 export interface Measurement {
   status: 'measured' | 'insufficient_data';
   metricKey: string;
@@ -817,10 +853,14 @@ export async function measureGoal(t: Tx, goal: GoalRow, now: Date): Promise<Meas
     .select({ value: metricPoints.value })
     .from(metricPoints)
     .where(and(eq(metricPoints.seriesId, series.id), gte(metricPoints.ts, new Date(start.getTime() - windowDays * DAY)), lt(metricPoints.ts, start)));
-  const baselinePerDay = before.length ? before.reduce((s, p) => s + p.value, 0) / before.length : null;
+  // A daily baseline from a few scattered days is not a baseline: require most of the window.
+  const baselineNeeded = series.granularity === 'day' ? Math.ceil(windowDays * MEASURE_RULES.minBaselineCoverage) : 1;
+  const baselineOk = before.length >= baselineNeeded;
+  const baselinePerDay = baselineOk ? before.reduce((s, p) => s + p.value, 0) / before.length : null;
+  const baselineNote = baselineOk ? '' : ` The pre-goal baseline has ${before.length} of the ${baselineNeeded} daily values it needs (of ${windowDays} days), so no change versus baseline or percentage target is stated.`;
   const goalDays = Math.max(1, Math.round((goal.targetDate.getTime() - start.getTime()) / DAY));
   const target = kpi.target ?? (kpi.targetChangePct !== null && baselinePerDay !== null ? baselinePerDay * goalDays * (1 + kpi.targetChangePct / 100) : null);
-  if (!during.length) return { ...base, daysObserved: days, baselinePerDay, target, note: `No ${kpi.label} values have been recorded since the goal started on ${fmtDate(start)}.` };
+  if (!during.length) return { ...base, daysObserved: days, baselinePerDay, target, note: `No ${kpi.label} values have been recorded since the goal started on ${fmtDate(start)}.${baselineNote}` };
   const actual = during.reduce((s, p) => s + p.value, 0);
   const baselineForSamePeriod = baselinePerDay === null ? null : baselinePerDay * during.length;
   const changeVsBaselinePct = baselineForSamePeriod ? ((actual - baselineForSamePeriod) / baselineForSamePeriod) * 100 : null;
@@ -867,7 +907,7 @@ export async function measureGoal(t: Tx, goal: GoalRow, now: Date): Promise<Meas
     target,
     progressPct,
     forecast: fc,
-    note: 'Observed values compared with the pre-goal baseline and a no-action forecast. This is not a causal estimate; experiments measure incrementality.',
+    note: `Observed values compared with the pre-goal baseline and a no-action forecast. This is not a causal estimate; experiments measure incrementality.${days > during.length ? ` ${during.length} of ${days} elapsed days have a recorded value; missing days are not counted as zero.` : ''}${baselineNote}`,
   };
 }
 

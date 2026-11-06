@@ -41,18 +41,29 @@ export interface DailyTotal {
   day: string;
   value: number | null;
   basis: string;
+  /** The one report partition (family, dimension, day) the value comes from. */
+  family: string;
+  dimension: string;
+  /** `provisional` while the provider may still restate the day. */
+  partitionStatus: string;
+  revision: number;
+  /** Evidence of the partition's current (winning) report version, and that evidence's status. */
+  evidenceId: string | null;
+  evidenceStatus: string | null;
 }
 
 /**
- * App-level daily totals of the given metrics. A day's total is unknown (null) when any contributing
+ * App-level daily totals of the given metrics. A day's total comes from exactly one report
+ * partition: the best-ranked dimension (a reported total before country or version rows), so two
+ * breakdowns of the same day are never added together. It is unknown (null) when any contributing
  * row is unknown; ratios and averages are only taken from single-row (reported total) sources,
  * never re-derived from breakdown rows.
  */
 export async function dailyTotals(t: DbOrTx, appRowIds: string[], metricKeys: string[], from: string, to: string): Promise<DailyTotal[]> {
   if (!appRowIds.length || !metricKeys.length) return [];
-  const r = await t.execute<{ app: string; metric: string; day: string; total: number | null; has_null: boolean; n: number; rank: number }>(sql`
+  const r = await t.execute<{ app: string; metric: string; day: string; total: number | null; has_null: boolean; n: number; rank: number; family: string; dimension: string; partition_status: string; revision: number; evidence_id: string | null; evidence_status: string | null }>(sql`
     with ranked as (
-      select store_app_id, metric_key, observation_date, value, ${TOTAL_RANK} as rank
+      select store_app_id, metric_key, observation_date, partition_id, family, dimension, value, ${TOTAL_RANK} as rank
       from store_metric_observations
       where store_app_id in (${sql.join(
         appRowIds.map((id) => sql`${id}::uuid`),
@@ -64,21 +75,47 @@ export async function dailyTotals(t: DbOrTx, appRowIds: string[], metricKeys: st
         )})
         and observation_date between ${from}::date and ${to}::date
     ), best as (
-      select store_app_id, metric_key, observation_date, min(rank) as rank from ranked group by 1, 2, 3
+      select distinct on (store_app_id, metric_key, observation_date) store_app_id, metric_key, observation_date, partition_id, rank
+      from ranked
+      order by store_app_id, metric_key, observation_date, rank, dimension, family
     )
-    select r.store_app_id::text as app, r.metric_key as metric, r.observation_date::text as day,
-      sum(r.value) as total, bool_or(r.value is null) as has_null, count(*)::int as n, b.rank
-    from ranked r join best b using (store_app_id, metric_key, observation_date)
-    where r.rank = b.rank
-    group by 1, 2, 3, b.rank
+    select b.store_app_id::text as app, b.metric_key as metric, b.observation_date::text as day,
+      sum(r.value) as total, bool_or(r.value is null) as has_null, count(*)::int as n, b.rank,
+      p.family, p.dimension, p.status as partition_status, p.revision, f.evidence_id::text as evidence_id, e.status as evidence_status
+    from best b
+    join ranked r on r.partition_id = b.partition_id and r.metric_key = b.metric_key
+    join store_report_partitions p on p.id = b.partition_id
+    join store_report_files f on f.id = p.report_file_id
+    left join evidence_records e on e.id = f.evidence_id
+    group by b.store_app_id, b.metric_key, b.observation_date, b.rank, b.partition_id, p.family, p.dimension, p.status, p.revision, f.evidence_id, e.status
     order by 3`);
   return r.rows.flatMap((x) => {
     const def = METRIC_DEFINITIONS[x.metric];
     const additive = def && (def.aggregation === 'sum' || def.aggregation === 'daily_unique' || def.aggregation === 'snapshot');
     if (!additive && x.n !== 1) return [];
-    return [{ appRowId: x.app, metricKey: x.metric, day: x.day, value: x.has_null || x.total === null ? null : Number(x.total), basis: BASIS[x.rank] ?? 'sum_of_rows' }];
+    return [
+      {
+        appRowId: x.app,
+        metricKey: x.metric,
+        day: x.day,
+        value: x.has_null || x.total === null ? null : Number(x.total),
+        basis: BASIS[x.rank] ?? 'sum_of_rows',
+        family: x.family,
+        dimension: x.dimension,
+        partitionStatus: x.partition_status,
+        revision: Number(x.revision),
+        evidenceId: x.evidence_id,
+        evidenceStatus: x.evidence_status,
+      },
+    ];
   });
 }
+
+/**
+ * A value that may feed KPI series, trends and goal measurement: known, from a final (complete)
+ * partition, and backed by admitted evidence of the partition's current report version.
+ */
+export const isUsableTotal = (x: DailyTotal): boolean => x.value !== null && x.partitionStatus === 'complete' && x.evidenceId !== null && x.evidenceStatus === 'admitted';
 
 /** Range value for one metric from daily totals, following its aggregation semantics. */
 export function rangeValue(metricKey: string, totals: DailyTotal[], expectedDays: number) {

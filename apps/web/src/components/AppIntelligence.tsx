@@ -8,6 +8,7 @@ export const APP_INTELLIGENCE_CALLS = [
   { method: 'GET', path: '/v1/app-intelligence/accounts' },
   { method: 'POST', path: '/v1/app-intelligence/accounts' },
   { method: 'PATCH', path: '/v1/app-intelligence/accounts/:id' },
+  { method: 'POST', path: '/v1/app-intelligence/accounts/:id/key' },
   { method: 'POST', path: '/v1/app-intelligence/accounts/:id/sync' },
   { method: 'POST', path: '/v1/app-intelligence/accounts/:id/apps' },
   { method: 'POST', path: '/v1/app-intelligence/apps/:id/decision' },
@@ -501,6 +502,7 @@ function DeveloperAccounts({ me }: { me: Me }) {
               ) : null}
             </div>
             {isAdmin(me) ? <ManualApp account={a} onAdded={() => void data.reload()} /> : null}
+            {isAdmin(me) && a.provider === 'google_play' ? <ReplaceKey account={a} onReplaced={() => void data.reload()} /> : null}
           </div>
         ))}
       </section>
@@ -512,7 +514,7 @@ function DeveloperAccounts({ me }: { me: Me }) {
 function healthHelp(a: Account): string {
   const msg = String(a.healthDetail?.error ?? '');
   if (a.health === 'permission_denied') return `Access denied. ${a.provider === 'google_play' ? 'In Play Console › Users and permissions, give the service account "View app information" (Global).' : 'Use an App Store Connect key with the Sales and Reports (or Admin) role.'} ${msg}`;
-  if (a.health === 'auth_failed') return 'The key was rejected (deleted, disabled or rotated). Connect the account again with a new key.';
+  if (a.health === 'auth_failed') return a.provider === 'google_play' ? 'The key was rejected (deleted, disabled or rotated). Use "Replace the service account key" below; history and apps stay.' : 'The key was rejected (deleted, disabled or rotated). Replace it in Connections.';
   if (a.health === 'not_found') return 'The report source was not found. Check the Cloud Storage URI.';
   if (a.health === 'rate_limited') return 'The provider limited requests; the next sync waits and retries automatically.';
   return `The last sync failed and will be retried with a growing delay. ${msg}`;
@@ -635,6 +637,64 @@ function ManualApp({ account, onAdded }: { account: Account; onAdded: () => void
         }}
       >
         Add app
+      </button>
+    </details>
+  );
+}
+
+/** Replaces a Play account's key in place: tested against the same bucket first; account, apps and history stay. */
+function ReplaceKey({ account, onReplaced }: { account: Account; onReplaced: () => void }) {
+  const [key, setKey] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  return (
+    <details>
+      <summary className="small">Replace the service account key</summary>
+      <p className="small muted">The new key is tested against {account.accountRef} before it is saved. The account, its apps and imported history stay as they are; nothing is imported twice.</p>
+      <ErrorNotice error={error} />
+      {done ? <p className="notice small">Key replaced; a sync has been queued.</p> : null}
+      <label>
+        Replacement key file (.json)
+        <input
+          type="file"
+          accept="application/json,.json"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            if (f.size > 20_000) {
+              setError(new Error('That file is too large to be a key file.'));
+              return;
+            }
+            setDone(false);
+            setFileName(f.name);
+            setKey(await f.text());
+          }}
+        />
+        {fileName && key ? <span className="small muted">{fileName} loaded; it is sent once over HTTPS, encrypted on the server and never shown again.</span> : null}
+      </label>
+      <button
+        type="button"
+        className="btn"
+        disabled={!key || busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await api('POST', `/v1/app-intelligence/accounts/${account.id}/key`, { serviceAccountKey: key });
+            setKey('');
+            setFileName('');
+            setDone(true);
+            onReplaced();
+          } catch (e) {
+            setError(e);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? 'Testing…' : 'Test and replace key'}
       </button>
     </details>
   );

@@ -305,16 +305,45 @@ export async function queryVitals(ctx: ConnectorContext, packageName: string, se
 /* ------------------------------------------------------------------ */
 
 export type PlayAccess = 'ok' | 'permission_denied' | 'not_found' | 'auth_failed' | 'rate_limited' | 'error';
+/** Which Google surface failed: Cloud Storage bulk reports, or the optional Play Developer Reporting API. */
+export type PlaySurface = 'reports' | 'reporting';
 
-export function classifyPlayError(err: unknown): { access: PlayAccess; message: string } {
+/** Google's machine-readable error reason (e.g. SERVICE_DISABLED); never its free text, which may echo request data. */
+function googleReason(body: unknown): string | null {
+  const e = (body as { error?: { status?: unknown; errors?: { reason?: unknown }[]; details?: { reason?: unknown }[] } } | null)?.error;
+  if (!e || typeof e !== 'object') return null;
+  const r = e.details?.find((d) => typeof d?.reason === 'string')?.reason ?? e.errors?.find((d) => typeof d?.reason === 'string')?.reason ?? e.status;
+  return typeof r === 'string' && /^[A-Za-z_]{2,60}$/.test(r) ? r : null;
+}
+
+/**
+ * Sanitized, actionable diagnosis of a Google failure. Messages are fixed text plus HTTP status and
+ * Google's error reason code: no key material, tokens or provider free text.
+ */
+export function classifyPlayError(err: unknown, surface: PlaySurface = 'reports'): { access: PlayAccess; message: string; status: number | null; reason: string | null } {
   if (err instanceof ProviderHttpError) {
-    if (err.status === 401) return { access: 'auth_failed', message: err.message };
-    if (err.status === 403) return { access: 'permission_denied', message: 'access denied: the service account needs Play Console "View app information" (Global) for bulk reports' };
-    if (err.status === 404) return { access: 'not_found', message: 'the report bucket or app was not found' };
-    if (err.status === 429) return { access: 'rate_limited', message: 'Google rate limit reached' };
-    return { access: 'error', message: err.message };
+    const status = err.status;
+    const reason = googleReason(err.body);
+    const out = (access: PlayAccess, message: string) => ({ access, message, status, reason });
+    const api = 'the Google Play Developer Reporting API';
+    if (status === 401) return out('auth_failed', err.message.startsWith('Google rejected') ? err.message : 'Google rejected the service account credentials (HTTP 401); create a new JSON key for the service account');
+    if (status === 403) {
+      if (surface === 'reporting')
+        return out(
+          'permission_denied',
+          reason === 'SERVICE_DISABLED' || reason === 'accessNotConfigured'
+            ? `${api} is not enabled in the service account's Google Cloud project; enable it to import app names and vitals (bulk reports are not affected)`
+            : `access denied by ${api}${reason ? ` (${reason})` : ''}; the service account needs Play Console "View app information" for vitals (bulk reports are not affected)`,
+        );
+      return out('permission_denied', `access denied${reason ? ` (${reason})` : ''}: the service account needs Play Console "View app information" (Global) for bulk reports`);
+    }
+    if (status === 404) return out('not_found', surface === 'reporting' ? `the app was not found in ${api}` : 'the report bucket was not found: copy the Cloud Storage URI from Play Console › Download reports');
+    if (status === 429) return out('rate_limited', `Google rate limit reached${err.retryAfterMs ? `; retry after ${Math.ceil(err.retryAfterMs / 1000)} s` : ''}`);
+    if (status === null) return out('error', `could not reach Google (${err.phase === 'before_send' ? 'connection failed' : 'network error or timeout'}); the sync retries automatically`);
+    if (status >= 500) return out('error', `Google returned a server error (HTTP ${status}); the sync retries automatically`);
+    return out('error', `Google refused the request (HTTP ${status}${reason ? `, ${reason}` : ''})`);
   }
-  return { access: 'error', message: err instanceof Error ? err.message : String(err) };
+  return { access: 'error', message: (err instanceof Error ? err.message : String(err)).slice(0, 300), status: null, reason: null };
 }
 
 /** Read-only probe: can the key list the bucket's statistics reports, and use the Reporting API? */
@@ -325,17 +354,19 @@ export async function probePlayAccess(ctx: ConnectorContext, bucket: string): Pr
     const objs = await listReportObjects(ctx, bucket, 'stats/', { maxPages: 1, partial: true });
     details.statisticsObjectsVisible = objs.length;
   } catch (err) {
-    const c = classifyPlayError(err);
+    const c = classifyPlayError(err, 'reports');
     reports = c.access;
     details.reportsError = c.message;
+    details.reportsHttpStatus = c.status;
   }
   let reporting: PlayAccess = 'ok';
   try {
     details.appsVisible = (await searchPlayApps(ctx)).length;
   } catch (err) {
-    const c = classifyPlayError(err);
+    const c = classifyPlayError(err, 'reporting');
     reporting = c.access;
     details.reportingError = c.message;
+    details.reportingHttpStatus = c.status;
   }
   return { reports, reporting, details };
 }

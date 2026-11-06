@@ -60,6 +60,23 @@ export async function appendPoints(tx: Tx, tenantId: string, seriesId: string, r
   return { seriesId, upserted: pts.length };
 }
 
+/**
+ * Series written only by FUTUREGROW from official sources (D-045 store reports): uploads through the
+ * public API may not write them, so their values and evidence always come from the reports and a
+ * re-sync can remove a value the reports no longer support without touching user data.
+ */
+export const SYSTEM_SERIES_PREFIX = 'app.store.';
+
+/** Guard for the public series API: refuses system-owned keys (by key, or by series id). */
+export async function assertUserWritableSeries(tx: DbOrTx, ref: { key?: unknown; seriesId?: string }) {
+  let key = typeof ref.key === 'string' ? ref.key : null;
+  if (ref.seriesId) {
+    const [s] = await tx.select({ key: metricSeries.key }).from(metricSeries).where(eq(metricSeries.id, ref.seriesId));
+    key = s?.key ?? key;
+  }
+  if (key?.startsWith(SYSTEM_SERIES_PREFIX)) throw invalid(`series ${key} is written only from official store reports (App intelligence); it cannot be uploaded`);
+}
+
 export async function getSeriesPoints(tx: DbOrTx, seriesId: string, limit = 5000) {
   return tx.select().from(metricPoints).where(eq(metricPoints.seriesId, seriesId)).orderBy(asc(metricPoints.ts)).limit(limit);
 }

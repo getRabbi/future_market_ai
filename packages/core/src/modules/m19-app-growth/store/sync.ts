@@ -184,8 +184,9 @@ async function syncPlay(deps: CoreDeps, tenantId: string, ctx: ConnectorContext,
   try {
     apiApps = await searchPlayApps(ctx);
   } catch (err) {
-    reporting = classifyPlayError(err).access;
-    stats.notes.push(`Play Developer Reporting API unavailable (${reporting}): app names and vitals are not imported.`);
+    const c = classifyPlayError(err, 'reporting');
+    reporting = c.access;
+    stats.notes.push(`Play Developer Reporting API unavailable (${reporting}): ${c.message}. App names and vitals are not imported; bulk reports still are.`.slice(0, 300));
   }
   const apps = await withTenant(deps.db, { tenantId, actor: 'system:store-reporting' }, async (t) => {
     for (const pkg of fromReports) await upsertDiscoveredApp(t, tenantId, a, { platform: 'android', appId: pkg, displayName: apiApps.find((x) => x.packageName === pkg)?.displayName ?? null, via: 'report_bucket', reliable: true }, now);
@@ -315,7 +316,7 @@ async function syncVitals(deps: CoreDeps, tenantId: string, ctx: ConnectorContex
       stats.observations += r.observations;
       await withTenant(deps.db, { tenantId, actor: 'system:store-reporting' }, (t) => refreshCoverage(t, tenantId, app, PLAY_VITALS.family, dimension, monthsBack(now, 2), now, () => null));
     } catch (err) {
-      const c = classifyPlayError(err);
+      const c = classifyPlayError(err, 'reporting');
       stats.notes.push(`${app.appId} ${set}: ${c.message}`.slice(0, 300));
       if (c.access === 'auth_failed') throw err;
     }

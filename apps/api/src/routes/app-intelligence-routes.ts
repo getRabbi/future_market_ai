@@ -27,6 +27,7 @@ export function registerAppIntelligenceRoutes(app: FastifyInstance, ctx: ApiCont
   r.get('/v1/app-intelligence/accounts', { schema: { tags: ['app'] } }, async (req) => tenantTx(ctx, req, (t) => appIntelligence.developerAccountsOverview(t)));
   r.post('/v1/app-intelligence/accounts', { schema: { tags: ['app'], body: Body }, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => reply.status(201).send(await appIntelligence.connectStoreAccount(deps, tenantOf(req), actorOf(req), req.body)));
   r.patch('/v1/app-intelligence/accounts/:id', { schema: { tags: ['app'], params: Id, body: Body } }, async (req) => appIntelligence.updateStoreAccount(deps, tenantOf(req), actorOf(req), req.params.id, req.body));
+  r.post('/v1/app-intelligence/accounts/:id/key', { schema: { tags: ['app'], params: Id, body: Body }, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => appIntelligence.rotateStoreAccountKey(deps, tenantOf(req), actorOf(req), req.params.id, req.body));
   r.post('/v1/app-intelligence/accounts/:id/sync', { schema: { tags: ['app'], params: Id, body: Body.optional() }, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) =>
     reply.status(202).send(await appIntelligence.requestStoreSync(deps, tenantOf(req), actorOf(req), req.params.id, req.body ?? {})),
   );

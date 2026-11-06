@@ -36,12 +36,13 @@ describe('provider-neutral media (D-044)', () => {
     expect(mediaQa(candidate({ kind: 'ai_image', aiGenerated: false }), 'portrait_4x5').problems).toContain('an AI image must carry the AI-generated disclosure');
   });
 
-  it('enables only the providers whose credentials and rights records exist', async () => {
+  it('enables only providers whose credentials and rights records exist and that FUTUREGROW can actually execute', async () => {
     const status = () => withTenant(h.deps.db, { tenantId: h.tenantId, actor: 'test:media' }, (t) => mediaProviders({ t, deps: h.deps, tenantId: h.tenantId }));
     let s = await status();
     expect(Object.fromEntries(s.map((p) => [p.kind, p.enabled]))).toEqual({ template_card: true, verified_asset: false, stock_image: false, ai_image: false });
     expect(s.find((p) => p.kind === 'ai_image')!.reason).toMatch(/B-011/);
-    expect(s.find((p) => p.kind === 'stock_image')!.requires).toHaveLength(2);
+    expect(s.find((p) => p.kind === 'stock_image')!.requires).toHaveLength(3);
+    expect(s.find((p) => p.kind === 'stock_image')).toMatchObject({ adapter: 'not_built', prerequisitesMet: false });
     // An approved chat model is not an image model; an approved image model with commercial rights is.
     await withSystem(h.deps.db, 'test', (t) =>
       t.insert(modelRegistry).values({ provider: 'openai_compatible', modelId: 'chat-1', displayName: 'Chat', purposes: ['generation'], licenseOrTerms: 'reviewed', commercialUse: 'allowed', trainingOnCustomerData: 'no', approvedForProduction: true, approvedBy: 'user:owner', inputUsdPerMtok: 0, outputUsdPerMtok: 0 }),
@@ -53,6 +54,8 @@ describe('provider-neutral media (D-044)', () => {
         .values({ provider: 'openai_compatible', modelId: 'image-1', displayName: 'Image', purposes: ['image_generation'], licenseOrTerms: 'reviewed', commercialUse: 'allowed', trainingOnCustomerData: 'no', approvedForProduction: true, approvedBy: 'user:owner', inputUsdPerMtok: 0, outputUsdPerMtok: 0 }),
     );
     s = await status();
-    expect(s.find((p) => p.kind === 'ai_image')).toMatchObject({ enabled: true, reason: expect.stringMatching(/image-1/) });
+    // An approved image model meets the prerequisites, but no adapter generates images yet: never claimed usable.
+    expect(s.find((p) => p.kind === 'ai_image')).toMatchObject({ enabled: false, prerequisitesMet: true, adapter: 'not_built', reason: expect.stringMatching(/image-1.*no FUTUREGROW adapter/) });
+    expect(s.find((p) => p.kind === 'template_card')).toMatchObject({ enabled: true, adapter: 'available' });
   });
 });
