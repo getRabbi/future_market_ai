@@ -28,7 +28,7 @@ function fakeNet() {
       posts.push({ url, body: JSON.parse(String(init?.body)) });
       return new Response('ok', { status: scenario.hook ? 200 : 503 });
     }
-    if (url === `${WEB}/login`) return scenario.web ? new Response('<title>Sign in · FUTUREGROW</title>', { status: 200 }) : new Response('bad gateway', { status: 502 });
+    if (url === `${WEB}/login/`) return scenario.web ? new Response('<title>Sign in · FUTUREGROW</title>', { status: 200 }) : new Response('bad gateway', { status: 502 });
     if (url === `${WEB}/v1/openapi.json`) return scenario.proxy ? new Response('{"openapi":"3.1.0"}', { status: 200 }) : new Response('{"error":{"code":"PROXY_UNCONFIGURED"}}', { status: 503 });
     if (url === `${API}/healthz`) {
       if (!scenario.api) throw new TypeError('fetch failed');
