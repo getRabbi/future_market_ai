@@ -1,13 +1,14 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import { api, CHANGED_EVENT, type Me } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
-import { sectionBySlug } from '../lib/catalog.js';
-import { canDo, evaluate, type JourneyView, neighbours, PIPELINE, type ProbeKey, type Progress, RANKS, SECTION_FLOWS, STAGES, type Stage, stageOf, type Task, TOTAL_XP } from '../lib/journey.js';
+import { canDo, evaluate, type JourneyView, PIPELINE, type ProbeKey, type Progress, RANKS, STAGES, type StageKey, type Task, TOTAL_XP } from '../lib/journey.js';
+import { pageBySlug, pageHref } from '../lib/nav.js';
+import { type AnyIcon, Ico } from './Icons.js';
 
 type Row = Record<string, unknown>;
 
-export const sectionTitle = (slug: string) => sectionBySlug(slug)?.title ?? slug;
-export const sectionHref = (slug: string) => `/app/${slug === 'overview' ? '' : slug}`;
+export const sectionTitle = (slug: string) => pageBySlug(slug)?.title ?? slug;
+export const sectionHref = pageHref;
 
 /* ------------------------------------------------------------------ */
 /* Progress: probed from live data, cached per tab for quick page loads */
@@ -159,29 +160,15 @@ export function sectionState(slug: string, j: JourneyState | null): 'done' | 'ne
 /* Small pieces                                                        */
 /* ------------------------------------------------------------------ */
 
-const ICON_PATHS: Record<IconName, ReactNode> = {
-  check: <path d="M5 12.5l4.2 4.2L19 7" />,
-  arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
-  'arrow-left': <path d="M19 12H5M11 6l-6 6 6 6" />,
-  lock: (
-    <>
-      <rect x="5" y="11" width="14" height="9" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-    </>
-  ),
-  bolt: <path d="M13 3L5 13h6l-1 8 8-10h-6l1-8z" />,
-};
-
 type IconName = 'check' | 'arrow' | 'arrow-left' | 'lock' | 'bolt';
+const LEGACY_ICON: Record<IconName, AnyIcon> = { check: 'check', arrow: 'arrow-right', 'arrow-left': 'chevron-left', lock: 'lock', bolt: 'bolt' };
 
 /** Decorative stroke icons; the surrounding text always carries the meaning. */
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
-  return (
-    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-      {ICON_PATHS[name]}
-    </svg>
-  );
+  return <Ico name={LEGACY_ICON[name]} size={size} />;
 }
+
+export const STEP_ICON: Record<StageKey, AnyIcon> = { setup: 'gear', connect: 'plug', plan: 'target', create: 'layers', launch: 'send', measure: 'chart', improve: 'refresh' };
 
 /** Circular progress (0–1) with the rank level in the middle. */
 export function RankRing({ value, level, size = 96, label }: { value: number; level: number; size?: number; label?: string }) {
@@ -221,27 +208,49 @@ function rankProgress(view: JourneyView): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* Sidebar rank                                                        */
+/* Stepper: the seven steps (Home and the Journey page)                */
 /* ------------------------------------------------------------------ */
 
-export function SidebarRank() {
+export function JourneyStepper({ compact = false }: { compact?: boolean }) {
   const j = useJourney();
   if (!j) return null;
-  const { view } = j;
   return (
-    <a className="side-rank" href="/app/" aria-label={`Rank ${view.rank.level}: ${view.rank.name}. ${view.done} of ${view.total} journey tasks done. Open the overview.`}>
-      <RankRing value={view.xp / TOTAL_XP} level={view.rank.level} size={46} />
-      <div className="side-rank-body">
-        <div className="side-rank-name">{view.rank.name}</div>
-        <Bar value={view.done / view.total} label="Journey tasks done" />
-        <div className="side-rank-meta">{j.loaded ? `${view.done} of ${view.total} tasks · ${view.xp} XP` : 'Checking progress…'}</div>
-      </div>
-    </a>
+    <ol className={`jsteps${compact ? ' compact' : ''}`} aria-label="Growth journey steps" aria-busy={!j.loaded}>
+      {j.view.stages.map(({ stage, done, state: checked }) => {
+        const state = j.loaded ? checked : 'upcoming';
+        const words = !j.loaded ? 'checking' : state === 'done' ? 'complete' : state === 'current' ? `current step, ${done} of ${stage.tasks.length} tasks done` : `${done} of ${stage.tasks.length} tasks done`;
+        return (
+          <li key={stage.key} className={`jstep ${j.loaded ? state : 'loading'}`} aria-current={state === 'current' ? 'step' : undefined}>
+            <a href={`/app/journey#step-${stage.key}`} className="jstep-link">
+              <span className="jstep-circle">
+                <Ico name={STEP_ICON[stage.key]} size={compact ? 20 : 22} />
+                {state === 'done' ? (
+                  <span className="jstep-check" aria-hidden="true">
+                    <Ico name="check" size={11} />
+                  </span>
+                ) : null}
+              </span>
+              <span className="jstep-title">{stage.title}</span>
+              <span className="jstep-label">{stage.label}</span>
+              <span className="sr-only">({words})</span>
+            </a>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
+/** "Step 5 of 7 · Measure", or null while loading. */
+export function currentStepLabel(j: JourneyState | null): string | null {
+  if (!j?.loaded) return null;
+  const idx = j.view.stages.findIndex((s) => s.state === 'current');
+  if (idx < 0) return j.view.next ? null : 'All steps complete';
+  return `Step ${idx + 1} of ${STAGES.length} · ${STAGES[idx]!.title}`;
+}
+
 /* ------------------------------------------------------------------ */
-/* Overview: rank, next step, roadmap, pipeline                        */
+/* Journey page                                                        */
 /* ------------------------------------------------------------------ */
 
 export function JourneyHero() {
@@ -250,16 +259,16 @@ export function JourneyHero() {
   if (!j.loaded) {
     return (
       <div className="hero" aria-busy="true">
+        <div className="hero-next card">
+          <div className="eyebrow">Do this next</div>
+          <p className="muted">Working out your next step from your live data…</p>
+        </div>
         <div className="hero-rank card">
-          <RankRing value={0} level={1} size={116} label="Checking your rank" />
+          <RankRing value={0} level={1} size={96} label="Checking your rank" />
           <div className="hero-rank-body">
             <div className="eyebrow">Your rank</div>
             <p className="muted">Checking your progress…</p>
           </div>
-        </div>
-        <div className="hero-next card">
-          <div className="eyebrow">Do this next</div>
-          <p>Working out your next step from your live data…</p>
         </div>
       </div>
     );
@@ -270,24 +279,11 @@ export function JourneyHero() {
   const blocked = next ? !canDo(next, j.me.roles) : false;
   return (
     <div className="hero">
-      <div className="hero-rank card">
-        <RankRing value={view.xp / TOTAL_XP} level={view.rank.level} size={116} />
-        <div className="hero-rank-body">
-          <div className="eyebrow">Your rank</div>
-          <div className="hero-rank-name">{view.rank.name}</div>
-          <p className="small muted">{view.rank.meaning}</p>
-          <Bar value={rankProgress(view)} label="Progress to the next rank" />
-          <p className="small hero-rank-next">{view.nextRank ? `${view.nextRank.minXp - view.xp} XP to ${view.nextRank.name}` : 'Top rank reached: every stage is complete.'}</p>
-          <p className="small muted">
-            {view.done} of {view.total} tasks · {view.xp} / {TOTAL_XP} XP
-          </p>
-        </div>
-      </div>
       <div className={`hero-next card${next ? '' : ' complete'}`}>
         {next ? (
           <>
             <div className="eyebrow">
-              <Icon name="bolt" size={14} /> Do this next{nextStage ? ` · Stage ${nextStage.n} of ${STAGES.length}` : ''}
+              <Ico name="bolt" size={14} /> Do this next{nextStage ? ` · Step ${nextStage.n} of ${STAGES.length}: ${nextStage.title}` : ''}
             </div>
             <h2 className="hero-next-title">{next.title}</h2>
             <p>{next.why}</p>
@@ -297,7 +293,7 @@ export function JourneyHero() {
             {blocked ? <p className="small hero-next-blocked">This step needs an owner or admin. Ask one of them, or carry on with a later step.</p> : null}
             <div className="row">
               <a className="btn primary lg" href={sectionHref(next.section)}>
-                Go to {sectionTitle(next.section)} <Icon name="arrow" />
+                Go to {sectionTitle(next.section)} <Ico name="arrow-right" size={16} />
               </a>
               <span className="xp">+{next.xp} XP</span>
             </div>
@@ -308,10 +304,23 @@ export function JourneyHero() {
             <h2 className="hero-next-title">Your growth loop is verified end to end.</h2>
             <p>Keep it running: review approvals daily, watch alerts, and verify the audit chain regularly.</p>
             <a className="btn primary lg" href="/app/approvals">
-              Open Actions &amp; approvals <Icon name="arrow" />
+              Open Approvals <Ico name="arrow-right" size={16} />
             </a>
           </>
         )}
+      </div>
+      <div className="hero-rank card">
+        <RankRing value={view.xp / TOTAL_XP} level={view.rank.level} size={96} />
+        <div className="hero-rank-body">
+          <div className="eyebrow">Your rank</div>
+          <div className="hero-rank-name">{view.rank.name}</div>
+          <p className="small muted">{view.rank.meaning}</p>
+          <Bar value={rankProgress(view)} label="Progress to the next rank" />
+          <p className="small hero-rank-next">{view.nextRank ? `${view.nextRank.minXp - view.xp} XP to ${view.nextRank.name}` : 'Top rank reached: every step is complete.'}</p>
+          <p className="small muted">
+            {view.done} of {view.total} tasks · {view.xp} / {TOTAL_XP} XP
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -328,7 +337,7 @@ export function RankLadder() {
         const state = r.level < level ? 'reached' : r.level === level ? 'current' : 'locked';
         return (
           <li key={r.level} className={`ladder-step ${state}`} aria-current={state === 'current' ? 'step' : undefined}>
-            <span className="ladder-badge">{state === 'reached' ? <Icon name="check" size={14} /> : r.level}</span>
+            <span className="ladder-badge">{state === 'reached' ? <Ico name="check" size={14} /> : r.level}</span>
             <span className="ladder-name">{r.name}</span>
             <span className="ladder-xp">{r.minXp} XP</span>
           </li>
@@ -344,7 +353,7 @@ function TaskItem({ task, j, here }: { task: Task; j: JourneyState; here?: boole
   return (
     <li className={`task ${state}`}>
       <span className="task-icon" aria-hidden="true">
-        {state === 'done' ? <Icon name="check" size={14} /> : state === 'next' ? <Icon name="arrow" size={14} /> : null}
+        {state === 'done' ? <Ico name="check" size={14} /> : state === 'next' ? <Ico name="arrow-right" size={14} /> : null}
       </span>
       <div className="task-body">
         <div className="task-title">
@@ -353,7 +362,7 @@ function TaskItem({ task, j, here }: { task: Task; j: JourneyState; here?: boole
           <span className="xp">+{task.xp} XP</span>
           {blocked ? (
             <span className="chip">
-              <Icon name="lock" size={11} /> owner or admin
+              <Ico name="lock" size={11} /> owner or admin
             </span>
           ) : null}
         </div>
@@ -370,6 +379,21 @@ function TaskItem({ task, j, here }: { task: Task; j: JourneyState; here?: boole
   );
 }
 
+/** The journey tasks done on one page (shown in its "How this works" panel). */
+export function PageTasks({ slug }: { slug: string }) {
+  const j = useJourney();
+  if (!j) return null;
+  const tasks = STAGES.flatMap((s) => s.tasks).filter((t) => t.section === slug);
+  if (!tasks.length) return null;
+  return (
+    <ul className="task-list">
+      {tasks.map((t) => (
+        <TaskItem key={t.id} task={t} j={j} here />
+      ))}
+    </ul>
+  );
+}
+
 export function Roadmap() {
   const j = useJourney();
   if (!j) return null;
@@ -379,20 +403,22 @@ export function Roadmap() {
         const state = j.loaded ? checked : 'upcoming';
         const stageXp = stage.tasks.reduce((n, t) => n + t.xp, 0);
         return (
-          <li key={stage.n} className={`road-stage ${state}`}>
+          <li key={stage.n} id={`step-${stage.key}`} className={`road-stage ${state}`}>
             <span className="road-marker" aria-hidden="true">
-              {state === 'done' ? <Icon name="check" size={16} /> : stage.n}
+              {state === 'done' ? <Ico name="check" size={16} /> : <Ico name={STEP_ICON[stage.key]} size={16} />}
             </span>
             <details className="road-card" open={state === 'current'}>
               <summary>
                 <div className="road-head">
                   <div className="eyebrow">
-                    Stage {stage.n} of {STAGES.length}
+                    Step {stage.n} of {STAGES.length}
                     {` · ${stageXp} XP`}
                     {state === 'current' ? <span className="pill now">You are here</span> : null}
                     {state === 'done' ? <span className="pill ok">Complete</span> : null}
                   </div>
-                  <h3>{stage.title}</h3>
+                  <h3>
+                    {stage.title} <span className="road-label">· {stage.label}</span>
+                  </h3>
                   <p className="small muted">{stage.tagline}</p>
                 </div>
                 <span className="road-count">
@@ -405,7 +431,7 @@ export function Roadmap() {
                 ))}
               </ul>
               <p className="small muted road-sections">
-                Pages in this stage:{' '}
+                Pages for this step:{' '}
                 {stage.sections.map((s, i) => (
                   <span key={s}>
                     {i ? ' · ' : ''}
@@ -434,109 +460,5 @@ export function Pipeline() {
         </li>
       ))}
     </ol>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Section pages: stage banner, "how this works", previous / next      */
-/* ------------------------------------------------------------------ */
-
-export function FlowSteps({ steps }: { steps: string[] }) {
-  return (
-    <ol className="flow" aria-label="How this works">
-      {steps.map((s, i) => (
-        <li key={s}>
-          <span className="flow-step">
-            <span className="flow-n">{i + 1}</span>
-            <span>{s}</span>
-          </span>
-          {i < steps.length - 1 ? (
-            <span className="flow-arrow" aria-hidden="true">
-              <Icon name="arrow" size={14} />
-            </span>
-          ) : null}
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-export function StageBanner({ slug }: { slug: string }) {
-  const j = useJourney();
-  const stage: Stage | undefined = stageOf(slug);
-  const flow = SECTION_FLOWS[slug];
-  if (!stage && !flow) return null;
-  const entry = stage && j?.loaded ? j.view.stages.find((s) => s.stage === stage) : undefined;
-  const tasks = stage ? stage.tasks.filter((t) => t.section === slug) : slug === 'approvals' ? STAGES.flatMap((s) => s.tasks).filter((t) => t.section === slug) : [];
-  return (
-    <section className={`stage-banner${entry ? ` ${entry.state}` : ''}`} aria-label={stage ? `Stage ${stage.n}: ${stage.title}` : 'How this works'}>
-      {stage ? (
-        <div className="stage-banner-head">
-          <span className="stage-num" aria-hidden="true">
-            {entry?.state === 'done' ? <Icon name="check" size={18} /> : stage.n}
-          </span>
-          <div className="stage-banner-title">
-            <div className="eyebrow">
-              Stage {stage.n} of {STAGES.length}
-              {entry?.state === 'current' ? <span className="pill now">You are here</span> : null}
-              {entry?.state === 'done' ? <span className="pill ok">Complete</span> : null}
-            </div>
-            <div className="stage-banner-name">{stage.title}</div>
-            <p className="small muted">{stage.tagline}</p>
-          </div>
-          {entry ? (
-            <div className="stage-banner-progress">
-              <span className="road-count">
-                {entry.done}/{stage.tasks.length}
-              </span>
-              <span className="small muted">stage tasks</span>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {j && tasks.length ? (
-        <ul className="task-list">
-          {tasks.map((t) => (
-            <TaskItem key={t.id} task={t} j={j} here />
-          ))}
-        </ul>
-      ) : null}
-      {flow ? (
-        <div className="flow-wrap">
-          <div className="eyebrow">How this works</div>
-          <FlowSteps steps={flow} />
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-export function SectionPager({ slug }: { slug: string }) {
-  const { prev, next } = neighbours(slug);
-  const label = (s: string) => {
-    const st = stageOf(s);
-    return st ? `Stage ${st.n} · ${st.title}` : 'Daily';
-  };
-  return (
-    <nav className="pager" aria-label="Previous and next page">
-      {prev ? (
-        <a className="pager-link prev" href={sectionHref(prev)}>
-          <span className="eyebrow">
-            <Icon name="arrow-left" size={12} /> Previous · {label(prev)}
-          </span>
-          <span className="pager-title">{sectionTitle(prev)}</span>
-        </a>
-      ) : (
-        <span />
-      )}
-      {next ? (
-        <a className="pager-link next" href={sectionHref(next)}>
-          <span className="eyebrow">
-            Next · {label(next)} <Icon name="arrow" size={12} />
-          </span>
-          <span className="pager-title">{sectionTitle(next)}</span>
-        </a>
-      ) : null}
-    </nav>
   );
 }

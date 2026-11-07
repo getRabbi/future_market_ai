@@ -265,13 +265,19 @@ export const REGISTRIES: Resource[] = [
   { title: 'Cost (30 days)', description: 'Rows without a known price are counted, never estimated.', list: '/v1/governance/costs', columns: ['category', 'provider', 'quantity', 'known_usd', 'unpriced_rows'] },
 ];
 
+/** Shown on Incidents & Alerts instead of Governance & Security. */
+export const INCIDENT_TITLES = ['Alerts', 'Incidents'];
+
 export function Governance() {
   return (
     <div className="stack">
       <PolicyEditor />
       <KillSwitches />
       <AiSpending />
-      {REGISTRIES.map((r) => (
+      <div className="notice info small">
+        Alerts and incidents now live in <a href="/app/incidents">Incidents &amp; Alerts</a> (Reviews).
+      </div>
+      {REGISTRIES.filter((r) => !INCIDENT_TITLES.includes(r.title)).map((r) => (
         <ResourcePanel key={r.title} resource={r} />
       ))}
     </div>

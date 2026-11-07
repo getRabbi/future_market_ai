@@ -8,7 +8,6 @@
 
 import { BRAND_RULE_FORM, CHANNEL_OPTIONS, CLAIM_FORM, COUNTRY_SUGGESTIONS, EVIDENCE_FORM, evidenceNotice, FACT_FORM, FRESHNESS_OPTIONS, factKey, MARKET_HINT, MARKET_PATTERN, PII_OPTIONS, providerName, RIGHTS_OPTIONS, releaseForm, SOURCE_TYPE_OPTIONS, SOURCES, USE_OPTIONS } from './fieldsets.js';
 import { evidenceReadiness, type Field, type FormNotice, type FormSpec, opts, READINESS_LABEL, type Row } from './forms.js';
-import { DAILY_SECTIONS, STAGES } from './journey.js';
 
 export interface RowAction {
   label: string;
@@ -69,7 +68,7 @@ export interface Section {
   summary: string;
   resources: Resource[];
   /** Bespoke component instead of / before resources. */
-  custom?: 'overview' | 'approvals' | 'governance' | 'audit' | 'settings' | 'assets' | 'connections' | 'knowledge';
+  custom?: 'approvals' | 'governance' | 'audit' | 'settings' | 'assets' | 'connections' | 'knowledge';
 }
 
 const iso = () => new Date().toISOString();
@@ -113,10 +112,9 @@ const ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i;
 const ORIGIN_HINT = 'enter just the site address, like https://www.example.com (no path)';
 
 export const SECTIONS: Section[] = [
-  { slug: 'overview', title: 'Overview', modules: ['M23', 'M24'], summary: 'What needs a person now: approvals, alerts, incidents and emergency stops.', resources: [], custom: 'overview' },
   {
     slug: 'approvals',
-    title: 'Actions & approvals',
+    title: 'Approvals',
     modules: ['M23'],
     summary: 'Everything that changes the outside world waits here for a second person. Approving signs off the exact action; it only counts as done once an independent check confirms it.',
     resources: [],
@@ -369,7 +367,7 @@ export const SECTIONS: Section[] = [
   },
   {
     slug: 'market',
-    title: 'Market & competitors',
+    title: 'Market & Competitors',
     modules: ['M04', 'M05', 'M06'],
     summary: 'Trends against their baselines, lawful competitor monitoring and a ranked backlog of growth ideas.',
     resources: [
@@ -485,7 +483,7 @@ export const SECTIONS: Section[] = [
   },
   {
     slug: 'analytics',
-    title: 'Forecasts & MMM',
+    title: 'Forecasts & Analytics',
     modules: ['M08', 'M09'],
     summary: 'Forecasts with honest ranges and backtests, and media-mix models that show which channels drive results.',
     resources: [
@@ -988,7 +986,7 @@ export const SECTIONS: Section[] = [
   },
   {
     slug: 'ads',
-    title: 'Paid media',
+    title: 'Campaigns & paid media',
     modules: ['M17'],
     summary: 'Budget and status changes inside agreed spend limits, with reported spend reconciled against what was approved.',
     resources: [
@@ -1138,7 +1136,7 @@ export const SECTIONS: Section[] = [
   },
   {
     slug: 'app',
-    title: 'App growth',
+    title: 'App attribution & cohorts',
     modules: ['M19'],
     summary: 'Application-specific campaign observations, legacy cohorts and App Store reports. Attribution shows association, not cause.',
     resources: [
@@ -1383,7 +1381,7 @@ export const SECTIONS: Section[] = [
   },
   {
     slug: 'connections',
-    title: 'Connections',
+    title: 'Connections & Credentials',
     modules: ['M23'],
     summary: 'The accounts FUTUREGROW works with. Test the details before saving; they are stored encrypted and never shown again.',
     custom: 'connections',
@@ -1399,13 +1397,10 @@ export const SECTIONS: Section[] = [
       },
     ],
   },
-  { slug: 'governance', title: 'Governance', modules: ['M24'], summary: 'What may run on its own, spending limits, emergency stops, sender identity, registries and incidents.', resources: [], custom: 'governance' },
+  { slug: 'governance', title: 'Governance & Security', modules: ['M24'], summary: 'What may run on its own, spending limits, emergency stops, sender identity, registries and incidents.', resources: [], custom: 'governance' },
   { slug: 'audit', title: 'Audit trail', modules: ['M24'], summary: 'A tamper-evident record of every change. Verify the chain at any time.', resources: [], custom: 'audit' },
-  { slug: 'settings', title: 'Account & security', modules: [], summary: 'Two-factor sign-in, your password, your team and organisations.', resources: [], custom: 'settings' },
+  { slug: 'settings', title: 'Organization & Team', modules: [], summary: 'Your sign-in security (two-factor, password), your team members and your organizations.', resources: [], custom: 'settings' },
 ];
-
-/** Navigation follows the growth journey: daily screens first, then one group per stage. */
-export const SECTION_GROUPS: { title: string; slugs: string[]; stage?: number }[] = [{ title: 'Today', slugs: DAILY_SECTIONS }, ...STAGES.map((s) => ({ title: s.title, slugs: s.sections, stage: s.n }))];
 
 export function sectionBySlug(slug: string): Section | undefined {
   return SECTIONS.find((s) => s.slug === slug);

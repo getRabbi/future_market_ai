@@ -12,8 +12,10 @@ import { CONNECTION_CALLS } from '../src/components/Connections.js';
 import { CONTENT_CALLS } from '../src/components/ContentStudio.js';
 import { REGISTRIES } from '../src/components/Governance.js';
 import { GROUND_TRUTH_CALLS } from '../src/components/GroundTruth.js';
-import { allForms, SECTION_GROUPS, SECTIONS } from '../src/lib/catalog.js';
+import { UNIFIED_CALLS } from '../src/components/Shell.js';
+import { allForms, SECTIONS } from '../src/lib/catalog.js';
 import type { Field, RecordSource } from '../src/lib/forms.js';
+import { PAGES } from '../src/lib/nav.js';
 
 let h: CoreHarness;
 let app: FastifyInstance;
@@ -74,6 +76,7 @@ function calls() {
   for (const c of APP_CONVERSION_CALLS) out.push({ where: 'app conversions screen', method: c.method, path: c.path });
   for (const c of BRAND_CALLS) out.push({ where: 'brands screen', method: c.method, path: c.path });
   for (const c of APP_INTELLIGENCE_CALLS) out.push({ where: 'app intelligence screen', method: c.method, path: c.path });
+  for (const c of UNIFIED_CALLS) out.push({ where: 'unified shell / home', method: c.method, path: c.path });
   return out;
 }
 
@@ -90,7 +93,7 @@ describe('control-plane catalog', () => {
   it('covers all 24 modules and every section is reachable from the navigation', () => {
     const covered = new Set(SECTIONS.flatMap((s) => s.modules));
     expect(MODULES.map((m) => m.id).filter((id) => !covered.has(id))).toEqual([]);
-    const nav = new Set(SECTION_GROUPS.flatMap((g) => g.slugs));
+    const nav = new Set(PAGES.map((p) => p.slug));
     expect(SECTIONS.map((s) => s.slug).filter((s) => !nav.has(s))).toEqual([]);
     expect(new Set(SECTIONS.map((s) => s.slug)).size).toBe(SECTIONS.length);
   });

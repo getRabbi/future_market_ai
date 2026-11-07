@@ -116,3 +116,17 @@ describe('Autopilot API', () => {
     expect((await a.req('GET', '/v1/autopilot/inbox')).json).toMatchObject({ approvals: [], decisions: [], drafts: [], otherApprovals: 0 });
   });
 });
+
+describe('system status for the control plane (D-048)', () => {
+  it('needs a session, is coarse and says whether operator alerts have a delivery target', async () => {
+    const anon = await app.inject({ method: 'GET', url: '/v1/system/status', headers: { origin: ORIGIN } });
+    expect(anon.statusCode).toBe(401);
+    const r = await a.req('GET', '/v1/system/status');
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.json.components as unknown as object).sort()).toEqual(['analytics_queue', 'backups', 'database', 'media_queue', 'worker']);
+    expect(r.json.alertDelivery).toBe(h.deps.notifier?.configured ? 'configured' : 'not_configured');
+    expect(typeof r.json.ok).toBe('boolean');
+    // Same redaction as /statusz: no internal detail strings, no tenant data.
+    expect(JSON.stringify(r.json)).not.toMatch(/detail|tenant/);
+  });
+});

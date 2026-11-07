@@ -36,8 +36,8 @@ interface Detail {
   terminal: boolean;
 }
 
-export function Approvals({ initialId }: { initialId?: string | null }) {
-  const [tab, setTab] = useState(TABS[0]!);
+export function Approvals({ initialId, initialTab }: { initialId?: string | null; initialTab?: string | null }) {
+  const [tab, setTab] = useState(TABS.find((t) => t.key === initialTab) ?? TABS[0]!);
   const list = useApi<ActionView[]>(`/v1/actions?status=${tab.statuses.join(',')}&limit=200`);
   const [open, setOpen] = useState<string | null>(initialId ?? null);
   return (

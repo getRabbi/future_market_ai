@@ -1,32 +1,36 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, getTenant, type Me, setTenant } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
-import { SECTION_GROUPS, SECTIONS, sectionBySlug } from '../lib/catalog.js';
-import { STAGES, stageOf } from '../lib/journey.js';
+import { sectionBySlug } from '../lib/catalog.js';
+import { legacyRedirect, pageBySlug } from '../lib/nav.js';
 import { AppConversions } from './AppConversions.js';
+import { AppIntelligenceView } from './AppIntelligence.js';
 import { Approvals } from './Approvals.js';
-import { AutopilotOffer, AutopilotShell, type AutopilotStatus } from './Autopilot.js';
+import { ApprovalsInbox, AutopilotCenter, AutopilotOffer, type AutopilotStatus, GoalsView } from './Autopilot.js';
+import { BrandStudioView } from './BrandStudio.js';
 import { Connections } from './Connections.js';
+import { ContentStudioView } from './ContentStudio.js';
 import { Governance } from './Governance.js';
 import { GroundTruth } from './GroundTruth.js';
-import { Icon, JourneyProvider, SectionPager, SidebarRank, StageBanner, sectionHref, sectionState, useJourney } from './Journey.js';
+import { Home } from './Home.js';
+import { JourneyProvider } from './Journey.js';
+import { ActivityPage, CalendarPage, IncidentsPage, InsightsPage, JourneyPage, ResultsPage, SetupPage, ToolsPage } from './Pages.js';
 import { ResourcePanel } from './ResourcePanel.js';
+import { AppShell, isAdmin, type Org, useWorkspace, WorkspaceProvider } from './Shell.js';
 import { ErrorNotice, Logo } from './ui.js';
-import { AssetUpload, Audit, Overview, Settings } from './Views.js';
-
-type Org = { id: string; name: string; slug: string };
+import { AssetUpload, Audit, Settings } from './Views.js';
 
 /**
- * `mode="auto"` (the /app/ home) shows the Autopilot when it is enabled for the organization and
- * the classic overview otherwise; `mode="classic"` is the Advanced workspace (all 24 modules).
+ * The whole signed-in product (D-048): one shell — header, sidebar, search, breadcrumbs — for
+ * the Home dashboard, the Autopilot and every module section. `section` is the page slug
+ * ('' or 'overview' is Home).
  */
-export function ControlPlane({ section, mode = 'classic' }: { section: string; mode?: 'auto' | 'classic' }) {
+export function ControlPlane({ section }: { section: string; mode?: 'auto' | 'classic' }) {
   const [me, setMe] = useState<Me | null>(null);
   const [autopilot, setAutopilot] = useState<AutopilotStatus | null>(null);
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const current = sectionBySlug(section) ?? SECTIONS[0]!;
+  const slug = section === 'overview' ? '' : section;
 
   const boot = useCallback(async () => {
     setError(null);
@@ -41,25 +45,26 @@ export function ControlPlane({ section, mode = 'classic' }: { section: string; m
     if (all.length === 0) return;
     const chosen = all.find((o) => o.id === getTenant())?.id ?? all[0]!.id;
     setTenant(chosen);
-    try {
-      setMe(await api<Me>('GET', '/v1/me'));
-    } catch (err) {
-      setError(err);
-    }
-    // An API without the Autopilot (older deploy) simply keeps the classic workspace.
-    setAutopilot(await api<AutopilotStatus>('GET', '/v1/autopilot/status').catch(() => null));
-  }, []);
-  const refreshAutopilot = useCallback(async () => {
-    setAutopilot(await api<AutopilotStatus>('GET', '/v1/autopilot/status').catch(() => null));
+    const [meResult, status] = await Promise.all([api<Me>('GET', '/v1/me').catch((err: unknown) => err), api<AutopilotStatus>('GET', '/v1/autopilot/status').catch(() => null)]);
+    // An API without the Autopilot (older deploy) simply has no Autopilot pages content.
+    setAutopilot(status);
+    if (meResult instanceof Error) setError(meResult);
+    else setMe(meResult as Me);
   }, []);
 
   useEffect(() => {
+    // Old links (/app/?view=goals, /app/advanced) land on the same screens in the unified shell.
+    const to = legacyRedirect(window.location.pathname, window.location.search);
+    if (to) {
+      window.location.replace(to);
+      return;
+    }
     void boot();
   }, [boot]);
 
   const switchTenant = (id: string) => {
     setTenant(id);
-    window.location.reload();
+    window.location.href = '/app/';
   };
 
   if (orgs && orgs.length === 0) return <NoOrganization onCreated={switchTenant} />;
@@ -73,128 +78,88 @@ export function ControlPlane({ section, mode = 'classic' }: { section: string; m
       </main>
     );
   }
-
-  const orgSelect = (
-    <div className="org-box">
-      <label htmlFor="org">Organization</label>
-      <select id="org" value={me.tenantId} onChange={(e) => switchTenant(e.target.value)}>
-        {(orgs ?? []).map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.name}
-          </option>
-        ))}
-      </select>
-      <span className="who" title="Your roles in this organization">
-        {me.roles.join(', ')}
-      </span>
-    </div>
-  );
-  const autopilotOn = Boolean(autopilot?.available && autopilot.enabled);
-  if (mode === 'auto' && autopilotOn && autopilot) return <AutopilotShell me={me} status={autopilot} orgSelect={orgSelect} onStatus={() => void refreshAutopilot()} />;
-
-  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const stage = stageOf(current.slug);
   return (
-    <JourneyProvider me={me}>
-      <div className="shell">
-        <Sidebar current={current.slug} open={menuOpen} autopilot={autopilotOn} />
-        {menuOpen ? <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={() => setMenuOpen(false)} /> : null}
-        <main className="main" id="content">
-          <div className="topbar">
-            <div className="topbar-title">
-              <button type="button" className="menu-toggle" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
-                Menu
-              </button>
-              <div>
-                <div className="eyebrow">{stage ? `Stage ${stage.n} of ${STAGES.length} · ${stage.title}` : current.slug === 'overview' ? 'Your growth journey' : 'Today'}</div>
-                <h1>{current.title}</h1>
-                <p className="summary">{current.summary}</p>
-              </div>
-            </div>
-            {orgSelect}
-          </div>
-          <ErrorNotice error={error} />
-          {current.slug !== 'overview' ? <StageBanner slug={current.slug} /> : null}
-          <div className="content">
-            {current.custom === 'overview' && autopilot?.available && !autopilot.enabled ? <AutopilotOffer me={me} onEnabled={() => (window.location.href = '/app/')} /> : null}
-            {current.custom === 'overview' ? <Overview me={me} /> : null}
-            {current.custom === 'approvals' ? <Approvals initialId={params.get('id')} /> : null}
-            {current.custom === 'governance' ? <Governance /> : null}
-            {current.custom === 'audit' ? <Audit /> : null}
-            {current.custom === 'settings' ? <Settings me={me} onTenant={switchTenant} onChanged={() => void boot()} /> : null}
-            {current.custom === 'assets' ? <AssetUpload /> : null}
-            {current.custom === 'connections' ? <Connections me={me} /> : null}
-            {current.slug === 'app' ? <AppConversions /> : null}
-            {current.custom === 'knowledge' ? <GroundTruth /> : current.resources.map((r) => <ResourcePanel key={r.title} resource={r} />)}
-          </div>
-          <SectionPager slug={current.slug} />
-        </main>
-      </div>
-    </JourneyProvider>
+    <WorkspaceProvider me={me} orgs={orgs ?? []} autopilot={autopilot}>
+      <JourneyProvider me={me}>
+        <AppShell slug={pageBySlug(slug) ? slug : ''}>
+          <PageContent slug={slug} onBoot={() => void boot()} />
+        </AppShell>
+      </JourneyProvider>
+    </WorkspaceProvider>
   );
 }
 
-function Sidebar({ current, open, autopilot }: { current: string; open: boolean; autopilot: boolean }) {
-  const j = useJourney();
-  return (
-    <nav className={`sidebar${open ? ' open' : ''}`} aria-label="Modules">
-      <a className="brand" href={autopilot ? '/app/advanced' : '/app/'}>
-        <Logo size={26} />
-        <span>FUTUREGROW</span>
-        <small>{autopilot ? 'advanced' : 'beta'}</small>
-      </a>
-      {autopilot ? (
-        <a className="btn primary ap-back" href="/app/">
-          ← Back to the Autopilot
-        </a>
-      ) : null}
-      <SidebarRank />
-      {SECTION_GROUPS.map((g) => {
-        const entry = g.stage && j ? j.view.stages.find((s) => s.stage.n === g.stage) : undefined;
-        const state = entry && j?.loaded ? entry.state : 'upcoming';
-        return (
-          <div className={`nav-group${g.stage ? ` stage ${state}` : ''}`} key={g.title}>
-            {g.stage ? (
-              <div className="nav-stage-head">
-                <span className="nav-stage-num" aria-hidden="true">
-                  {state === 'done' ? <Icon name="check" size={12} /> : g.stage}
-                </span>
-                <span className="nav-stage-title">{g.title}</span>
-                {entry ? (
-                  <span className="nav-stage-count" title="Stage tasks done">
-                    {entry.done}/{entry.stage.tasks.length}
-                  </span>
-                ) : null}
-              </div>
-            ) : (
-              <h4>{g.title}</h4>
-            )}
-            {g.slugs.map((slug) => {
-              const s = sectionBySlug(slug)!;
-              const mark = sectionState(slug, j);
-              return (
-                <a key={slug} href={autopilot && slug === 'overview' ? '/app/advanced' : sectionHref(slug)} aria-current={slug === current ? 'page' : undefined}>
-                  <span>{s.title}</span>
-                  {slug === 'approvals' && j?.pending ? (
-                    <span className="count" title="Waiting for approval">
-                      {j.pending}
-                    </span>
-                  ) : mark === 'next' ? (
-                    <span className="mark next" title="Your next step is here">
-                      Next
-                    </span>
-                  ) : mark === 'done' ? (
-                    <span className="mark done" title="Done">
-                      <Icon name="check" size={12} />
-                    </span>
-                  ) : null}
-                </a>
-              );
-            })}
+function PageContent({ slug, onBoot }: { slug: string; onBoot: () => void }) {
+  const { me, autopilot, refreshAutopilot, switchTenant, reloadAttention } = useWorkspace();
+  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const enabled = () => {
+    void refreshAutopilot();
+    void reloadAttention();
+  };
+  switch (slug) {
+    case '':
+      return <Home />;
+    case 'journey':
+      return <JourneyPage />;
+    case 'setup':
+      return <SetupPage />;
+    case 'goals':
+      return <GoalsView me={me} autopilot={autopilot} onEnabled={enabled} />;
+    case 'autopilot':
+      return (
+        <>
+          {autopilot?.available && !autopilot.enabled && !isAdmin(me) ? <AutopilotOffer me={me} onEnabled={enabled} /> : null}
+          <AutopilotCenter me={me} status={autopilot} onStatus={enabled} />
+        </>
+      );
+    case 'content':
+      return <ContentStudioView me={me} />;
+    case 'calendar':
+      return <CalendarPage />;
+    case 'channels':
+      return <BrandStudioView me={me} />;
+    case 'apps':
+      return <AppIntelligenceView me={me} initialApp={params.get('app')} initialTab={params.get('tab') === 'accounts' ? 'accounts' : 'apps'} />;
+    case 'results':
+      return <ResultsPage />;
+    case 'insights':
+      return <InsightsPage />;
+    case 'incidents':
+      return <IncidentsPage autopilot={autopilot} />;
+    case 'activity':
+      return <ActivityPage />;
+    case 'tools':
+      return <ToolsPage />;
+    case 'approvals':
+      return (
+        <div className="stack">
+          <ApprovalsInbox me={me} onChange={() => void reloadAttention()} withActions={false} />
+          <div className="section-head">
+            <h2>Actions</h2>
+            <p className="small muted">Approving signs off the exact action (it is bound to its hash) and needs a two-factor session. Whoever proposed an action can never approve it.</p>
           </div>
-        );
-      })}
-    </nav>
+          <Approvals initialId={params.get('id')} initialTab={params.get('tab')} />
+        </div>
+      );
+    default:
+      return <SectionContent slug={slug} onBoot={onBoot} onTenant={switchTenant} />;
+  }
+}
+
+function SectionContent({ slug, onBoot, onTenant }: { slug: string; onBoot: () => void; onTenant: (id: string) => void }) {
+  const { me } = useWorkspace();
+  const s = sectionBySlug(slug);
+  if (!s) return <ErrorNotice error={new Error('This page does not exist. Use search (Ctrl+K) or All tools to find what you need.')} />;
+  return (
+    <div className="content">
+      {s.custom === 'governance' ? <Governance /> : null}
+      {s.custom === 'audit' ? <Audit /> : null}
+      {s.custom === 'settings' ? <Settings me={me} onTenant={onTenant} onChanged={onBoot} /> : null}
+      {s.custom === 'assets' ? <AssetUpload /> : null}
+      {s.custom === 'connections' ? <Connections me={me} /> : null}
+      {s.slug === 'app' ? <AppConversions /> : null}
+      {s.custom === 'knowledge' ? <GroundTruth /> : s.resources.map((r) => <ResourcePanel key={r.title} resource={r} />)}
+    </div>
   );
 }
 
