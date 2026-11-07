@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, type Me } from '../lib/api.js';
-import { relativeTime } from '../lib/format.js';
+import { readableText, relativeTime } from '../lib/format.js';
 import { Badge, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
 
 /** Every API call this screen makes (checked against the API's routes in catalog.test.ts). */
@@ -256,7 +256,7 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
                   : i.status === 'published'
                     ? ' · awaiting measurement'
                     : ''}
-                {i.statusReason ? <span className="muted"> · {i.statusReason}</span> : null}
+                {i.statusReason ? <span className="muted"> · {readableText(i.statusReason)}</span> : null}
               </li>
             ))}
           </ul>

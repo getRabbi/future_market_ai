@@ -6,6 +6,7 @@ import { registerEventHandlers } from '../../event-handlers.js';
 import { clipText, record, wellFormedJson } from '../../util.js';
 import { isSystemHalted } from '../m24-governance/index.js';
 import { autopilotAvailable, type GoalRow, goalKpi, limitsOf } from './goals.js';
+import { classifyCycle } from './outcome.js';
 import { AUTOPILOT, aiCallsFor, type CycleRow, EXECUTORS, measureGoal, type StepContext, type StepResult, type TaskRow } from './steps.js';
 
 const ACTOR_REF = 'system:autopilot';
@@ -156,19 +157,22 @@ async function startCycle(deps: CoreDeps, tenantId: string, goalId: string, now:
 }
 
 async function finishCycle(tx: Tx, tenantId: string, cycle: CycleRow, goal: GoalRow, tasks: TaskRow[], now: Date) {
-  const failed = tasks.filter((t) => t.status === 'failed');
+  // Every step that could not run, including a forecast that is only unavailable: the goal keeps
+  // waking up when that input arrives (unchanged schedule), whatever the cycle's reading is.
   const blocked = tasks.filter((t) => t.status === 'blocked');
-  const status = failed.length ? 'failed' : blocked.length ? 'blocked' : 'completed';
+  const reading = classifyCycle(tasks);
+  const status = reading.status;
   const learn = tasks.find((t) => t.kind === 'learn');
   const measure = tasks.find((t) => t.kind === 'measure');
   const lim = limitsOf(goal);
   const replanHours = (learn?.output.replanHours as number | null | undefined) ?? null;
   const hours = replanHours ?? lim.cadenceHours;
   const nextRunAt = new Date(now.getTime() + hours * HOUR);
-  const summary = blocked.length || failed.length ? `Needs attention: ${[...failed, ...blocked].map((t) => `${t.title} — ${t.detail ?? t.status}`).join(' | ')}`.slice(0, 2000) : (learn?.detail ?? 'Cycle finished.');
+  const summary = reading.summary;
+  const brief = (n: { kind: string; needs: string | null; detail: string | null }) => ({ kind: n.kind, needs: n.needs, detail: n.detail });
   await tx
     .update(goalCycles)
-    .set({ status, finishedAt: now, summary, outcome: { measurement: measure?.output ?? null, lessons: learn?.output.lessons ?? [], blocked: blocked.map((t) => ({ kind: t.kind, needs: t.needs, detail: t.detail })) } })
+    .set({ status, finishedAt: now, summary, outcome: { measurement: measure?.output ?? null, lessons: learn?.output.lessons ?? [], blocked: reading.blocked.map(brief), unavailable: reading.unavailable.map(brief), ...(reading.actionStatus ? { actionStatus: reading.actionStatus } : {}) } })
     .where(eq(goalCycles.id, cycle.id));
   const memory = (goal.memory ?? {}) as { triedIdeas?: Record<string, unknown>; lessons?: string[] };
   const decide = tasks.find((t) => t.kind === 'decide');
@@ -186,7 +190,7 @@ async function finishCycle(tx: Tx, tenantId: string, cycle: CycleRow, goal: Goal
       updatedAt: now,
     })
     .where(eq(growthGoals.id, goal.id));
-  await record(tx, tenantId, AUTOPILOT, 'autopilot.cycle.finished', { type: 'goal_cycle', id: cycle.id }, { goalId: goal.id, status, nextRunAt: nextRunAt.toISOString(), blocked: blocked.map((t) => t.kind) });
+  await record(tx, tenantId, AUTOPILOT, 'autopilot.cycle.finished', { type: 'goal_cycle', id: cycle.id }, { goalId: goal.id, status, nextRunAt: nextRunAt.toISOString(), blocked: reading.blocked.map((t) => t.kind), unavailable: reading.unavailable.map((t) => t.kind) });
 }
 
 /** At the target date: one final measurement, then the goal is completed (no more cycles). */

@@ -212,6 +212,10 @@ describe('seven-day content calendar (D-040)', () => {
     );
     expect(early.learning.phase).toBe('exploring');
     expect(early.notes.join(' ')).toMatch(/keeps exploring/);
+    // One sentence: no doubled post count and no stray full stop before the clause (the 'groups., so' typo).
+    expect(early.notes.join(' ')).not.toMatch(/\.,|; \d+ measured posts?;/);
+    const none = planDays(pack, [dayOffset('2026-11-09', 0)], [], opts);
+    expect(none.notes).toEqual(['0 measured posts with complete counters; comparing needs 12 in total and 4 in each of at least two groups, so the calendar keeps exploring.']);
     const hist = simulate('2026-11-02', 28, quizLoved);
     const window = [...Array(7).keys()].map((k) => dayOffset('2026-11-30', k));
     const plan = planDays(pack, window, hist, opts);

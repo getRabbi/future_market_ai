@@ -42,11 +42,11 @@ Not available, so not shown: `utm_content` in any Play report (Play reports UTM 
 
 1. **Service account.** In the Google Cloud console (any project you own), open IAM & Admin › Service accounts › Create service account. No Google Cloud role is needed. Open the account › Keys › Add key › JSON, and download the key file. (If your organization blocks key creation, an admin must allow it for this project.)
 2. **Play permission.** In Play Console › Users and permissions › Invite new users, enter the service account's email (`…@….iam.gserviceaccount.com`). Under Account permissions, tick only **View app information and download bulk reports (read-only)**, shown as "View app information" set to Global. Do not grant release, store presence, financial or admin permissions. Google can take up to 24 hours to apply new access.
-3. **Optional, for app names and vitals.** In the same Google Cloud project, enable the **Google Play Developer Reporting API**. Without it, reports still import; app names and crash/ANR rates are skipped and the account shows a note.
+3. **Optional, for app names and vitals.** In the same Google Cloud project, enable the **Google Play Developer Reporting API**. Without it, reports still import; app names and crash/ANR rates are skipped (never estimated) and the account shows a non-blocking warning with the fix (`warnings` on the account: `PLAY_REPORTING_API_DISABLED`, `PLAY_REPORTING_API_PERMISSION_DENIED` or `PLAY_REPORTING_API_UNAVAILABLE`).
 4. **Report bucket.** In Play Console › Download reports › Statistics, choose **Copy Cloud Storage URI** (it looks like `gs://pubsite_prod_rev_…`).
 5. **Connect.** In FUTUREGROW, open Autopilot › App intelligence › Developer accounts & apps › Connect a developer account. Choose Google Play, paste the URI and select the JSON key file. You must be an owner or admin signed in with two-factor. Access is checked with read-only calls before anything is saved. The key is encrypted server-side and never shown again.
 6. **Apps.** The first sync lists every app found in the bucket and confirms it. An app the key can see only through the API (for example from another developer account) waits for "Report this app". An app already reported by another of your accounts becomes a conflict; resolve it with "Report it from this account". Link apps to brands in the same table.
-7. **Verify one real import.** After the first sync (minutes), open All apps. The app's card shows "Data through <date>", and the detail view lists imported files with status `imported` and coverage `complete` or `partial` for recent months. `GET /v1/app-intelligence/apps/<id>?from=…&to=…` returns the same data. A wrong permission shows `permission_denied` with the fix.
+7. **Verify one real import.** After the first sync (minutes), open All apps. The app's card shows "Reported through <date>", and the detail view lists imported files with status `imported` and coverage `complete` or `partial` for recent months. `GET /v1/app-intelligence/apps/<id>?from=…&to=…` returns the same data. A wrong permission shows `permission_denied` with the fix.
 
 ### App Store Connect
 
@@ -59,6 +59,10 @@ Rotating a Google Play key: Developer accounts & apps › the account › **Repl
 
 Connection errors are specific: `PROVIDER_AUTH_FAILED` (key rejected), `PROVIDER_NOT_FOUND` (bucket), `PROVIDER_PERMISSION_DENIED` (Play permission), `PROVIDER_RATE_LIMITED` (HTTP 429) and `PROVIDER_UNAVAILABLE` (network or Google 5xx). Details carry only the access state, HTTP status and Reporting API state, never key material. A failing optional Reporting API does not block connecting or importing bulk reports. The connection shows `degraded`, and the note says whether the API is disabled in the Cloud project (`SERVICE_DISABLED`) or denied.
 
+## Reporting windows (D-047)
+
+Google posts Play statistics 3 to 7 days late, so a period ending yesterday is never complete. All apps therefore defaults to **Latest 28 reported days** (`GET /v1/app-intelligence/overview?…&window=reported`): the same number of days, ending on the latest day every app in scope has reported. The response states `reportedThrough`, the period actually used and `unpublishedDaysExcluded`. Calendar periods remain available. Totals are unchanged in strictness: a metric is added across apps only when every app reported every day of the period; otherwise the total stays open and `incomplete` names each app and its reported days. Missing days are never filled with zero.
+
 ## Operations
 
 * Worker cron `*/10 * * * * store_reporting_tick` queues each due account (`store_account_sync`, one job key per account). Syncs run daily at 06:00–06:40 UTC. A run imports at most 40 files; history continues in follow-up runs 2 minutes apart.
@@ -69,6 +73,6 @@ Connection errors are specific: `PROVIDER_AUTH_FAILED` (key rejected), `PROVIDER
 ## Status (2026-11-07)
 
 * **Google Play: connected in production** (owner-verified). The EPS TOPIK Bangla app was discovered from the account's report bucket and linked to its brand, and real install reports were imported.
-* **Pending (B-023):** the optional Play Developer Reporting API (app names and vitals) is not usable with the current permission. Bulk reports are unaffected.
+* **Pending (B-023):** the optional Play Developer Reporting API (app names and vitals) is not usable with the current permission. Bulk reports are unaffected; the account and All apps show it as a non-blocking warning with the fix (D-047).
 * **Not connected:** App Store Connect (no iOS app reported yet).
 * **Deferred scope:** per-post install outcomes for Studio optimization need per-post `utm_campaign` links (the EPS program still uses the shared `eps_daily` campaign) and enough reported acquisitions per campaign. Until then, Studio learns from Facebook engagement only, and no post is credited with installs.

@@ -157,6 +157,58 @@ async function brandInputs(t: DbOrTx, pageId: string, now: Date): Promise<{ clai
 
 type PlanRow = typeof contentPlanItems.$inferSelect;
 
+/**
+ * A studio draft belongs to one calendar day. Once that day has passed and the draft never went
+ * to the execution gateway, it is no longer actionable: the post takes the same draft → cancelled
+ * transition as a person discarding it, its plan item becomes skipped, and an audit event records
+ * why. It is "superseded" when the same lesson has since been published by another post of the
+ * program, otherwise "expired". Nothing is deleted, approved or published: the post, its card
+ * asset, its review evidence and the audit history stay. Drafts a person scheduled, and posts
+ * already handed to M23, are never touched.
+ */
+export async function expireStaleDrafts(t: Tx, tenantId: string, now: Date, programId?: string): Promise<{ expired: number; superseded: number }> {
+  const today = localDay(now);
+  const stale = await t
+    .select({ item: contentPlanItems, postId: socialPosts.id })
+    .from(contentPlanItems)
+    .innerJoin(socialPosts, eq(socialPosts.id, contentPlanItems.postId))
+    .where(and(eq(contentPlanItems.status, 'drafted'), lt(contentPlanItems.day, today), eq(socialPosts.status, 'draft'), programId ? eq(contentPlanItems.programId, programId) : undefined))
+    .orderBy(contentPlanItems.day)
+    .for('update');
+  const out = { expired: 0, superseded: 0 };
+  for (const { item, postId } of stale) {
+    const [later] = item.unitId
+      ? await t
+          .select({ id: contentPlanItems.id, day: contentPlanItems.day, postId: contentPlanItems.postId })
+          .from(contentPlanItems)
+          .where(and(eq(contentPlanItems.programId, item.programId), eq(contentPlanItems.unitId, item.unitId), eq(contentPlanItems.status, 'published'), ne(contentPlanItems.id, item.id)))
+          .orderBy(desc(contentPlanItems.day))
+          .limit(1)
+      : [];
+    const reason = later ? `Superseded: the same lesson was published on ${later.day}. This draft for ${item.day} was never submitted, so it is no longer offered for review.` : `Expired: the draft's day (${item.day}) passed before it was submitted, so it is no longer offered for review.`;
+    const [post] = await t
+      .update(socialPosts)
+      .set({ status: 'cancelled', statusReason: reason })
+      .where(and(eq(socialPosts.id, postId), eq(socialPosts.status, 'draft')))
+      .returning({ id: socialPosts.id });
+    if (!post) continue;
+    await t
+      .update(contentPlanItems)
+      .set({ status: 'skipped', statusReason: reason, updatedAt: now })
+      .where(and(eq(contentPlanItems.id, item.id), eq(contentPlanItems.status, 'drafted')));
+    await audit(
+      t,
+      tenantId,
+      AUTOPILOT,
+      later ? 'studio.post.superseded' : 'studio.post.expired',
+      { type: 'social_post', id: postId },
+      { from: 'draft', to: 'cancelled', planItemId: item.id, programId: item.programId, day: item.day, kind: item.kind, unitId: item.unitId, ...(later ? { supersededBy: { planItemId: later.id, postId: later.postId, day: later.day } } : {}) },
+    );
+    out[later ? 'superseded' : 'expired']++;
+  }
+  return out;
+}
+
 const toHistory = (r: PlanRow): HistoryItem => ({ day: r.day, kind: r.kind as PlanKind, unitId: r.unitId, objective: r.objective as Objective, template: r.template, palette: r.palette, variant: r.variant, hookId: r.hookId, promptId: r.promptId, status: r.status, engagement: learningScore(r.metrics) });
 
 /**
@@ -174,6 +226,7 @@ export async function refreshPlan(deps: CoreDeps, tenantId: string, programId: s
     if (!pack) throw invalid(`unknown curriculum pack ${program.pack}`);
     const [conn] = await t.select().from(connections).where(eq(connections.id, program.connectionId));
     if (!conn) throw notFound('connection');
+    await expireStaleDrafts(t, tenantId, now, programId);
     await t
       .update(contentPlanItems)
       .set({ status: 'skipped', statusReason: 'the day passed before the post was drafted', updatedAt: now })

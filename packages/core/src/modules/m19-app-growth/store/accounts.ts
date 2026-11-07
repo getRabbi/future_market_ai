@@ -66,6 +66,43 @@ export const ConnectAccountSchema = z.discriminatedUnion('provider', [ConnectPla
 type AccountRow = typeof storeAccounts.$inferSelect;
 type AppRow = typeof storeApps.$inferSelect;
 
+export interface AccountWarning {
+  code: 'PLAY_REPORTING_API_DISABLED' | 'PLAY_REPORTING_API_PERMISSION_DENIED' | 'PLAY_REPORTING_API_UNAVAILABLE';
+  severity: 'warning';
+  /** The account keeps importing bulk reports; only the optional surface is missing. */
+  blocking: false;
+  title: string;
+  detail: string;
+  action: string;
+}
+
+/**
+ * Non-blocking problems of the optional Play Developer Reporting API (B-023), from the last
+ * sync's health detail (or the connect-time probe before the first sync). Bulk reports keep
+ * importing; app names and vitals (crash and ANR rates) stay unavailable and are never estimated.
+ */
+export function accountWarnings(a: Pick<AccountRow, 'provider' | 'healthDetail'>): AccountWarning[] {
+  const d = (a.healthDetail ?? {}) as { reporting?: string; reportingReason?: string | null; reportingError?: string | null; reportingHttpStatus?: number | null };
+  const state = d.reporting ?? (d.reportingError ? (d.reportingHttpStatus === 403 ? 'permission_denied' : 'error') : 'ok');
+  if (a.provider !== 'google_play' || state === 'ok') return [];
+  const detail = 'Bulk reports (installs, uninstalls, store listing visitors and acquisitions, sources, campaigns, ratings) import normally. App names and crash and ANR rates come only from this API, so they stay unavailable: never estimated and never shown as zero.';
+  const next = 'The next daily sync picks the change up; no new key or role is needed.';
+  if (d.reportingReason === 'SERVICE_DISABLED' || d.reportingReason === 'accessNotConfigured')
+    return [{ code: 'PLAY_REPORTING_API_DISABLED', severity: 'warning', blocking: false, title: 'Optional Google Play Developer Reporting API is not enabled', detail, action: `In Google Cloud, enable the "Google Play Developer Reporting API" in the service account's project. ${next}` }];
+  if (state === 'permission_denied')
+    return [
+      {
+        code: 'PLAY_REPORTING_API_PERMISSION_DENIED',
+        severity: 'warning',
+        blocking: false,
+        title: 'Optional Google Play Developer Reporting API: permission denied',
+        detail,
+        action: `In Google Cloud, enable the "Google Play Developer Reporting API" in the service account's project, and in Play Console › Users and permissions confirm the service account has "View app information" for these apps. ${next}`,
+      },
+    ];
+  return [{ code: 'PLAY_REPORTING_API_UNAVAILABLE', severity: 'warning', blocking: false, title: 'Optional Google Play Developer Reporting API was unavailable at the last sync', detail, action: 'Nothing to do now: the next daily sync tries again.' }];
+}
+
 /** Public view: never includes credentials or raw provider errors with secrets. */
 export function accountView(a: AccountRow) {
   return {
@@ -78,6 +115,7 @@ export function accountView(a: AccountRow) {
     health: a.healthStatus,
     healthDetail: a.healthDetail,
     healthCheckedAt: a.healthCheckedAt?.toISOString() ?? null,
+    warnings: accountWarnings(a),
     settings: AccountSettingsSchema.parse(a.settings ?? {}),
     lastSyncStartedAt: a.lastSyncStartedAt?.toISOString() ?? null,
     lastSyncFinishedAt: a.lastSyncFinishedAt?.toISOString() ?? null,
@@ -116,7 +154,7 @@ type PlayProbe = Awaited<ReturnType<typeof probePlayAccess>>;
  * state, HTTP status and the Reporting API state; never key material.
  */
 function playAccessError(probe: PlayProbe, serviceAccount: string): FgError {
-  const details = { provider: 'google_play', reports: probe.reports, httpStatus: probe.details.reportsHttpStatus ?? null, reporting: probe.reporting, reportingError: probe.details.reportingError ?? null };
+  const details = { provider: 'google_play', reports: probe.reports, httpStatus: probe.details.reportsHttpStatus ?? null, reporting: probe.reporting, reportingError: probe.details.reportingError ?? null, reportingReason: probe.details.reportingReason ?? null };
   switch (probe.reports) {
     case 'auth_failed':
       return new FgError('PROVIDER_AUTH_FAILED', 'Google rejected this service account key (deleted, disabled or rotated). Create a new JSON key for the service account and try again.', 422, details);

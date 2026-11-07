@@ -121,9 +121,11 @@ export function learnFrom(history: HistoryItem[]): Learning {
   const byKind = kind.arms.map((a) => ({ kind: a.arm, posts: a.posts, mean: a.mean, lift: a.posts >= MIN_POSTS_PER_ARM && overall > 0 ? Math.round(((a.mean - overall) / overall) * 100) / 100 : null, low: a.low, high: a.high, pBest: a.pBest }));
   const phase = kind.verdict === 'clear_difference' ? 'adapting' : 'exploring';
   const name = (k: string) => KIND_NAME[k as PlanKind] ?? k;
+  // The comparison's own note repeats the post count and ends a sentence; keep only its requirement.
+  const requirement = kind.note.replace(/^\d+ measured posts?; /, '').replace(/\.\s*$/, '');
   const notes =
     phase === 'exploring'
-      ? [`${measured.length} measured post${measured.length === 1 ? '' : 's'} with complete counters; ${kind.verdict === 'insufficient_data' ? kind.note : 'no lesson type is ahead with 95% probability yet'}, so the calendar keeps exploring.`]
+      ? [`${measured.length} measured post${measured.length === 1 ? '' : 's'} with complete counters; ${kind.verdict === 'insufficient_data' ? requirement : 'no lesson type is ahead with 95% probability yet'}, so the calendar keeps exploring.`]
       : [`${name(kind.best!)} is ahead of ${name(kind.worst!)} with ${Math.round(kind.pBestOverWorst! * 100)}% posterior probability on ${measured.length} measured posts.`, 'Lesson types follow the weekday, so a difference can also reflect the day: it is an association, not a causal effect.'];
   return { measuredPosts: measured.length, phase, byKind, notes, comparisons: [kind, ...others] };
 }

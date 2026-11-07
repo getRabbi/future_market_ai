@@ -182,6 +182,36 @@ export function shortId(id: unknown): string {
   return typeof id === 'string' && id.length > 12 ? `${id.slice(0, 8)}…` : String(id ?? '');
 }
 
+/** A calendar day (YYYY-MM-DD, as reported) for people: "Nov 2, 2026". The day is not shifted by the viewer's time zone. */
+export function formatDay(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? day : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+const ISO_IN_TEXT = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\b/g;
+const UUID_IN_TEXT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const SYSTEM_ACTORS: Record<string, string> = { autopilot: 'the Autopilot', 'content-studio': 'the content studio', scheduler: 'the scheduler' };
+
+/**
+ * Explanatory text from the API as people read it: timestamps in local date and time, actor
+ * references ("user:…", "system:…") as words, and technical ids left out of the sentence. The
+ * stored text is unchanged; the ids stay in the record (Advanced workspace) for diagnostics.
+ */
+export function readableText(text: string, opts: { userId?: string } = {}): string {
+  return text
+    .replace(ISO_IN_TEXT, (iso) => {
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    })
+    .replace(/\buser:([A-Za-z0-9_-]{6,})/g, (_, id: string) => (opts.userId && id === opts.userId ? 'you' : 'a team member'))
+    .replace(/\bsystem:([a-z][a-z0-9-]*)/g, (_, id: string) => SYSTEM_ACTORS[id] ?? 'the system')
+    .replace(new RegExp(`\\s*\\((?:[^()]*?\\s)?${UUID_IN_TEXT.source}\\)`, 'gi'), '')
+    .replace(UUID_IN_TEXT, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([.,;:])/g, '$1')
+    .trim();
+}
+
 export function relativeTime(v: unknown, now = Date.now()): string {
   const t = new Date(String(v)).getTime();
   if (Number.isNaN(t)) return '';
