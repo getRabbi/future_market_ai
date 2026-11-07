@@ -1,6 +1,6 @@
 import { type Db, opsNotifications, withSystem } from '@futuregrow/db';
 import { assertWebhookUrl, type Logger, type OpsAlert, webhookFormat, webhookPayload } from '@futuregrow/observability';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 /**
  * Operations monitoring (free-tier): component status for /statusz and the external uptime
@@ -248,7 +248,18 @@ export async function resolve(db: Db, notifier: Notifier, alert: OpsAlert, now =
   try {
     await notifier.send({ ...alert, status: 'recovery' });
     return 'sent';
-  } catch {
+  } catch (err) {
+    // Undelivered recovery: reopen so a later run announces it (otherwise the channel keeps showing
+    // an open problem), at most MAX_DELIVERY_ATTEMPTS times. A recurrence since then wins.
+    const failures = Number(open.payload.recoveryFailures ?? 0) + 1;
+    if (failures < MAX_DELIVERY_ATTEMPTS) {
+      await withSystem(db, 'system:ops-monitor', (tx) =>
+        tx
+          .update(opsNotifications)
+          .set({ resolvedAt: null, payload: { ...open.payload, recoveryFailures: failures }, lastError: `recovery: ${err instanceof Error ? err.message.slice(0, 480) : String(err)}` })
+          .where(and(eq(opsNotifications.dedupKey, alert.dedupKey), eq(opsNotifications.resolvedAt, now))),
+      );
+    }
     return 'failed';
   }
 }

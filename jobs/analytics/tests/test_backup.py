@@ -99,3 +99,18 @@ def test_damaged_archive_is_reported_not_raised(tmp_path):
     _sidecar, _inner, _members, problems = _open_archive(store, "c.fgb")
     assert any("SHA-256" in p for p in problems)
     assert any("archive is unreadable" in p for p in problems)
+
+
+def test_restore_drill_refuses_the_source_database(monkeypatch, capsys):
+    """A drill restores into a separate, empty database; never into DATABASE_URL itself."""
+    from futuregrow_analytics.backup import main, same_database
+
+    prod = "postgresql://app:pw@primary.postgres.internal:5432/futuregrow?sslmode=verify-full"
+    assert same_database(prod, "postgres://other:x@PRIMARY.postgres.internal/futuregrow")
+    assert same_database("host=db port=5432 dbname=fg user=a", "postgresql://b@db/fg")
+    assert not same_database(prod, "postgresql://app:pw@primary.postgres.internal:5432/fg_restore_drill")
+    assert not same_database(prod, "postgresql://postgres@localhost:54331/futuregrow")
+
+    monkeypatch.setenv("DATABASE_URL", prod)
+    assert main(["verify", "--restore-into", "postgresql://app:pw@primary.postgres.internal/futuregrow"]) == 2
+    assert "refusing" in capsys.readouterr().err

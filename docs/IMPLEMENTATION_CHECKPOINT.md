@@ -25,7 +25,7 @@ Final code completion pass (D-046) on branch `fix/final-completion`, from `origi
 
 ## Preserved pre-existing changes
 
-These four files were dirty on entry and are deliberately not committed (an earlier owner instruction keeps the uptime-worker changes out of commits):
+These files were dirty on entry and were deliberately not committed at the time. The three uptime-worker files have since been committed (`00ea40c`, 2026-11-07, at the owner's request) and go to `main` through PR #25; only `docs/D040_CONTENT_STUDIO.md` stays uncommitted on purpose:
 
 - `docs/D040_CONTENT_STUDIO.md`
 - `infra/cloudflare/uptime-worker/src/monitor.ts` (probe `/login/`: live `/login` answers 308 and the probe uses `redirect: 'manual'`, so the committed `/login` probe would alert falsely; its 5 tests pass with the local change)

@@ -101,7 +101,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Controlled beta deployed 2026-10-20 (Northflank Sandbox + Cloudflare Pages/R2; B-001, B-002, B-004, B-018 resolved).
 - [x] Change password with per-user rate limit, other sessions revoked, audit; `/v1/me` shows email and last change.
 - [x] PostgreSQL TLS `verify-full` in Node services and Python jobs; migrations serialised with an advisory lock.
-- [x] Ops monitoring: public `/statusz`, worker cron `ops_monitor`, operator alerts through one webhook (`ALERT_WEBHOOK_URL`), API 5xx/crash alerts, Cloudflare Workers uptime probe (`infra/cloudflare/uptime-worker`, not yet deployed).
+- [x] Ops monitoring: public `/statusz`, worker cron `ops_monitor`, operator alerts through one webhook (`ALERT_WEBHOOK_URL`), API 5xx/crash alerts, Cloudflare Workers uptime probe (`infra/cloudflare/uptime-worker`, deployed 2026-10-30 as `futuregrow-uptime`; source synced in PR #25).
 - [x] FG-P2-001 controls (above) with Governance panels for AI spending and API lifecycle; routes `/v1/governance/ai-budget`, `/v1/governance/api-lifecycle`, `PUT /v1/platform/api-lifecycle`.
 - [x] Playwright browser E2E (B-017).
 - [x] Hosted model providers (B-003, partly): OpenRouter, OpenAI, Gemini and Groq through one adapter, verified live with the agents' strict schemas; gpt-oss-120b on Groq and Claude Opus 5.5 via OpenRouter approved in production with a $25/month default tenant limit.
@@ -162,6 +162,13 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Home dashboard per the approved reference (journey stepper, at a glance, next best action, performance chart, blockers, system health, growth summary, activity, completions); Journey, Setup, Goals (filters, details, execution timeline, decisions, KPI chart), Autopilot control center, Content Calendar, Results, Insights, Incidents & Alerts, Activity log, All tools.
 - [x] Accessible chart component with honest gaps, partial periods and table alternative; global Ctrl+K search; read-only `GET /v1/system/status`.
 - [x] Unit tests (navigation coverage, next-best-action priority, blocker levels, chart rules, search) and browser E2E for the 15 UX acceptance scenarios (docs/UX_UNIFIED.md). Local results 2026-11-07: TypeScript 506/506 (57 files), browser E2E 17/17, typecheck and lint clean; visual QA against the reference at 1586/1440/390/320 px.
+
+### P0 production reliability and security audit (2026-11-07) — ◐ (code and docs done; alert destination and production restore drill need the owner)
+- [x] Live baseline: api, worker, analytics-job and media-job on `f612bfe`; `/statusz` all ok; Pages and API security headers (hashed CSP, HSTS, frame denial, nosniff) present.
+- [x] Uptime Worker: deployed bundle byte-identical to the synced source (PR #25: `/login/` probe, KV id, Workers Logs, redirect tests); cron `*/5`, no route, no workers.dev URL; all four checks healthy in KV state.
+- [x] Alerting: recoveries whose delivery failed are now retried (up to 5); `scripts/alert-test.ts` tests delivery through the same code without an outage. ⛔ No webhook configured anywhere (B-024).
+- [x] Backups: 18 daily encrypted archives, newest 21 h old; key-less integrity check of the newest (archive + 140 member hashes, AES-GCM envelope, manifests) passed; 35-day R2 expiry confirmed. Restore drill now refuses the source database and has a post-restore checker (`scripts/restore-drill-check.ts`: audit chains, RLS separation, nothing queued), CI-tested; runbook commands rehearsed locally. ⛔ Production-archive drill pending the owner (B-025).
+- [x] Security, read-only on live (smoke org): private routes 401 without a session (proxy and API origin), other tenant 403, platform routes 403 for a tenant admin, TOTP required at sign-in, audit chain valid (573), no engaged kill switches, no open incidents or unacknowledged critical alerts, no escalated actions. Model registry: only Groq `gpt-oss-120b` approved; OpenRouter Opus not approved (revocation of 2026-10-27 holds).
 
 **Capability status (2026-11-07):**
 

@@ -155,6 +155,44 @@ describe('ops monitor (operator alerts)', () => {
     const [row] = await withSystem(db(), 'test', (tx) => tx.select().from(opsNotifications).where(sql`${opsNotifications.dedupKey} = 'component:worker'`));
     expect(row).toMatchObject({ delivered: true, attempts: 2, lastError: null });
   });
+
+  it('retries an undelivered recovery announcement, up to five times', async () => {
+    const n = new RecordingNotifier();
+    const t0 = new Date();
+    await heartbeat(minutesAgo(t0, 30));
+    await runOpsMonitor(db(), n, { environment: 'test', now: t0 });
+    expect(n.take('component:worker')).toHaveLength(1);
+
+    // The worker recovers while the webhook is down: the recovery must not be lost.
+    const t1 = new Date(t0.getTime() + 5 * 60_000);
+    await heartbeat(t1);
+    n.fail = true;
+    expect((await runOpsMonitor(db(), n, { environment: 'test', now: t1 })).failed).toBe(1);
+    const row = async () => (await withSystem(db(), 'test', (tx) => tx.select().from(opsNotifications).where(sql`${opsNotifications.dedupKey} = 'component:worker'`)))[0]!;
+    expect(await row()).toMatchObject({ resolvedAt: null, lastError: 'recovery: webhook down', payload: expect.objectContaining({ recoveryFailures: 1 }) });
+
+    n.fail = false;
+    const t2 = new Date(t1.getTime() + 60_000);
+    await heartbeat(t2);
+    await runOpsMonitor(db(), n, { environment: 'test', now: t2 });
+    await runOpsMonitor(db(), n, { environment: 'test', now: new Date(t2.getTime() + 60_000) });
+    const worker = n.take('component:worker');
+    expect(worker.map((a) => a.status)).toEqual(['problem', 'recovery']);
+    expect((await row()).resolvedAt).not.toBeNull();
+
+    // A webhook that stays down: the recovery is given up after five failed attempts.
+    await heartbeat(minutesAgo(t2, 30));
+    await runOpsMonitor(db(), n, { environment: 'test', now: t2 });
+    n.fail = true;
+    let t = t2;
+    for (let i = 0; i < 7; i++) {
+      t = new Date(t.getTime() + 60_000);
+      await heartbeat(t);
+      await runOpsMonitor(db(), n, { environment: 'test', now: t });
+    }
+    expect((await row()).resolvedAt).not.toBeNull();
+    expect((await row()).payload).toMatchObject({ recoveryFailures: 4 });
+  });
 });
 
 describe('webhook delivery', () => {

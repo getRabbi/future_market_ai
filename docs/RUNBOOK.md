@@ -72,8 +72,16 @@ An action in `ESCALATED` means the provider call may or may not have been applie
 
 * The analytics job writes an encrypted logical backup to R2 every 24 h (`FG_BACKUP_INTERVAL_HOURS`) and verifies it (hashes, decrypt, row counts).
 * Manual backup: run the analytics-job image with command `python -m futuregrow_analytics.backup create`.
-* **Restore drill (monthly):** create an empty database, run migrations with the same release (`node migrate.mjs` in the api image with `DATABASE_URL` pointing at it), then
-  `python -m futuregrow_analytics.backup verify --restore-into <empty-db-url>` — counts must match and the run is recorded as `restore_drill`.
+* Backups are encrypted per table member (AES-256-GCM, AAD = object key and table) with a plaintext manifest of hashes and row counts only; R2 deletes `backups/` objects after 35 days (bucket lifecycle). Without `FG_BACKUP_KEY` anyone with bucket read access can still check integrity (archive and member SHA-256, manifests agree), not content.
+* **Restore drill (monthly; needs the owner's go-ahead, because it decrypts production data):** restore into a **disposable, isolated** database, never into the production addon. On the free tier that is a local PostgreSQL 17 on the owner's machine (no Northflank resource is created or changed):
+  1. Check out the commit that is deployed (`deployedSHA` of `api`); its migration count must equal the archive's (`migrations` in the sidecar manifest).
+  2. Start a throwaway cluster in its own folder and port (not the dev database in `.data/pg-dev`): `FG_DEV_PG_DIR=pg-restore-drill FG_DEV_PG_PORT=54340 npm run dev:db` (leave it running; it creates and migrates `futuregrow`, used below only as the drill log). In a second shell create the empty target and migrate it:
+     `node -e "const c=new (require('pg').Client)('postgres://postgres:futuregrow-dev@localhost:54340/postgres');c.connect().then(()=>c.query('create database fg_restore_drill')).then(()=>c.end())"`, then `DATABASE_URL=postgres://postgres:futuregrow-dev@localhost:54340/fg_restore_drill npm run db:migrate`. `<pw>` below is `futuregrow-dev`.
+  3. In a shell that has **no** production `DATABASE_URL`, `FG_SECRETS_KEY` or provider keys, set `DATABASE_URL=postgres://postgres:<pw>@localhost:54340/futuregrow` (receives the `backup_runs` rows), `R2_ENDPOINT`, `R2_BACKUP_BUCKET=futuregrow-backups`, `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` (read access is enough) and `FG_BACKUP_KEY` from the password manager, then time:
+     `jobs/analytics/.venv/Scripts/python -m futuregrow_analytics.backup verify --restore-into postgres://postgres:<pw>@localhost:54340/fg_restore_drill` (add `--key backups/…fgb` for a specific archive). It refuses a target that is the `DATABASE_URL` database or not empty. Pass = exit 0, `restoreDrill.ok: true`, `mismatched: {}`.
+  4. `FG_DRILL_DATABASE_URL=postgres://postgres:<pw>@localhost:54340/fg_restore_drill npx tsx scripts/restore-drill-check.ts` (read-only): every tenant's audit chain valid, each tenant sees only its own rows under the `fg_tenant` RLS role, no queued jobs. Pass = exit 0, `ok: true`.
+  5. Record the archive key, durations, table/row counts and both results (PROGRESS, BLOCKERS B-025), then stop the cluster (Ctrl+C) and delete `.data/pg-restore-drill` and the shell variables. The decrypted data existed only in that cluster.
+  The restored copy is inert by construction: only `public` tables are restored (no Graphile queue), nothing runs without an api/worker attached, and stored connector credentials stay encrypted without `FG_SECRETS_KEY`. Never attach an api, worker or job to it and never give it production provider keys.
 * **Real restore:** stop api/worker (scale to 0), restore into a fresh migrated database with `python -m futuregrow_analytics.backup restore --into <url>`, verify audit chains (`GET /v1/governance/audit/verify` per tenant after pointing the api at it), then switch `DATABASE_URL` and start services. Graphile queue state is not restored; the watchdog re-enqueues approved/unverified actions and pending webhooks.
 * Managed addon backups (when the plan provides them) are the primary point-in-time mechanism; logical backups are the provider-independent copy.
 
@@ -87,7 +95,13 @@ CI must be green (tests, lint, generated docs current, SBOM policy, image builds
 
 ## 12. Operator alerts and uptime
 
-Alerts go to one webhook (`ALERT_WEBHOOK_URL`; DEPLOYMENT §9). Component problems are repeated every 6 h while they last and their recovery is announced once; other alerts are sent once.
+Alerts go to one webhook (`ALERT_WEBHOOK_URL`; DEPLOYMENT §9). Component problems are repeated every 6 h while they last and their recovery is announced once; other alerts are sent once. Undelivered announcements (problems and recoveries) are retried on later runs, up to 5 attempts each. Without a webhook nothing reaches a person: `GET /v1/system/status` then shows `alertDelivery: "not_configured"` and alerts are log lines only (api/worker logs, Workers Logs for the uptime Worker).
+
+**Setting up the channel (owner, free):** Discord: Server settings → Integrations → Webhooks → New webhook → pick a private channel → Copy webhook URL. Slack: create an app at api.slack.com/apps → Incoming Webhooks → on → Add New Webhook to Workspace → pick a channel → copy the URL. Treat the URL as a secret (anyone holding it can post); never paste it into chat or a commit. Then:
+1. Northflank → secret group `futuregrow-runtime` → add `ALERT_WEBHOOK_URL` (and optionally `ALERT_ENVIRONMENT`) → save → restart `api` and `worker` (saving does not restart them).
+2. Uptime Worker: `cd infra/cloudflare/uptime-worker && npx wrangler@4.147.0 secret put ALERT_WEBHOOK_URL` (paste at the prompt; keeps the deployed code).
+3. Check: `GET /v1/system/status` (signed in) shows `alertDelivery: "configured"`; the Worker's secret list shows `ALERT_WEBHOOK_URL`.
+4. Delivery test without an outage: `ALERT_WEBHOOK_URL=<url> npx tsx scripts/alert-test.ts --uptime` on the owner's machine sends, through the same code, one labelled test alert (backend path) and an uptime problem plus its recovery (the API address is swapped for an unreachable one in that local run only). Expect 5 messages marked `ALERT TEST, not an incident`. Clear the variable afterwards.
 
 | Alert | First steps |
 |---|---|
