@@ -106,7 +106,7 @@ Alerts go to one webhook (`ALERT_WEBHOOK_URL`; DEPLOYMENT §9). Component proble
 | Alert | First steps |
 |---|---|
 | Component stale/failing (`database`, `worker`, `backups`, `analytics`/`media` queues) | `GET /statusz` for the component detail; Northflank → service or job logs. A stale worker means no cron or queue processing: restart `worker`. Backups: RUNBOOK §9. |
-| Uptime probe: web, proxy or API down (Cloudflare Worker `futuregrow-uptime`) | Fires after 2 consecutive failed probes. Web/proxy only → Cloudflare Pages; API too → Northflank `api` status and logs. |
+| Uptime probe: web, proxy or API down (Cloudflare Worker `futuregrow-uptime`) | Fires after 2 consecutive failed probes. Web/proxy only → Cloudflare Pages; API too → Northflank `api` status and logs. A `components` failure is a warning (degraded `/statusz`), but critical with `database unavailable` in the text: `/healthz` stays 200 while the database is down, so this is the database outage page; a component warning that turns critical is announced at once. |
 | Critical tenant alert, sev1/sev2 incident | Handle as §10; the control plane has the detail. |
 | Graphile job exhausted its retries | Worker logs for the task; fix the cause, then re-propose or re-run (the watchdog re-enqueues approved/unverified actions). |
 | API 5xx or process crash | Request id in the alert → api logs. A crash exits non-zero and Northflank restarts the container. |

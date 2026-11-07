@@ -20,7 +20,7 @@ const HOOK = 'https://hooks.slack.com/services/T/B/secret';
 
 /** A programmable internet: each URL answers from the current scenario. */
 function fakeNet() {
-  const scenario = { web: true, proxy: true, api: true, status: 'ok' as 'ok' | 'degraded', hook: true };
+  const scenario = { web: true, proxy: true, api: true, status: 'ok' as 'ok' | 'degraded' | 'dbdown', hook: true };
   const posts: { url: string; body: { text?: string } }[] = [];
   const f = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -36,6 +36,7 @@ function fakeNet() {
     }
     if (url === `${API}/statusz`) {
       if (!scenario.api) throw new TypeError('fetch failed');
+      if (scenario.status === 'dbdown') return new Response('{"ok":false,"components":{"database":{"state":"failing"},"worker":{"state":"unknown"},"backups":{"state":"unknown"}}}', { status: 503 });
       return scenario.status === 'ok' ? new Response('{"ok":true,"components":{"database":{"state":"ok"},"backups":{"state":"not_configured"}}}', { status: 200 }) : new Response('{"ok":false,"components":{"database":{"state":"ok"},"worker":{"state":"stale"},"backups":{"state":"failing"}}}', { status: 503 });
     }
     throw new Error(`unexpected ${url}`);
@@ -114,6 +115,62 @@ describe('uptime monitor (Cloudflare Worker)', () => {
     const second = await runMonitor(env, { fetch: net.f, failureThreshold: 1 });
     expect(second.delivered).toBe(1);
     expect(net.posts.at(-1)!.body.text).toContain('web check failing');
+  });
+
+  it('retries an undelivered recovery on later runs, up to five attempts', async () => {
+    const net = fakeNet();
+    const env: MonitorEnv = { WEB_URL: WEB, API_URL: API, ALERT_WEBHOOK_URL: HOOK, STATE: new MemoryKv() };
+    const run = () => runMonitor(env, { fetch: net.f, failureThreshold: 1 });
+    net.scenario.web = false;
+    expect((await run()).delivered).toBe(1);
+
+    // Back up while the webhook is down: the recovery stays pending instead of being lost.
+    net.scenario.web = true;
+    net.scenario.hook = false;
+    const missed = await run();
+    expect(missed.alerts.map((a) => a.status)).toEqual(['recovery']);
+    expect(missed.delivered).toBe(0);
+    net.scenario.hook = true;
+    expect((await run()).delivered).toBe(1);
+    expect(net.posts.at(-1)!.body.text).toContain('RESOLVED: web is back');
+    expect((await run()).alerts).toHaveLength(0);
+
+    // A webhook that stays down: five attempts, then the recovery is given up.
+    net.scenario.web = false;
+    await run();
+    net.scenario.web = true;
+    net.scenario.hook = false;
+    const attempts: number[] = [];
+    for (let i = 0; i < 7; i++) attempts.push((await run()).alerts.length);
+    expect(attempts).toEqual([1, 1, 1, 1, 1, 0, 0]);
+  });
+
+  it('reports a database outage as critical, escalating an earlier component warning at once', async () => {
+    const net = fakeNet();
+    const env: MonitorEnv = { WEB_URL: WEB, API_URL: API, ALERT_WEBHOOK_URL: HOOK, STATE: new MemoryKv() };
+    let now = new Date('2026-11-07T20:00:00Z');
+    const run = () => runMonitor(env, { fetch: net.f, failureThreshold: 1, now: () => now });
+    const head = (i: number) => net.posts[i]!.body.text?.split('\n')[0];
+
+    net.scenario.status = 'degraded';
+    await run();
+    expect(head(0)).toBe('🟠 WARNING: components check failing');
+    // /healthz stays 200 (liveness only) while /statusz reports the database failing.
+    now = new Date(now.getTime() + 5 * 60_000);
+    net.scenario.status = 'dbdown';
+    const r = await run();
+    expect(r.results.find((c) => c.name === 'api')).toMatchObject({ ok: true });
+    expect(head(1)).toBe('🔴 CRITICAL: components check failing');
+    expect(net.posts[1]!.body.text).toContain('database unavailable; degraded: database=failing');
+    now = new Date(now.getTime() + 5 * 60_000);
+    await run();
+    expect(net.posts).toHaveLength(2);
+
+    // A fresh state sees the outage as critical straight away.
+    const fresh = fakeNet();
+    fresh.scenario.status = 'dbdown';
+    await runMonitor({ ...env, STATE: new MemoryKv() }, { fetch: fresh.f, failureThreshold: 1 });
+    expect(fresh.posts[0]!.body.text?.split('\n')[0]).toBe('🔴 CRITICAL: components check failing');
   });
 
   it('probes the canonical URLs, so the live /login -> /login/ redirect never reads as an outage', async () => {
