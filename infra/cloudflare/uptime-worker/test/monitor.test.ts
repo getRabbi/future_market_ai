@@ -116,6 +116,31 @@ describe('uptime monitor (Cloudflare Worker)', () => {
     expect(net.posts.at(-1)!.body.text).toContain('web check failing');
   });
 
+  it('probes the canonical URLs, so the live /login -> /login/ redirect never reads as an outage', async () => {
+    const net = fakeNet();
+    const requested: string[] = [];
+    // Production answers /login with 308 to /login/; redirects are not followed (redirect: manual),
+    // so a probe of a redirecting URL would fail every run.
+    const live = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(url);
+      if (url === `${WEB}/login`) return new Response(null, { status: 308, headers: { location: `${WEB}/login/` } });
+      return net.f(input, init);
+    }) as unknown as typeof fetch;
+    const r = await runMonitor({ WEB_URL: `${WEB}/`, API_URL: `${API}/`, ALERT_WEBHOOK_URL: HOOK, STATE: new MemoryKv() }, { fetch: live, failureThreshold: 1 });
+    expect(requested.sort()).toEqual([`${API}/healthz`, `${API}/statusz`, `${WEB}/login/`, `${WEB}/v1/openapi.json`]);
+    expect(r.results.every((c) => c.ok)).toBe(true);
+    expect(net.posts).toHaveLength(0);
+  });
+
+  it('treats an unexpected redirect as a failed check', async () => {
+    const net = fakeNet();
+    const redirecting = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === `${WEB}/login/` ? new Response(null, { status: 302, headers: { location: `${WEB}/maintenance` } }) : net.f(input, init)) as unknown as typeof fetch;
+    const r = await runMonitor({ WEB_URL: WEB, API_URL: API, STATE: new MemoryKv() }, { fetch: redirecting, failureThreshold: 1 });
+    expect(r.results.find((c) => c.name === 'web')).toMatchObject({ ok: false, detail: expect.stringContaining('unexpected status (HTTP 302') });
+  });
+
   it('runs from the scheduled handler', async () => {
     const net = fakeNet();
     const original = globalThis.fetch;
