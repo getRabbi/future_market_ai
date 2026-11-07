@@ -24,38 +24,45 @@ export interface Task {
 
 export interface Stage {
   n: number;
+  /** Stable key (the home stepper and links use it). */
+  key: StageKey;
   title: string;
+  /** Short line under the step in the stepper. */
+  label: string;
   tagline: string;
+  /** Pages where this step's tasks are done. */
   sections: string[];
   tasks: Task[];
 }
 
+export type StageKey = 'setup' | 'connect' | 'plan' | 'create' | 'launch' | 'measure' | 'improve';
+
 const ADMINS = ['owner', 'admin'];
 
+/**
+ * The seven product steps (D-048) over the same 18 live-checked tasks as before; only the grouping
+ * changed. Rank thresholds are frozen below, so regrouping never changes anyone's rank.
+ */
 export const STAGES: Stage[] = [
   {
     n: 1,
-    title: 'Secure your workspace',
-    tagline: 'Two-factor sign-in and a second person, so every consequential action gets a real review.',
-    sections: ['settings'],
+    key: 'setup',
+    title: 'Setup',
+    label: 'Configure workspace',
+    tagline: 'Two-factor sign-in, a second approver, and your rules for what may run on its own.',
+    sections: ['settings', 'governance'],
     tasks: [
       { id: 'mfa', title: 'Turn on two-factor sign-in', why: 'Approvals, kill switches, policy changes and connections all require a two-factor session.', how: 'Two-factor authentication → Turn on two-factor, scan the QR code with an authenticator app and enter its code.', section: 'settings', xp: 20 },
       { id: 'team', title: 'Add a teammate who can approve', why: 'Whoever proposes an action can never approve it, so you need at least two people.', how: 'Members → Invite someone with the approver role; it counts once they join.', section: 'settings', xp: 20, roles: ADMINS },
-    ],
-  },
-  {
-    n: 2,
-    title: 'Set the guardrails',
-    tagline: 'Decide what may run on its own, within which limits, and what always needs a human.',
-    sections: ['governance', 'audit'],
-    tasks: [
       { id: 'policy', title: 'Configure the autonomy policy', why: 'Until it is configured, every consequential action waits for human approval.', how: 'Autonomy policy → choose who approves each kind of action, tick “Policy is on”, then Save policy.', section: 'governance', xp: 30, roles: ADMINS },
       { id: 'aiLimit', title: 'Set a monthly AI spending limit', why: 'Agents abstain instead of overspending once the limit would be exceeded.', how: 'Autonomy policy → Limits → Monthly AI spending limit, then Save policy.', section: 'governance', xp: 10, roles: ADMINS },
     ],
   },
   {
-    n: 3,
-    title: 'Connect your channels',
+    n: 2,
+    key: 'connect',
+    title: 'Connect',
+    label: 'Link your channels',
     tagline: 'Link the accounts FUTUREGROW reads from and acts on, and prove the credentials work.',
     sections: ['connections'],
     tasks: [
@@ -64,56 +71,69 @@ export const STAGES: Stage[] = [
     ],
   },
   {
-    n: 4,
-    title: 'Build your ground truth',
-    tagline: 'Evidence, approved claims and consented customer data that every later step relies on.',
-    sections: ['evidence', 'knowledge', 'customers'],
+    n: 3,
+    key: 'plan',
+    title: 'Plan',
+    label: 'Evidence, claims & ideas',
+    tagline: 'Evidence and approved claims, the market, and ideas turned into decisions you can act on.',
+    sections: ['evidence', 'knowledge', 'market', 'brain'],
     tasks: [
       { id: 'evidence', title: 'Admit your first evidence', why: 'Ideas, claims and decisions must trace back to evidence with known rights and freshness.', how: 'Evidence → Add evidence: what it is, where it comes from and whether you may use it.', section: 'evidence', xp: 20 },
       { id: 'claim', title: 'Approve a product claim', why: 'Copy, briefs and templates may only state claims that were approved against evidence.', how: 'Claims step → Propose a claim and pick its evidence; a colleague approves it.', section: 'knowledge', xp: 20 },
-      { id: 'customerData', title: 'Start collecting first-party data', why: 'Audiences, journeys and forecasts are built on consented events from your own product.', how: 'Collect customer data → Create a key, then send events from your site or app.', section: 'customers', xp: 20 },
-    ],
-  },
-  {
-    n: 5,
-    title: 'Discover opportunities',
-    tagline: 'Watch the market, measure what matters and turn evidence into ranked ideas and decisions.',
-    sections: ['market', 'analytics', 'brain', 'audiences'],
-    tasks: [
       { id: 'competitor', title: 'Track a competitor', why: 'Lawful competitor observations feed the idea backlog and feature-gap analysis.', how: 'Competitors → Add a competitor.', section: 'market', xp: 10 },
-      { id: 'series', title: 'Define a KPI metric series', why: 'Forecasts, experiments and decisions are measured against these series.', how: 'Metrics → Define a metric.', section: 'analytics', xp: 20 },
       { id: 'idea', title: 'Generate growth ideas', why: 'The AI proposes evidence-backed ideas and abstains when the evidence is thin.', how: 'Ideas → Generate ideas with AI.', section: 'market', xp: 20 },
       { id: 'decision', title: 'Turn an idea into a decision', why: 'Decisions carry expected value and uncertainty; accepting one proposes actions, it never runs them.', how: 'Decisions → Propose a decision from a queued idea.', section: 'brain', xp: 30 },
     ],
   },
   {
-    n: 6,
-    title: 'Create & test',
-    tagline: 'Produce rights-cleared creative and test it properly before scaling anything.',
-    sections: ['creative', 'assets', 'offers', 'personas', 'experiments'],
+    n: 4,
+    key: 'create',
+    title: 'Create',
+    label: 'Prepare content',
+    tagline: 'Rights-cleared creative and briefs where every message maps to an approved claim.',
+    sections: ['creative', 'assets'],
     tasks: [
       { id: 'brief', title: 'Generate a creative brief', why: 'Briefs map every message to an approved claim, so creative stays truthful.', how: 'Briefs → Draft a brief with AI.', section: 'creative', xp: 20 },
       { id: 'asset', title: 'Upload source media', why: 'Only assets with a complete rights manifest become publish-eligible.', how: 'Upload source media → choose a file → Upload.', section: 'assets', xp: 10 },
-      { id: 'experiment', title: 'Design an experiment', why: 'Pre-registered experiments with SRM checks tell you what actually worked.', how: 'Experiments → Design an experiment.', section: 'experiments', xp: 30 },
+    ],
+  },
+  {
+    n: 5,
+    key: 'launch',
+    title: 'Launch',
+    label: 'Publish & verify',
+    tagline: 'Publish through the channels, approve the exact action, and count it only once it is verified.',
+    sections: ['social', 'approvals'],
+    tasks: [
+      { id: 'launch', title: 'Schedule a post or a journey', why: 'Channel work is proposed as an action and published only through the approval flow.', how: 'Posts → Schedule a post, or Lifecycle messaging → New journey.', section: 'social', xp: 30 },
+      { id: 'verified', title: 'Get your first VERIFIED action', why: 'Success means an independent read-back confirmed the result, never just a 200 response.', how: 'Approvals → a different person approves the exact action.', section: 'approvals', xp: 50 },
+    ],
+  },
+  {
+    n: 6,
+    key: 'measure',
+    title: 'Measure',
+    label: 'Track results & learn',
+    tagline: 'KPI series and consented first-party data, so results are measured instead of assumed.',
+    sections: ['analytics', 'customers'],
+    tasks: [
+      { id: 'series', title: 'Define a KPI metric series', why: 'Forecasts, experiments and decisions are measured against these series.', how: 'Metrics → Define a metric.', section: 'analytics', xp: 20 },
+      { id: 'customerData', title: 'Start collecting first-party data', why: 'Audiences, journeys and forecasts are built on consented events from your own product.', how: 'Collect customer data → Create a key, then send events from your site or app.', section: 'customers', xp: 20 },
     ],
   },
   {
     n: 7,
-    title: 'Launch & verify',
-    tagline: 'Publish through the channels, approve the exact action, and count it only once it is verified.',
-    sections: ['social', 'ads', 'lifecycle', 'discovery', 'app', 'conversations', 'creators'],
-    tasks: [
-      { id: 'launch', title: 'Schedule a post or a journey', why: 'Channel work is proposed as an action and published only through the approval flow.', how: 'Posts → Schedule a post, or Lifecycle messaging → New journey.', section: 'social', xp: 30 },
-      { id: 'verified', title: 'Get your first VERIFIED action', why: 'Success means an independent read-back confirmed the result, never just a 200 response.', how: 'Actions & approvals → a different person approves the exact action.', section: 'approvals', xp: 50 },
-    ],
+    key: 'improve',
+    title: 'Improve',
+    label: 'Optimize & scale',
+    tagline: 'Pre-registered experiments that show what actually worked before anything is scaled.',
+    sections: ['experiments'],
+    tasks: [{ id: 'experiment', title: 'Design an experiment', why: 'Pre-registered experiments with SRM checks tell you what actually worked.', how: 'Experiments → Design an experiment.', section: 'experiments', xp: 30 }],
   },
 ];
 
 export const TASKS: Task[] = STAGES.flatMap((s) => s.tasks);
 export const TOTAL_XP = TASKS.reduce((n, t) => n + t.xp, 0);
-
-/** Sections outside the stages, pinned above them in the navigation. */
-export const DAILY_SECTIONS = ['overview', 'approvals'];
 
 export interface Rank {
   level: number;
@@ -134,12 +154,14 @@ const RANK_NAMES: [string, string][] = [
   ['Evergreen', 'Verified growth loop'],
 ];
 
-export const RANKS: Rank[] = RANK_NAMES.map(([name, meaning], i) => ({
-  level: i + 1,
-  name,
-  meaning,
-  minXp: STAGES.slice(0, i).reduce((n, s) => n + s.tasks.reduce((m, t) => m + t.xp, 0), 0),
-}));
+/**
+ * Rank thresholds: the cumulative XP of the seven original journey stages (40, 40, 50, 60, 80,
+ * 60, 80). Kept fixed when the steps were regrouped (D-048), so XP that was earned keeps the
+ * same rank. The top rank still needs every task.
+ */
+export const RANK_THRESHOLDS = [0, 40, 80, 130, 190, 270, 330, 410] as const;
+
+export const RANKS: Rank[] = RANK_NAMES.map(([name, meaning], i) => ({ level: i + 1, name, meaning, minXp: RANK_THRESHOLDS[i]! }));
 
 /** Task id → done (true / false) or unknown (null: not loaded, or not readable with this role). */
 export type Progress = Partial<Record<ProbeKey, boolean | null>>;
@@ -187,15 +209,6 @@ export function stageOf(slug: string): Stage | undefined {
   return STAGES.find((s) => s.sections.includes(slug));
 }
 
-/** Every section in navigation order: daily first, then the stages. */
-export const JOURNEY_ORDER: string[] = [...DAILY_SECTIONS, ...STAGES.flatMap((s) => s.sections)];
-
-export function neighbours(slug: string): { prev: string | null; next: string | null } {
-  const i = JOURNEY_ORDER.indexOf(slug);
-  if (i < 0) return { prev: null, next: null };
-  return { prev: JOURNEY_ORDER[i - 1] ?? null, next: JOURNEY_ORDER[i + 1] ?? null };
-}
-
 /** "How this works": the order things happen in on each section. */
 export const SECTION_FLOWS: Record<string, string[]> = {
   approvals: ['An agent or a person proposes an action', 'Policy checks evidence, limits and kill switches', 'A different person approves the exact action hash', 'It runs through the official API', 'An independent read-back marks it VERIFIED'],
@@ -215,7 +228,7 @@ export const SECTION_FLOWS: Record<string, string[]> = {
   offers: ['Set price guardrails', 'Draft an offer inside them', 'Approve the offer', 'Test it with CRO hypotheses'],
   personas: ['Write the persona bible', 'Add the disclosure copy', 'Approve the persona', 'Suspend it at any time'],
   experiments: ['Create it with a hypothesis and variants', 'Propose start; it goes through approval', 'Exposures and outcomes are logged', 'Analyze with SRM checks'],
-  social: ['Connect Meta, TikTok or YouTube', 'Schedule a post', 'Approve it in Actions & approvals', 'A read-back verifies it went live'],
+  social: ['Connect Meta, TikTok or YouTube', 'Schedule a post', 'Approve it in Approvals', 'A read-back verifies it went live'],
   ads: ['Connect an ad account', 'Campaigns sync in', 'Propose budget or status changes', 'Reconcile reported spend'],
   lifecycle: ['Save the sender identity in Governance', 'Create and approve templates', 'Build a journey on a trigger event', 'Activate it and watch delivery'],
   discovery: ['Audit your site', 'Review query opportunities', 'Validate and draft store listings', 'Approve, then push'],

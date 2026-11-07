@@ -1,10 +1,10 @@
 ---
 import { ControlPlane } from '../../components/ControlPlane.tsx';
 import Base from '../../layouts/Base.astro';
-import { SECTIONS } from '../../lib/catalog.ts';
+import { PAGES } from '../../lib/nav.ts';
 
 export function getStaticPaths() {
-  return SECTIONS.filter((s) => s.slug !== 'overview').map((s) => ({ params: { section: s.slug }, props: { title: s.title } }));
+  return PAGES.filter((p) => p.slug).map((p) => ({ params: { section: p.slug }, props: { title: p.title } }));
 }
 
 const { section } = Astro.params;

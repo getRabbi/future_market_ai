@@ -1,10 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Me } from '../lib/api.js';
+import { actionName, actionStateLabel, type GoalLite, goalNeedsAttention } from '../lib/dashboard.js';
 import { formatDay, readableText, relativeTime, statusLabel } from '../lib/format.js';
-import { AppIntelligenceView } from './AppIntelligence.js';
-import { BrandStudioView } from './BrandStudio.js';
-import { ContentStudioView } from './ContentStudio.js';
-import { Badge, EmptyState, ErrorNotice, LoadingRows, Logo, useApi } from './ui.js';
+import { Ico } from './Icons.js';
+import { GoalKpiChart } from './Performance.js';
+import { Badge, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
 
 /** Every API call this screen makes (checked against the API's routes in catalog.test.ts). */
 export const AUTOPILOT_CALLS = [
@@ -29,18 +29,6 @@ export interface AutopilotStatus {
   modelAvailable: boolean;
 }
 
-type View = 'setup' | 'goals' | 'content' | 'brands' | 'apps' | 'activity' | 'approvals' | 'results';
-const VIEWS: { key: View; title: string; summary: string }[] = [
-  { key: 'setup', title: 'Business setup', summary: 'What the Autopilot can use: connections, data, evidence, claims, AI and your rules.' },
-  { key: 'goals', title: 'Growth goals', summary: 'Say what you want to achieve. The Autopilot plans it and keeps working while you are away.' },
-  { key: 'content', title: 'Content studio', summary: 'Daily lesson posts for your Facebook Page: the seven-day plan, each card, what went out and how it did, and community groups.' },
-  { key: 'brands', title: 'Brands & channels', summary: 'Your brands, the accounts and apps each one owns, what every platform can really do now, and which image sources are available.' },
-  { key: 'apps', title: 'App intelligence', summary: 'Installs, store listing acquisitions, sources, campaigns and quality for every app, from official Google Play and App Store reports. No app update needed.' },
-  { key: 'activity', title: 'AI activity', summary: 'What the Autopilot is doing now, what it finished, what is blocked and why. Real records only.' },
-  { key: 'approvals', title: 'Pending approvals', summary: 'Actions and drafts that wait for a person because your policy says so.' },
-  { key: 'results', title: 'Results', summary: 'Measured outcomes against your baseline and the no-action forecast.' },
-];
-
 const CHANNELS: { key: string; label: string; help: string }[] = [
   { key: 'organic_social', label: 'Organic social posts', help: 'Facebook/Instagram/TikTok/YouTube posts; publishing waits for approval unless your policy allows it.' },
   { key: 'app_store', label: 'App Store listing', help: 'Store metadata changes (approval per your policy).' },
@@ -52,14 +40,14 @@ const CHANNELS: { key: string; label: string; help: string }[] = [
 ];
 
 const NEEDS: Record<string, { label: string; href: string }> = {
-  data: { label: 'Add or connect KPI data', href: '/app/analytics' },
+  data: { label: 'Add or connect KPI data', href: '/app/apps' },
   connection: { label: 'Fix a connection', href: '/app/connections' },
   evidence: { label: 'Add evidence', href: '/app/evidence' },
   claims: { label: 'Approve claims', href: '/app/knowledge' },
-  approval: { label: 'Review in Pending approvals', href: '?view=approvals' },
+  approval: { label: 'Review in Approvals', href: '/app/approvals' },
   configuration: { label: 'Check your rules', href: '/app/governance' },
   model: { label: 'Approve an AI model', href: '/app/governance' },
-  budget: { label: 'Review the goal budget', href: '?view=goals' },
+  budget: { label: 'Review the goal budget', href: '/app/goals' },
 };
 
 /* ------------------------------------------------------------------ */
@@ -168,77 +156,7 @@ function usePoll(reload: () => Promise<void>, ms = 15_000) {
   }, [reload, ms]);
 }
 
-/* ------------------------------------------------------------------ */
-/* Shell                                                               */
-/* ------------------------------------------------------------------ */
-
-export function AutopilotShell({ me, status, orgSelect, onStatus }: { me: Me; status: AutopilotStatus; orgSelect: ReactNode; onStatus: () => void }) {
-  const initial = (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('view') : null) as View | null;
-  const [view, setView] = useState<View>(initial && VIEWS.some((v) => v.key === initial) ? initial : 'goals');
-  const inbox = useApi<{ approvals: unknown[]; decisions: unknown[]; drafts: unknown[]; postDrafts?: unknown[] }>('/v1/autopilot/inbox');
-  usePoll(inbox.reload, 30_000);
-  const pending = (inbox.data?.approvals.length ?? 0) + (inbox.data?.decisions.length ?? 0) + (inbox.data?.drafts.length ?? 0) + (inbox.data?.postDrafts?.length ?? 0);
-
-  useEffect(() => {
-    const onPop = () => {
-      const v = new URLSearchParams(window.location.search).get('view') as View | null;
-      if (v && VIEWS.some((x) => x.key === v)) setView(v);
-    };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-  const go = (v: View) => {
-    setView(v);
-    window.history.pushState(null, '', `?view=${v}`);
-    window.scrollTo({ top: 0 });
-  };
-  const current = VIEWS.find((v) => v.key === view)!;
-  return (
-    <div className="ap-shell">
-      <header className="ap-top">
-        <a className="brand" href="/app/">
-          <Logo size={26} />
-          <span>FUTUREGROW</span>
-          <small>Autopilot beta</small>
-        </a>
-        <div className="ap-top-right">
-          {orgSelect}
-          <a className="btn" href="/app/advanced">
-            Advanced workspace
-          </a>
-        </div>
-      </header>
-      <nav className="ap-tabs" aria-label="Autopilot">
-        {VIEWS.map((v, i) => (
-          <button key={v.key} type="button" className={`ap-tab${v.key === view ? ' active' : ''}`} aria-current={v.key === view ? 'page' : undefined} onClick={() => go(v.key)}>
-            <span className="ap-tab-n">{i + 1}</span>
-            {v.title}
-            {v.key === 'approvals' && pending ? <span className="ap-count">{pending}</span> : null}
-          </button>
-        ))}
-      </nav>
-      <main className="ap-main" id="content">
-        <h1>{current.title}</h1>
-        <p className="muted">{current.summary}</p>
-        {status.stopped ? (
-          <div className="notice error" role="alert">
-            <strong>The Autopilot is stopped.</strong> {status.stopped}. Release the emergency stop in <a href="/app/governance">Governance</a> to continue.
-          </div>
-        ) : null}
-        {view === 'setup' ? <SetupView me={me} status={status} onStatus={onStatus} /> : null}
-        {view === 'goals' ? <GoalsView me={me} go={go} /> : null}
-        {view === 'content' ? <ContentStudioView me={me} /> : null}
-        {view === 'brands' ? <BrandStudioView me={me} /> : null}
-        {view === 'apps' ? <AppIntelligenceView me={me} /> : null}
-        {view === 'activity' ? <ActivityView /> : null}
-        {view === 'approvals' ? <ApprovalsView me={me} onChange={() => void inbox.reload()} /> : null}
-        {view === 'results' ? <ResultsView /> : null}
-      </main>
-    </div>
-  );
-}
-
-/** Shown in the classic workspace when the Autopilot is available but not switched on. */
+/** Shown when the Autopilot is available but not switched on. */
 export function AutopilotOffer({ me, onEnabled }: { me: Me; onEnabled: () => void }) {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -309,7 +227,7 @@ function Check({ ok, title, children, href, action }: { ok: boolean | 'partial';
   );
 }
 
-function SetupView({ me, status, onStatus }: { me: Me; status: AutopilotStatus; onStatus: () => void }) {
+export function SetupView({ me, status, onStatus }: { me: Me; status: AutopilotStatus; onStatus: () => void }) {
   const r = useApi<Readiness>('/v1/autopilot/readiness');
   const [error, setError] = useState<unknown>(null);
   const toggle = async () => {
@@ -382,25 +300,82 @@ function SetupView({ me, status, onStatus }: { me: Me; status: AutopilotStatus; 
 /* 2. Growth goals                                                      */
 /* ------------------------------------------------------------------ */
 
-function GoalsView({ me, go }: { me: Me; go: (v: View) => void }) {
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'active', label: 'Active' },
+  { key: 'attention', label: 'Needs attention' },
+  { key: 'paused', label: 'Paused' },
+  { key: 'completed', label: 'Completed' },
+  { key: 'cancelled', label: 'Cancelled' },
+] as const;
+type FilterKey = (typeof FILTERS)[number]['key'];
+
+const matches = (g: Goal, f: FilterKey) => (f === 'all' ? true : f === 'attention' ? g.status === 'active' && goalNeedsAttention(g as unknown as GoalLite) : f === 'completed' ? g.status === 'completed' || g.status === 'failed' : g.status === f);
+
+/** Goals & OKRs: the list with filters, or one goal's details (`?id=`). */
+export function GoalsView({ me, autopilot, onEnabled }: { me: Me; autopilot: AutopilotStatus | null; onEnabled: () => void }) {
+  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const id = params.get('id');
+  if (id) return <GoalDetail id={id} me={me} />;
+  const f = params.get('filter');
+  return <GoalList me={me} autopilot={autopilot} onEnabled={onEnabled} initialFilter={FILTERS.some((x) => x.key === f) ? (f as FilterKey) : 'all'} />;
+}
+
+function GoalList({ me, autopilot, onEnabled, initialFilter }: { me: Me; autopilot: AutopilotStatus | null; onEnabled: () => void; initialFilter: FilterKey }) {
   const goals = useApi<Goal[]>('/v1/autopilot/goals');
   usePoll(goals.reload);
+  const [filter, setFilter] = useState<FilterKey>(initialFilter);
+  const [composing, setComposing] = useState(() => typeof window !== 'undefined' && window.location.hash === '#new');
+  const list = goals.data ?? [];
+  const shown = list.filter((g) => matches(g, filter));
+  const showComposer = canEdit(me) && (composing || (goals.data !== null && goals.data.length === 0));
   return (
     <div className="stack">
-      {canEdit(me) ? <GoalComposer onCreated={() => void goals.reload()} /> : null}
+      {autopilot?.available && !autopilot.enabled ? <AutopilotOffer me={me} onEnabled={onEnabled} /> : null}
+      <div className="toolbar">
+        <fieldset className="seg">
+          <legend className="sr-only">Filter goals</legend>
+          {FILTERS.map((f) => (
+            <button key={f.key} type="button" aria-pressed={filter === f.key} className={`seg-btn${filter === f.key ? ' on' : ''}`} onClick={() => setFilter(f.key)}>
+              {f.label}
+              {goals.data ? <span className="seg-count">{list.filter((g) => matches(g, f.key)).length}</span> : null}
+            </button>
+          ))}
+        </fieldset>
+        {canEdit(me) && !showComposer ? (
+          <button type="button" className="primary" onClick={() => setComposing(true)}>
+            <Ico name="plus" size={17} /> New goal
+          </button>
+        ) : null}
+      </div>
+      {showComposer ? (
+        <GoalComposer
+          onCreated={() => {
+            setComposing(false);
+            void goals.reload();
+          }}
+          onCancel={list.length ? () => setComposing(false) : undefined}
+        />
+      ) : null}
       {goals.error ? <ErrorNotice error={goals.error} /> : null}
-      {!goals.data ? (
+      {!goals.data && !goals.error ? (
         <LoadingRows label="Loading goals…" />
-      ) : goals.data.length === 0 ? (
-        <EmptyState title="No goals yet">Describe what you want to achieve above, for example “Grow my app's organic downloads over the next 30 days with a $0 advertising budget.”</EmptyState>
+      ) : goals.data && goals.data.length === 0 ? (
+        <EmptyState title="No goals yet">{canEdit(me) ? "Describe what you want to achieve above, for example “Grow my app's organic downloads over the next 30 days with a $0 advertising budget.”" : 'An owner, admin or growth operator can create the first goal.'}</EmptyState>
+      ) : shown.length === 0 ? (
+        <EmptyState title="No goals match this filter">
+          <button type="button" className="link-btn" onClick={() => setFilter('all')}>
+            Show all goals
+          </button>
+        </EmptyState>
       ) : (
-        goals.data.map((g) => <GoalCard key={g.id} goal={g} me={me} onChange={() => void goals.reload()} go={go} />)
+        shown.map((g) => <GoalCard key={g.id} goal={g} me={me} onChange={() => void goals.reload()} />)
       )}
     </div>
   );
 }
 
-function GoalComposer({ onCreated }: { onCreated: () => void }) {
+function GoalComposer({ onCreated, onCancel }: { onCreated: () => void; onCancel?: () => void }) {
   const [text, setText] = useState('');
   const [d, setD] = useState<Draft | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -434,9 +409,14 @@ function GoalComposer({ onCreated }: { onCreated: () => void }) {
   const set = (patch: Partial<Draft['draft']>) => setD((cur) => (cur ? { ...cur, draft: { ...cur.draft, ...patch } } : cur));
   const setKpi = (patch: Partial<Kpi>) => setD((cur) => (cur ? { ...cur, draft: { ...cur.draft, kpi: { ...cur.draft.kpi, ...patch } } } : cur));
   return (
-    <section className="card ap-composer">
-      <header>
-        <h2>New goal</h2>
+    <section className="card ap-composer" id="new">
+      <header className="card-head">
+        <h2 className="card-title">New goal</h2>
+        {onCancel ? (
+          <button type="button" className="ghost" onClick={onCancel}>
+            Close
+          </button>
+        ) : null}
       </header>
       <div className="field">
         <label htmlFor="ap-goal">What do you want to achieve?</label>
@@ -524,7 +504,7 @@ function GoalComposer({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-function Progress({ m, kpi }: { m: Measurement | null | undefined; kpi: Kpi }) {
+export function Progress({ m, kpi }: { m: Measurement | null | undefined; kpi: Kpi }) {
   if (m?.status !== 'measured') return <p className="small muted">No measured results yet{m?.note ? `: ${m.note}` : '.'}</p>;
   return (
     <div className="ap-progress">
@@ -550,46 +530,122 @@ function Progress({ m, kpi }: { m: Measurement | null | undefined; kpi: Kpi }) {
   );
 }
 
-function GoalCard({ goal: g, me, onChange, go }: { goal: Goal; me: Me; onChange: () => void; go: (v: View) => void }) {
+function GoalCommands({ goal: g, me, onChange, compact = false }: { goal: Goal; me: Me; onChange: () => void; compact?: boolean }) {
   const [error, setError] = useState<unknown>(null);
   const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
   const run = async (command: 'pause' | 'resume' | 'cancel' | 'run_now') => {
     setError(null);
+    setBusy(true);
     try {
       await api('POST', `/v1/autopilot/goals/${g.id}/${command}`);
       setConfirm(false);
       onChange();
     } catch (err) {
       setError(err);
+    } finally {
+      setBusy(false);
     }
   };
+  if (!canEdit(me)) return null;
+  return (
+    <>
+      <div className="row">
+        {g.status === 'active' ? (
+          <>
+            <button type="button" disabled={busy} onClick={() => void run('run_now')}>
+              <Ico name="play" size={15} /> Run now
+            </button>
+            <button type="button" disabled={busy} onClick={() => void run('pause')}>
+              <Ico name="pause" size={15} /> Pause
+            </button>
+          </>
+        ) : null}
+        {g.status === 'paused' ? (
+          <button type="button" className="primary" disabled={busy} onClick={() => void run('resume')}>
+            <Ico name="play" size={15} /> Resume
+          </button>
+        ) : null}
+        {!compact && (g.status === 'active' || g.status === 'paused') ? (
+          confirm ? (
+            <>
+              <span className="small">Stop this goal for good?</span>
+              <button type="button" className="danger" disabled={busy} onClick={() => void run('cancel')}>
+                Yes, cancel goal
+              </button>
+              <button type="button" onClick={() => setConfirm(false)}>
+                Keep it
+              </button>
+            </>
+          ) : (
+            <button type="button" className="ghost" onClick={() => setConfirm(true)}>
+              Cancel goal
+            </button>
+          )
+        ) : null}
+      </div>
+      <ErrorNotice error={error} />
+    </>
+  );
+}
+
+function forecastWords(g: Goal): string {
+  const m = g.memory.finalMeasurement ?? g.memory.lastMeasurement;
+  if (m?.forecast) return `Available: actual is ${m.forecast.position} the no-action range`;
+  if ((g.latestCycle?.unavailable ?? []).some((n) => n.kind === 'forecast')) return 'Not available yet (no data; not blocking)';
+  return 'Not available yet';
+}
+
+function GoalCard({ goal: g, me, onChange }: { goal: Goal; me: Me; onChange: () => void }) {
   const m = g.memory.finalMeasurement ?? g.memory.lastMeasurement;
   const c = g.latestCycle;
+  const attention = g.status === 'active' && goalNeedsAttention(g as unknown as GoalLite);
   return (
-    <section className="card ap-goal">
-      <header>
-        <h2>{g.title}</h2>
-        <Badge value={g.status} />
+    <section className="card ap-goal goal-card">
+      <header className="goal-head">
+        <div className="goal-name">
+          <h2>{g.title}</h2>
+          <p className="small muted">“{g.statement}”</p>
+        </div>
+        <div className="goal-badges">
+          <Badge value={g.status} />
+          {attention ? <span className="status-pill warn">Needs attention</span> : null}
+        </div>
       </header>
-      <p className="small muted">“{g.statement}”</p>
-      <div className="ap-facts small">
-        <span>
-          <strong>Measure:</strong> {g.kpi.label}
-        </span>
-        <span>
-          <strong>Until:</strong> {formatDay(g.targetDate.slice(0, 10))} ({daysLeft(g.targetDate)} days left)
-        </span>
-        <span>
-          <strong>Ad budget:</strong> {money(g.adBudgetMicros, g.currency)}
-        </span>
-        <span>
-          <strong>Channels:</strong> {g.channels.map((x) => CHANNELS.find((y) => y.key === x)?.label ?? x).join(', ')}
-        </span>
-        <span>
-          <strong>Mode:</strong> {g.autoSubmit ? 'acts within your rules' : 'suggest only'}
-        </span>
-      </div>
       <Progress m={m} kpi={g.kpi} />
+      {m?.status === 'measured' && m.progressPct !== null ? (
+        <div className="goal-bar" role="progressbar" aria-label={`Progress toward the target of ${g.kpi.label}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(100, Math.max(0, m.progressPct)))}>
+          <span style={{ width: `${Math.min(100, Math.max(0, m.progressPct))}%` }} />
+        </div>
+      ) : null}
+      <dl className="goal-facts">
+        <div>
+          <dt>Measure</dt>
+          <dd>{g.kpi.label}</dd>
+        </div>
+        <div>
+          <dt>Until</dt>
+          <dd>
+            {formatDay(g.targetDate.slice(0, 10))} ({daysLeft(g.targetDate)} days left)
+          </dd>
+        </div>
+        <div>
+          <dt>Ad budget</dt>
+          <dd>{money(g.adBudgetMicros, g.currency)}</dd>
+        </div>
+        <div>
+          <dt>Channels</dt>
+          <dd>{g.channels.map((x) => CHANNELS.find((y) => y.key === x)?.label ?? x).join(', ')}</dd>
+        </div>
+        <div>
+          <dt>Mode</dt>
+          <dd>{g.autoSubmit ? 'Acts within your rules' : 'Suggest only'}</dd>
+        </div>
+        <div>
+          <dt>Forecast</dt>
+          <dd>{forecastWords(g)}</dd>
+        </div>
+      </dl>
       <div className="ap-now small">
         {c ? (
           <>
@@ -607,43 +663,11 @@ function GoalCard({ goal: g, me, onChange, go }: { goal: Goal; me: Me; onChange:
         ) : null}
         {g.statusReason ? <div className="muted">{readableText(g.statusReason, { userId: me.userId })}</div> : null}
       </div>
-      <ErrorNotice error={error} />
-      <div className="row">
-        <button type="button" onClick={() => go('activity')}>
-          See activity
-        </button>
-        {canEdit(me) && g.status === 'active' ? (
-          <>
-            <button type="button" onClick={() => void run('run_now')}>
-              Run now
-            </button>
-            <button type="button" onClick={() => void run('pause')}>
-              Pause
-            </button>
-          </>
-        ) : null}
-        {canEdit(me) && g.status === 'paused' ? (
-          <button type="button" className="primary" onClick={() => void run('resume')}>
-            Resume
-          </button>
-        ) : null}
-        {canEdit(me) && (g.status === 'active' || g.status === 'paused') ? (
-          confirm ? (
-            <>
-              <span className="small">Stop this goal for good?</span>
-              <button type="button" className="danger" onClick={() => void run('cancel')}>
-                Yes, cancel goal
-              </button>
-              <button type="button" onClick={() => setConfirm(false)}>
-                Keep it
-              </button>
-            </>
-          ) : (
-            <button type="button" onClick={() => setConfirm(true)}>
-              Cancel goal
-            </button>
-          )
-        ) : null}
+      <div className="goal-actions">
+        <a className="btn" href={`/app/goals?id=${g.id}`}>
+          Details &amp; timeline <Ico name="arrow-right" size={15} />
+        </a>
+        <GoalCommands goal={g} me={me} onChange={onChange} />
       </div>
     </section>
   );
@@ -682,8 +706,8 @@ function TaskItem({ t, goalTitle, label }: { t: Task; goalTitle?: string; label?
   );
 }
 
-function ActivityView() {
-  const act = useApi<{ task: Task; goalTitle: string }[]>('/v1/autopilot/activity?limit=150');
+export function ActivityView({ goalId }: { goalId?: string } = {}) {
+  const act = useApi<{ task: Task; goalTitle: string }[]>(`/v1/autopilot/activity?limit=150${goalId ? `&goalId=${goalId}` : ''}`);
   const goals = useApi<Goal[]>('/v1/autopilot/goals');
   const reload = useCallback(async () => {
     await Promise.all([act.reload(), goals.reload()]);
@@ -805,7 +829,7 @@ function PostDraftItem({ draft, editable, onDone, onError }: { draft: PostDraft;
   );
 }
 
-function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
+export function ApprovalsInbox({ me, onChange, withActions = true }: { me: Me; onChange: () => void; withActions?: boolean }) {
   const inbox = useApi<Inbox>('/v1/autopilot/inbox');
   usePoll(inbox.reload);
   const [error, setError] = useState<unknown>(null);
@@ -820,9 +844,9 @@ function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
       setError(err);
     }
   };
-  if (inbox.error) return <ErrorNotice error={inbox.error} />;
-  if (!inbox.data) return <LoadingRows label="Loading approvals…" />;
-  const d = inbox.data;
+  if (inbox.error) return (inbox.error as { status?: number }).status === 404 || (inbox.error as { status?: number }).status === 403 ? null : <ErrorNotice error={inbox.error} />;
+  if (!inbox.data) return <LoadingRows label="Loading the Autopilot inbox…" />;
+  const d = { ...inbox.data, approvals: withActions ? inbox.data.approvals : [] };
   const posts = d.postDrafts ?? [];
   const total = d.approvals.length + d.decisions.length + d.drafts.length + posts.length;
   const reload = () => {
@@ -830,9 +854,9 @@ function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
     onChange();
   };
   return (
-    <div className="stack">
+    <div className="stack inbox" id="inbox">
       <ErrorNotice error={error} />
-      {total === 0 ? <EmptyState title="Nothing waits for you">When your policy requires a person, the action appears here with the reason.</EmptyState> : null}
+      {total === 0 ? <EmptyState title="Nothing waits for you">{withActions ? 'When your policy requires a person, the action appears here with the reason.' : 'No Autopilot decisions or drafts wait for a person. Actions that need approval are listed below.'}</EmptyState> : null}
       {d.approvals.length ? (
         <section className="card">
           <header>
@@ -924,7 +948,7 @@ function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
           </p>
         </section>
       ) : null}
-      {d.otherApprovals ? (
+      {withActions && d.otherApprovals ? (
         <p className="small">
           {d.otherApprovals} other action{d.otherApprovals === 1 ? '' : 's'} outside the Autopilot also wait: <a href="/app/approvals">open all approvals</a>.
         </p>
@@ -934,122 +958,336 @@ function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 5. Results                                                           */
+/* 5. One goal: KPI, timeline, actions, decisions                        */
 /* ------------------------------------------------------------------ */
 
-function ResultsView() {
-  const goals = useApi<Goal[]>('/v1/autopilot/goals');
-  const [sel, setSel] = useState<string | null>(null);
-  const id = sel ?? goals.data?.[0]?.id ?? null;
-  const detail = useApi<{ goal: Goal; cycles: Cycle[]; actions: { id: string; actionType: string; status: string; updatedAt: string }[] }>(id ? `/v1/autopilot/goals/${id}` : null);
-  usePoll(detail.reload, 30_000);
-  if (goals.error) return <ErrorNotice error={goals.error} />;
-  if (!goals.data) return <LoadingRows label="Loading results…" />;
-  if (!goals.data.length) return <EmptyState title="No goals yet">Results appear once a goal has measured data.</EmptyState>;
-  const d = detail.data;
-  const m = d ? (d.goal.memory.finalMeasurement ?? d.goal.memory.lastMeasurement) : null;
-  const verified = d?.actions.filter((a) => a.status === 'VERIFIED').length ?? 0;
+interface DecisionRow {
+  id: string;
+  objective: string;
+  narrative: string | null;
+  status: string;
+  goalId: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+const when = (iso: string | null | undefined) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+export function GoalDetail({ id, me }: { id: string; me: Me }) {
+  const detail = useApi<{ goal: Goal; cycles: Cycle[]; actions: { id: string; actionType: string; status: string; updatedAt: string }[] }>(`/v1/autopilot/goals/${id}`);
+  const activity = useApi<{ task: Task; goalTitle: string }[]>(`/v1/autopilot/activity?goalId=${id}&limit=200`);
+  const decisions = useApi<DecisionRow[]>('/v1/brain/decisions');
+  const reload = useCallback(async () => {
+    await Promise.all([detail.reload(), activity.reload()]);
+  }, [detail.reload, activity.reload]);
+  usePoll(reload, 30_000);
+  if (detail.error) {
+    return (
+      <div className="stack">
+        <a className="back-link" href="/app/goals">
+          <Ico name="chevron-left" size={16} /> All goals
+        </a>
+        <ErrorNotice error={detail.error} />
+      </div>
+    );
+  }
+  if (!detail.data) return <LoadingRows label="Loading the goal…" />;
+  const { goal: g, cycles, actions } = detail.data;
+  const m = g.memory.finalMeasurement ?? g.memory.lastMeasurement;
+  const verified = actions.filter((a) => a.status === 'VERIFIED').length;
+  const tasksByCycle = new Map<string, Task[]>();
+  for (const r of activity.data ?? []) tasksByCycle.set(r.task.cycleId, [...(tasksByCycle.get(r.task.cycleId) ?? []), r.task]);
+  const myDecisions = (decisions.data ?? []).filter((d) => d.goalId === id).slice(0, 8);
   return (
-    <div className="stack">
-      {goals.data.length > 1 ? (
-        <div className="field">
-          <label htmlFor="ap-res-goal">Goal</label>
-          <select id="ap-res-goal" value={id ?? ''} onChange={(e) => setSel(e.target.value)}>
-            {goals.data.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.title}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
-      {detail.error ? <ErrorNotice error={detail.error} /> : null}
-      {!d ? (
-        <LoadingRows />
-      ) : (
-        <>
-          <section className="card">
-            <header>
-              <h2>{d.goal.kpi.label}</h2>
-              <span className="small muted">{m ? `measured ${relativeTime(m.measuredAt)}` : 'not measured yet'}</span>
-            </header>
-            <Progress m={m} kpi={d.goal.kpi} />
-            {m?.status === 'measured' ? (
-              <ul className="tight small">
-                {m.baselineForSamePeriod !== null ? <li>Pre-goal baseline for the same number of days: {num(m.baselineForSamePeriod)}</li> : null}
-                {m.forecast ? (
-                  <li>
-                    No-action forecast for {m.forecast.days} day{m.forecast.days === 1 ? '' : 's'}: {num(m.forecast.expected)} (80% range {num(m.forecast.low)}–{num(m.forecast.high)}). Actual is <strong>{m.forecast.position}</strong> the range.
-                  </li>
-                ) : (
-                  <li>No forecast covers the measured days yet.</li>
-                )}
-              </ul>
-            ) : null}
-            {m?.note ? <p className="small muted">{m.note}</p> : null}
-          </section>
-          <section className="card">
-            <header>
-              <h2>Actions</h2>
-              <span className="small muted">{verified} verified</span>
-            </header>
-            {d.actions.length ? (
-              <ul className="tight small">
-                {d.actions.map((a) => (
-                  <li key={a.id}>
-                    {statusLabel(a.actionType)} — <Badge value={a.status} /> {relativeTime(a.updatedAt)}
-                  </li>
-                ))}
-              </ul>
+    <div className="stack goal-detail">
+      <a className="back-link" href="/app/goals">
+        <Ico name="chevron-left" size={16} /> All goals
+      </a>
+      <section className="card">
+        <header className="goal-head">
+          <div className="goal-name">
+            <h2>{g.title}</h2>
+            <p className="small muted">“{g.statement}”</p>
+          </div>
+          <div className="goal-badges">
+            <Badge value={g.status} />
+          </div>
+        </header>
+        <dl className="goal-facts">
+          <div>
+            <dt>Started</dt>
+            <dd>{formatDay(g.startsAt.slice(0, 10))}</dd>
+          </div>
+          <div>
+            <dt>Until</dt>
+            <dd>
+              {formatDay(g.targetDate.slice(0, 10))} ({daysLeft(g.targetDate)} days left)
+            </dd>
+          </div>
+          <div>
+            <dt>Next run</dt>
+            <dd>{g.status === 'active' ? (g.latestCycle?.status === 'running' ? 'Running now' : g.nextRunAt ? `${relativeTime(g.nextRunAt)} (${when(g.nextRunAt)})` : 'Not scheduled') : 'Not scheduled (goal is not active)'}</dd>
+          </div>
+          <div>
+            <dt>Forecast</dt>
+            <dd>{forecastWords(g)}</dd>
+          </div>
+          <div>
+            <dt>Cycles</dt>
+            <dd>{cycles.length}</dd>
+          </div>
+          <div>
+            <dt>Verified actions</dt>
+            <dd>{verified}</dd>
+          </div>
+        </dl>
+        <GoalCommands goal={g} me={me} onChange={() => void reload()} />
+      </section>
+
+      <section className="card">
+        <header className="card-head">
+          <h2 className="card-title">{g.kpi.label}</h2>
+          <span className="small muted">{m ? `measured ${relativeTime(m.measuredAt)}` : 'not measured yet'}</span>
+        </header>
+        <Progress m={m} kpi={g.kpi} />
+        {m?.status === 'measured' ? (
+          <ul className="tight small">
+            {m.baselineForSamePeriod !== null ? <li>Pre-goal baseline for the same number of days: {num(m.baselineForSamePeriod)}</li> : null}
+            {m.forecast ? (
+              <li>
+                No-action forecast for {m.forecast.days} day{m.forecast.days === 1 ? '' : 's'}: {num(m.forecast.expected)} (80% range {num(m.forecast.low)}–{num(m.forecast.high)}). Actual is <strong>{m.forecast.position}</strong> the range. This is an association, not proof of cause.
+              </li>
             ) : (
-              <p className="small muted">No actions yet. Only independently verified actions count as done.</p>
+              <li>No forecast covers the measured days yet.</li>
             )}
-          </section>
-          <section className="card">
-            <header>
-              <h2>Cycles</h2>
-            </header>
-            <ul className="ap-tasks">
-              {d.cycles.map((c) => (
-                <li key={c.id} className={`ap-task ${c.status}`}>
-                  <div className="ap-task-head">
-                    <strong>Cycle {c.seq}</strong>
-                    <Badge value={c.status} />
+          </ul>
+        ) : null}
+        {m?.note ? <p className="small muted">{m.note}</p> : null}
+        <GoalKpiChart metricKey={g.kpi.metricKey} label={g.kpi.label} since={g.startsAt} />
+      </section>
+
+      <section className="card" aria-labelledby="goal-timeline">
+        <header className="card-head">
+          <h2 className="card-title" id="goal-timeline">
+            Execution timeline
+          </h2>
+          <span className="small muted">{cycles.length ? `${cycles.length} cycle${cycles.length === 1 ? '' : 's'}` : 'no cycles yet'}</span>
+        </header>
+        {cycles.length === 0 ? (
+          <p className="small muted">The first cycle starts within a minute of the goal becoming active.</p>
+        ) : (
+          <ol className="goal-timeline">
+            {cycles.map((c) => {
+              const tasks = tasksByCycle.get(c.id) ?? [];
+              const unavailable = new Set((c.unavailable ?? []).map((n) => n.taskId));
+              return (
+                <li key={c.id} className={`tl-item ${c.status}`}>
+                  <span className="tl-dot" aria-hidden="true" />
+                  <div className="tl-body">
+                    <div className="tl-head">
+                      <strong>Cycle {c.seq}</strong>
+                      <Badge value={c.status} />
+                      <span className="small muted">
+                        {when(c.startedAt)}
+                        {c.finishedAt ? ` → ${when(c.finishedAt)}` : ' · running'}
+                      </span>
+                    </div>
+                    <p className="small">{c.summary ? readableText(c.summary, { userId: me.userId }) : 'In progress.'}</p>
+                    {tasks.length ? (
+                      <ul className="tl-steps">
+                        {tasks.map((t) => {
+                          const label = unavailable.has(t.id) ? 'unavailable' : t.status;
+                          return (
+                            <li key={t.id} className={`tl-step ${label}`}>
+                              <Badge value={label === 'unavailable' ? 'Not available yet' : label} />
+                              <span>
+                                <strong>{t.title}</strong>
+                                {t.detail ? <span className="muted"> — {readableText(t.detail, { userId: me.userId })}</span> : null}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
+                    <details className="small muted">
+                      <summary>Technical details</summary>
+                      <ul className="tight">
+                        {c.plan.steps.map((s) => (
+                          <li key={s.kind}>
+                            {s.title} ({s.modules.join(', ')}): {s.reason}
+                          </li>
+                        ))}
+                        {c.plan.notUsed.map((n) => (
+                          <li key={n.modules.join()}>
+                            Not used {n.modules.join(', ')}: {n.reason}
+                          </li>
+                        ))}
+                        <li>
+                          Trigger: {c.trigger} · cycle id <code>{c.id}</code>
+                        </li>
+                      </ul>
+                    </details>
                   </div>
-                  <div className="small">{c.summary ? readableText(c.summary) : 'In progress.'}</div>
-                  <details className="small muted">
-                    <summary>Plan: modules used and left out</summary>
-                    <ul className="tight">
-                      {c.plan.steps.map((s) => (
-                        <li key={s.kind}>
-                          {s.title} ({s.modules.join(', ')}): {s.reason}
-                        </li>
-                      ))}
-                      {c.plan.notUsed.map((n) => (
-                        <li key={n.modules.join()}>
-                          Not used {n.modules.join(', ')}: {n.reason}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </section>
+
+      <div className="grid-2">
+        <section className="card">
+          <header className="card-head">
+            <h2 className="card-title">Actions and verified results</h2>
+            <span className="small muted">{verified} verified</span>
+          </header>
+          {actions.length ? (
+            <ul className="row-list">
+              {actions.map((a) => (
+                <li key={a.id}>
+                  <a href={`/app/approvals?id=${a.id}`}>{actionName(a.actionType)}</a>
+                  <span className={`status-pill ${a.status === 'VERIFIED' ? 'ok' : a.status === 'APPROVAL_REQUIRED' ? 'warn' : ['FAILED', 'DENIED', 'REJECTED', 'ESCALATED', 'ROLLBACK_REQUIRED'].includes(a.status) ? 'danger' : 'info'}`}>{actionStateLabel(a.status)}</span>
+                  <span className="small muted">{relativeTime(a.updatedAt)}</span>
                 </li>
               ))}
             </ul>
-          </section>
-          {d.goal.memory.lessons?.length ? (
-            <section className="card">
-              <header>
-                <h2>What the Autopilot learned</h2>
-              </header>
-              <ul className="tight small">
-                {d.goal.memory.lessons.slice(0, 12).map((l) => (
-                  <li key={l}>{l}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-        </>
-      )}
+          ) : (
+            <p className="small muted">No actions yet. Only independently verified actions count as done.</p>
+          )}
+        </section>
+        <section className="card">
+          <header className="card-head">
+            <h2 className="card-title">Recent decisions</h2>
+            <a className="link-btn" href="/app/brain">
+              Growth Brain <Ico name="arrow-right" size={15} />
+            </a>
+          </header>
+          {decisions.error ? <ErrorNotice error={decisions.error} /> : null}
+          {!decisions.data && !decisions.error ? (
+            <LoadingRows />
+          ) : myDecisions.length ? (
+            <ul className="row-list">
+              {myDecisions.map((d) => (
+                <li key={d.id}>
+                  <span>
+                    <strong>{readableText(d.objective)}</strong>
+                    {d.narrative ? <span className="small muted"> — {readableText(d.narrative).slice(0, 180)}</span> : null}
+                  </span>
+                  <Badge value={d.status} />
+                  <span className="small muted">{relativeTime(d.decidedAt ?? d.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small muted">No decisions for this goal yet.</p>
+          )}
+        </section>
+      </div>
+
+      {g.memory.lessons?.length ? (
+        <section className="card">
+          <header className="card-head">
+            <h2 className="card-title">What the Autopilot learned</h2>
+          </header>
+          <ul className="tight small">
+            {g.memory.lessons.slice(0, 12).map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 6. Growth engine control center                                     */
+/* ------------------------------------------------------------------ */
+
+export function AutopilotCenter({ me, status, onStatus }: { me: Me; status: AutopilotStatus | null; onStatus: () => void }) {
+  const goals = useApi<Goal[]>('/v1/autopilot/goals');
+  const inbox = useApi<Inbox>('/v1/autopilot/inbox');
+  usePoll(goals.reload, 30_000);
+  const [error, setError] = useState<unknown>(null);
+  const toggle = async () => {
+    if (!status) return;
+    setError(null);
+    try {
+      await api('PUT', '/v1/autopilot/settings', { enabled: !status.enabled });
+      onStatus();
+    } catch (err) {
+      setError(err);
+    }
+  };
+  if (!status?.available) return <EmptyState title="The Autopilot is not available on this server">The rest of FUTUREGROW keeps working; every module stays reachable from the navigation.</EmptyState>;
+  const running = (goals.data ?? []).filter((g) => g.status === 'active' || g.status === 'paused');
+  const waiting = inbox.data ? inbox.data.approvals.length + inbox.data.decisions.length + inbox.data.drafts.length + (inbox.data.postDrafts?.length ?? 0) : null;
+  const engine = status.stopped
+    ? { word: 'Stopped', tone: 'danger', text: `${status.stopped}. Release the emergency stop in Governance & Security to continue.` }
+    : status.enabled
+      ? { word: 'Running', tone: 'ok', text: 'The worker pursues your active goals on their schedule, even when nobody is signed in. Consequential actions still pass your rules, approvals, spending limits and emergency stops.' }
+      : { word: 'Off', tone: 'muted', text: 'Nothing runs on its own. Goals and their history stay as they are.' };
+  return (
+    <div className="stack">
+      <div className="grid-3">
+        <section className="card engine">
+          <div className="eyebrow">Engine</div>
+          <div className="engine-state">
+            <span className={`status-pill ${engine.tone}`}>{engine.word}</span>
+            {status.enabled && !status.modelAvailable ? <span className="status-pill warn">No approved AI model</span> : null}
+          </div>
+          <p className="small">{engine.text}</p>
+          <ErrorNotice error={error} />
+          {isAdmin(me) ? (
+            <button type="button" className={status.enabled ? '' : 'primary'} onClick={() => void toggle()}>
+              {status.enabled ? 'Turn the Autopilot off' : 'Turn the Autopilot on'}
+            </button>
+          ) : (
+            <p className="small muted">Only an owner or admin can switch the Autopilot on or off.</p>
+          )}
+        </section>
+        <section className="card engine">
+          <div className="eyebrow">Goals</div>
+          <div className="engine-figure">{goals.data ? running.filter((g) => g.status === 'active').length : '…'}</div>
+          <p className="small muted">{goals.data ? `running · ${running.filter((g) => g.status === 'paused').length} paused` : 'Loading goals…'}</p>
+          <a className="btn" href="/app/goals">
+            Open Goals &amp; OKRs
+          </a>
+        </section>
+        <section className="card engine">
+          <div className="eyebrow">Waiting for you</div>
+          <div className="engine-figure">{waiting ?? '…'}</div>
+          <p className="small muted">{waiting === null ? 'Checking the inbox…' : waiting ? 'approvals, decisions or drafts' : 'Nothing waits for a person'}</p>
+          <a className={`btn${waiting ? ' primary' : ''}`} href="/app/approvals">
+            Open Approvals
+          </a>
+        </section>
+      </div>
+      {running.length ? (
+        <section className="card">
+          <header className="card-head">
+            <h2 className="card-title">Goals the engine works on</h2>
+          </header>
+          <ul className="row-list">
+            {running.map((g) => (
+              <li key={g.id} className="engine-goal">
+                <span>
+                  <a href={`/app/goals?id=${g.id}`}>
+                    <strong>{g.title}</strong>
+                  </a>
+                  <span className="small muted"> · {g.status === 'paused' ? 'paused' : g.latestCycle?.status === 'running' ? 'cycle in progress' : g.nextRunAt ? `next cycle ${relativeTime(g.nextRunAt)}` : 'not scheduled'}</span>
+                </span>
+                <GoalCommands goal={g} me={me} onChange={() => void goals.reload()} compact />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      <ActivityView />
     </div>
   );
 }

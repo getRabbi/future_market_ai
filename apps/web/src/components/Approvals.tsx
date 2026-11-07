@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../lib/api.js';
+import { actionName } from '../lib/dashboard.js';
 import { formatValue, shortId, statusLabel } from '../lib/format.js';
 import { ReadableRecord } from './Form.js';
 import { Badge, DataTable, Drawer, ErrorNotice, LoadingRows, useApi } from './ui.js';
@@ -36,8 +37,8 @@ interface Detail {
   terminal: boolean;
 }
 
-export function Approvals({ initialId }: { initialId?: string | null }) {
-  const [tab, setTab] = useState(TABS[0]!);
+export function Approvals({ initialId, initialTab }: { initialId?: string | null; initialTab?: string | null }) {
+  const [tab, setTab] = useState(TABS.find((t) => t.key === initialTab) ?? TABS[0]!);
   const list = useApi<ActionView[]>(`/v1/actions?status=${tab.statuses.join(',')}&limit=200`);
   const [open, setOpen] = useState<string | null>(initialId ?? null);
   return (
@@ -114,7 +115,7 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
   };
 
   return (
-    <Drawer title={a ? a.actionType : 'Action'} onClose={onClose}>
+    <Drawer title={a ? actionName(a.actionType) : 'Action'} onClose={onClose}>
       <ErrorNotice error={d.error ?? error} />
       {a && d.data ? (
         <div className="stack">
@@ -146,7 +147,9 @@ function ActionDetail({ id, onClose, onChanged }: { id: string; onClose: () => v
           <section>
             <h3>What will happen</h3>
             <ReadableRecord value={{ params: a.params, target: a.target, risk: a.risk, evidenceIds: a.evidenceIds }} />
-            <p className="small muted mono">action hash {a.actionHash}</p>
+            <p className="small muted mono">
+              type {a.actionType} · action hash {a.actionHash}
+            </p>
           </section>
 
           {a.status === 'APPROVAL_REQUIRED' || (!d.data.terminal && ['PROPOSED', 'EVIDENCE_READY', 'POLICY_CHECKED', 'APPROVED'].includes(a.status)) ? (

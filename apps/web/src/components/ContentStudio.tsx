@@ -28,14 +28,14 @@ interface Pack {
   letters: number;
   grammar: number;
 }
-interface Program {
+export interface Program {
   id: string;
   connectionId: string;
   pack: string;
   status: 'active' | 'paused';
   settings: { appCtaPerWeek?: number; linkPerWeek?: number; campaign?: string };
 }
-interface PlanItem {
+export interface PlanItem {
   id: string;
   day: string;
   kind: string;
@@ -52,7 +52,7 @@ interface PlanItem {
   metrics: { reactions?: number | null; comments?: number | null; shares?: number | null; url?: string | null; observedAt?: string };
   unit: { korean: string } | null;
 }
-interface Overview {
+export interface StudioOverview {
   program: Program;
   today: string;
   calendar: PlanItem[];
@@ -81,8 +81,8 @@ interface Share {
   createdAt: string;
 }
 
-const KIND: Record<string, string> = { vocab: 'Word', hangul: 'Hangul', grammar: 'Grammar', quiz: 'Review quiz', mistake: 'Common mistake', dialogue: 'Conversation', reading: 'Notice reading', challenge: 'Weekly challenge', feature: 'App capability' };
-const OBJECTIVE: Record<string, string> = { EDUCATE: 'Teach', ENGAGE: 'Ask for answers', DISCOVER: 'Mention the app', VISIT_APP: 'Store link', INSTALL_APP: 'Install', RETAIN: 'Return' };
+export const KIND: Record<string, string> = { vocab: 'Word', hangul: 'Hangul', grammar: 'Grammar', quiz: 'Review quiz', mistake: 'Common mistake', dialogue: 'Conversation', reading: 'Notice reading', challenge: 'Weekly challenge', feature: 'App capability' };
+export const OBJECTIVE: Record<string, string> = { EDUCATE: 'Teach', ENGAGE: 'Ask for answers', DISCOVER: 'Mention the app', VISIT_APP: 'Store link', INSTALL_APP: 'Install', RETAIN: 'Return' };
 const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 
 /** Content studio (D-040): the Page's daily lesson posts, their cards and results, and the community workspace. */
@@ -154,7 +154,7 @@ function EnableProgram({ onDone }: { onDone: () => void }) {
 }
 
 function ProgramView({ program, onChange, me }: { program: Program; onChange: () => void; me: Me }) {
-  const ov = useApi<Overview>(`/v1/content/programs/${program.id}/overview`);
+  const ov = useApi<StudioOverview>(`/v1/content/programs/${program.id}/overview`);
   const [preview, setPreview] = useState<{ id: string; image?: string; caption?: string | null; error?: unknown } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const toggle = async () => {

@@ -1,5 +1,5 @@
 import { type Browser, test as base, expect, type Page } from '@playwright/test';
-import { SECTIONS } from '../../apps/web/src/lib/catalog.js';
+import { PAGES } from '../../apps/web/src/lib/nav.js';
 import { E2E_ORIGIN, ORG, OWNER, totp } from '../fixtures.js';
 
 /**
@@ -88,21 +88,25 @@ test('unauthenticated visits go to the login page; a wrong password is refused',
   await expect(page).toHaveURL(/\/login/);
 });
 
-test('the owner signs in, returns to the requested section, and every module section renders', async ({ page }) => {
+test('the owner signs in, returns to the requested section, and every page of the unified shell renders', async ({ page }) => {
   await page.goto('/app/governance');
   await expect(page).toHaveURL(/\/login/);
   await signIn(page, OWNER.email, state.password);
   await expect(page).toHaveURL(/\/app\/governance$/);
-  await expect(page.getByRole('heading', { level: 1, name: 'Governance' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Governance & Security' })).toBeVisible();
   await expect(page.locator('#org')).toHaveValue(/.+/);
   await expect(page.locator('#org option:checked')).toHaveText(ORG.name);
 
-  for (const s of SECTIONS) {
-    await page.goto(s.slug === 'overview' ? '/app/' : `/app/${s.slug}`);
-    await expect(page.getByRole('heading', { level: 1, name: s.title, exact: true })).toBeVisible();
+  expect(PAGES.length).toBe(38);
+  for (const p of PAGES) {
+    await page.goto(p.slug ? `/app/${p.slug}` : '/app/');
+    await expect(page.getByRole('heading', { level: 1, name: p.slug ? p.title : 'Your growth at a glance', exact: true })).toBeVisible();
+    // One shell everywhere: the same navigation, search and organization switcher.
+    await expect(page.getByRole('navigation', { name: 'Main' })).toBeAttached();
+    await expect(page.getByRole('button', { name: /^Search goals/ })).toBeAttached();
     await page.waitForLoadState('networkidle');
     // Lists load without errors (GET endpoints need no two-factor session).
-    await expect(page.locator('.notice.error'), `section ${s.slug}`).toHaveCount(0);
+    await expect(page.locator('.notice.error'), `page ${p.slug || 'home'}`).toHaveCount(0);
   }
 });
 
@@ -133,7 +137,7 @@ test('change password: the old password stops working and other sessions are sig
 
   // This session continues; the other device is sent to the login page.
   await page.reload();
-  await expect(page.getByRole('heading', { level: 1, name: 'Account & security' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Organization & Team' })).toBeVisible();
   await expect(card).toContainText('Last changed');
   await other.goto('/app/');
   await expect(other).toHaveURL(/\/login/);
@@ -221,7 +225,8 @@ test('an invited approver joins through the invitation link', async ({ page, bro
   await guest.getByLabel('Password (12+ characters)').fill(invitee.password);
   await guest.getByRole('button', { name: 'Create account and join' }).click();
   await expect(guest).toHaveURL(/\/app\/settings$/);
-  await expect(guest.getByRole('heading', { level: 1, name: 'Account & security' })).toBeVisible();
+  await expect(guest.getByRole('heading', { level: 1, name: 'Organization & Team' })).toBeVisible();
+  await guest.getByRole('button', { name: /^Your account/ }).click();
   await expect(guest.locator('.who')).toHaveText('approver');
   await guest.context().close();
 
@@ -316,8 +321,84 @@ test('on a phone the guided screens fit the screen width', async ({ browser }) =
     const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow, `${path} scrolls sideways`).toBeLessThanOrEqual(1);
   }
-  await phone.getByRole('button', { name: 'Menu' }).click();
-  await expect(phone.getByRole('link', { name: /Knowledge & claims/ })).toBeInViewport();
+  await phone.getByRole('button', { name: 'Menu', exact: true }).click();
+  await phone.getByRole('button', { name: /More content tools/ }).click();
+  const knowledge = phone.getByRole('link', { name: /Knowledge & claims/ });
+  await knowledge.scrollIntoViewIfNeeded();
+  await expect(knowledge).toBeInViewport();
+  // Every tool stays reachable on a phone (All tools lists all 37), and the narrowest phones do not scroll sideways.
+  await phone.goto('/app/tools');
+  await expect(phone.locator('.tool-card')).toHaveCount(37);
+  await phone.setViewportSize({ width: 320, height: 700 });
+  for (const path of ['/app/', '/app/goals', '/app/approvals', '/app/tools']) {
+    await phone.goto(path);
+    await phone.waitForLoadState('networkidle');
+    expect(await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), `${path} at 320 px`).toBeLessThanOrEqual(1);
+  }
   expect(problems.get(phone) ?? []).toEqual([]);
   await ctx.close();
+});
+
+test('a teammate without the role is not offered restricted actions, in search or by deep link', async ({ browser }) => {
+  const approver = await freshPage(browser);
+  await signIn(approver, APPROVER.email, APPROVER.password);
+  await expect(approver).toHaveURL(/\/app\//);
+  // Quick actions and search only offer what this role can do.
+  await approver.getByRole('button', { name: /Quick action/ }).click();
+  const quick = approver.getByRole('menu', { name: 'Quick actions' });
+  await expect(quick.getByRole('menuitem', { name: /Review approvals/ })).toBeVisible();
+  await expect(quick.getByRole('menuitem', { name: /New growth goal/ })).toHaveCount(0);
+  await expect(quick.getByRole('menuitem', { name: /Connect an account/ })).toHaveCount(0);
+  await approver.keyboard.press('Escape');
+  await approver.keyboard.press('Control+k');
+  await approver.getByRole('combobox', { name: /^Search goals/ }).fill('new growth goal');
+  await expect(approver.getByRole('option', { name: /New growth goal/ })).toHaveCount(0);
+  await approver.keyboard.press('Escape');
+  // Deep links open read-only views; the server still refuses anything else.
+  await approver.goto('/app/goals#new');
+  await expect(approver.getByRole('heading', { level: 1, name: 'Goals & OKRs' })).toBeVisible();
+  await expect(approver.getByLabel('What do you want to achieve?')).toHaveCount(0);
+  await expect(approver.getByRole('button', { name: 'New goal' })).toHaveCount(0);
+  await approver.goto('/app/setup');
+  await expect(approver.getByRole('heading', { level: 1, name: 'Onboarding & Setup' })).toBeVisible();
+  await expect(approver.getByRole('button', { name: /Turn the Autopilot (on|off)/ })).toHaveCount(0);
+  await approver.goto('/app/governance');
+  await expect(approver.getByRole('button', { name: /Save policy/ }).first()).toBeDisabled();
+  const refused = await approver.evaluate(async () => {
+    const tenant = localStorage.getItem('fg.tenant') ?? '';
+    const r = await fetch('/v1/autopilot/settings', { method: 'PUT', credentials: 'include', headers: { 'content-type': 'application/json', 'x-fg-tenant': tenant, 'idempotency-key': crypto.randomUUID() }, body: JSON.stringify({ enabled: true }) });
+    return r.status;
+  });
+  expect(refused).toBe(403);
+  expect(problems.get(approver) ?? []).toEqual([]);
+  await approver.context().close();
+});
+
+test('switching organization shows only that organization: no goals, search records or summaries leak across', async ({ page }) => {
+  await signIn(page, OWNER.email, state.password, { totp: true });
+  await expect(page).toHaveURL(/\/app\/$/);
+  // The first organization has the Autopilot goal from the earlier suite.
+  await page.goto('/app/goals');
+  await expect(page.locator('section.ap-goal').first()).toBeVisible();
+  await page.goto('/app/settings');
+  await page.getByLabel('New organization name').fill('E2E Second Org');
+  await page.locator('#org-slug').fill('e2e-second-org');
+  await page.getByRole('button', { name: 'Create', exact: true }).click();
+  await expect(page).toHaveURL(/\/app\/$/);
+  await expect(page.locator('#org option:checked')).toHaveText('E2E Second Org');
+  await expect(page.locator('.area-glance')).toContainText(/No goals yet|The Autopilot is off/);
+  await page.goto('/app/goals');
+  await expect(page.getByText(/No goals yet/)).toBeVisible();
+  await expect(page.locator('section.ap-goal')).toHaveCount(0);
+  await page.keyboard.press('Control+k');
+  await page.getByRole('combobox', { name: /^Search goals/ }).fill('first-time downloads');
+  await expect(page.getByText(/Nothing matches/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('dialog', { name: 'Search FUTUREGROW' }).getByRole('group', { name: 'Goals', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  // Back to the first organization: its goal is there again.
+  await page.locator('#org').selectOption({ label: ORG.name });
+  await expect(page).toHaveURL(/\/app\/$/);
+  await expect(page.locator('#org option:checked')).toHaveText(ORG.name);
+  await page.goto('/app/goals');
+  await expect(page.locator('section.ap-goal').first()).toBeVisible();
 });

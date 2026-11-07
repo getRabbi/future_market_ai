@@ -108,12 +108,22 @@ export async function buildApp({ env, deps, auth: providedAuth, embedder, enviro
   });
   // Coarse component status for uptime monitors (no tenant data): 503 when a component is stale or failing.
   let statusCache: { at: number; value: ops.PlatformStatus } | null = null;
-  app.get('/statusz', { config: { public: true } }, async (_req, reply) => {
+  const coarseStatus = async () => {
     if (!statusCache || Date.now() - statusCache.at > 30_000) statusCache = { at: Date.now(), value: await ops.platformStatus(deps.db) };
     const s = statusCache.value;
-    reply.header('cache-control', 'no-store');
     const components = Object.fromEntries(Object.entries(s.components).map(([k, v]) => [k, { state: v.state, ...(v.ageSeconds === undefined ? {} : { ageSeconds: v.ageSeconds }) }]));
-    return reply.status(s.ok ? 200 : 503).send({ ok: s.ok, checkedAt: s.checkedAt, components });
+    return { ok: s.ok, checkedAt: s.checkedAt, components };
+  };
+  app.get('/statusz', { config: { public: true } }, async (_req, reply) => {
+    const s = await coarseStatus();
+    reply.header('cache-control', 'no-store');
+    return reply.status(s.ok ? 200 : 503).send(s);
+  });
+  // The same coarse status for signed-in people (the control plane reaches the API only under /v1),
+  // plus whether operator alerts have a delivery target. Read-only; no tenant data; always 200.
+  app.get('/v1/system/status', { schema: { tags: ['ops'] } }, async (_req, reply) => {
+    reply.header('cache-control', 'no-store');
+    return { ...(await coarseStatus()), alertDelivery: deps.notifier?.configured ? 'configured' : 'not_configured' };
   });
   app.get('/v1/openapi.json', { config: { public: true } }, async () => app.swagger());
 

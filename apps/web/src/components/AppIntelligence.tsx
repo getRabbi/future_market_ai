@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { api, type Me } from '../lib/api.js';
 import { formatDay, relativeTime } from '../lib/format.js';
+import { LineChart } from './Chart.js';
 import { Badge, DataTable, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
 
 /** Every API call this screen makes (checked against the API's routes in catalog.test.ts). */
@@ -130,8 +131,8 @@ function change(cur: number | null, prev: number | null): string {
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}% vs previous period`;
 }
 
-export function AppIntelligenceView({ me }: { me: Me }) {
-  const [tab, setTab] = useState<'apps' | 'accounts'>('apps');
+export function AppIntelligenceView({ me, initialApp = null, initialTab = 'apps' }: { me: Me; initialApp?: string | null; initialTab?: 'apps' | 'accounts' }) {
+  const [tab, setTab] = useState<'apps' | 'accounts'>(initialTab);
   return (
     <>
       <nav className="ai-tabs" aria-label="App intelligence">
@@ -142,7 +143,7 @@ export function AppIntelligenceView({ me }: { me: Me }) {
           Developer accounts &amp; apps
         </button>
       </nav>
-      {tab === 'apps' ? <AppsOverview /> : <DeveloperAccounts me={me} />}
+      {tab === 'apps' ? <AppsOverview initialApp={initialApp} /> : <DeveloperAccounts me={me} />}
     </>
   );
 }
@@ -160,12 +161,12 @@ const PERIODS = [
   { key: 'c28', days: 28, window: 'calendar', label: 'Last 28 calendar days (newest days may be unpublished)' },
 ] as const;
 
-function AppsOverview() {
+function AppsOverview({ initialApp }: { initialApp: string | null }) {
   const [preset, setPreset] = useState<(typeof PERIODS)[number]['key']>('r28');
   const [platform, setPlatform] = useState('');
   const [accountId, setAccountId] = useState('');
   const [brandId, setBrandId] = useState('');
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(initialApp);
   const period = PERIODS.find((p) => p.key === preset) ?? PERIODS[1];
   const requested = useMemo(() => {
     const to = new Date(Date.now() - 86_400_000);
@@ -251,7 +252,11 @@ function AppsOverview() {
           </ul>
         ) : null}
       </section>
-      {open ? <AppDetail key={`${open}-${range.from}`} id={open} range={range} onClose={() => setOpen(null)} /> : null}
+      {open ? (
+        <ScrollTarget key={open}>
+          <AppDetail key={`${open}-${range.from}`} id={open} range={range} onClose={() => setOpen(null)} />
+        </ScrollTarget>
+      ) : null}
       <section className="card">
         <h2>What the Growth Brain sees</h2>
         <p className="small muted">Changes in reported acquisition over the last 28 final days against the 28 before. Nothing is stated on stale or thin data, and a change is not attributed to a cause.</p>
@@ -271,6 +276,19 @@ function AppsOverview() {
         </ul>
       </section>
     </>
+  );
+}
+
+/** Brings an opened app report into view (also when it was opened from a link elsewhere). */
+function ScrollTarget({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: 'start' });
+  }, []);
+  return (
+    <div ref={ref} className="scroll-target">
+      {children}
+    </div>
   );
 }
 
@@ -377,7 +395,7 @@ function AppDetail({ id, range, onClose }: { id: string; range: { from: string; 
               </select>
             </label>
           </div>
-          <Trend buckets={d.series[shown] ?? []} unit={def?.aggregation === 'ratio' ? 'ratio' : undefined} />
+          <Trend buckets={d.series[shown] ?? []} unit={def?.aggregation === 'ratio' ? 'ratio' : undefined} label={def?.label ?? shown} />
           {def ? (
             <p className="small muted">
               <strong>{def.label}:</strong> {def.definition} Population: {def.population}.
@@ -431,46 +449,16 @@ function AppDetail({ id, range, onClose }: { id: string; range: { from: string; 
   );
 }
 
-/** Line of reported values; incomplete buckets are hollow, unreported buckets are gaps. */
-function Trend({ buckets, unit }: { buckets: Bucket[]; unit?: string }) {
-  const vals = buckets.map((b) => b.value).filter((v): v is number => v !== null);
-  if (!vals.length) return <p className="small muted">No reported values for this metric in the period.</p>;
-  const w = 640;
-  const hgt = 140;
-  const max = Math.max(...vals, 0) || 1;
-  const x = (i: number) => (buckets.length === 1 ? w / 2 : 8 + (i * (w - 16)) / (buckets.length - 1));
-  const y = (v: number) => hgt - 12 - (v / max) * (hgt - 28);
-  const segments: string[] = [];
-  let cur = '';
-  buckets.forEach((b, i) => {
-    if (b.value === null) {
-      if (cur) segments.push(cur);
-      cur = '';
-      return;
-    }
-    cur += `${cur ? 'L' : 'M'}${x(i).toFixed(1)},${y(b.value).toFixed(1)}`;
-  });
-  if (cur) segments.push(cur);
-  const last = [...buckets].reverse().find((b) => b.value !== null)!;
+/** Line of reported values; incomplete buckets are hollow, unreported buckets are gaps (never zero). */
+function Trend({ buckets, unit, label }: { buckets: Bucket[]; unit?: string; label: string }) {
   return (
-    <figure className="ai-trend">
-      <svg viewBox={`0 0 ${w} ${hgt}`} role="img" aria-label={`Trend, latest ${num(last.value, unit)} for ${last.bucket}`}>
-        <line x1="8" x2={w - 8} y1={hgt - 12} y2={hgt - 12} className="ai-axis" />
-        {segments.map((d) => (
-          <path key={d} d={d} className="ai-line" />
-        ))}
-        {buckets.map((b, i) =>
-          b.value === null ? null : (
-            <circle key={b.bucket} cx={x(i)} cy={y(b.value)} r={3} className={b.complete ? 'ai-dot' : 'ai-dot partial'}>
-              <title>{`${b.bucket}: ${num(b.value, unit)}${b.complete ? '' : ` (${b.daysWithData} of ${b.expectedDays} days reported)`}`}</title>
-            </circle>
-          ),
-        )}
-      </svg>
-      <figcaption className="small muted">
-        {buckets[0]?.bucket} – {buckets.at(-1)?.bucket} · max {num(max, unit)} · hollow points have days not yet reported
-      </figcaption>
-    </figure>
+    <LineChart
+      points={buckets.map((b) => ({ x: b.bucket, value: b.value, partial: !b.complete && b.value !== null, ...(b.complete || b.value === null ? {} : { note: `${b.daysWithData} of ${b.expectedDays} days reported` }) }))}
+      label={label}
+      unit={unit}
+      height={220}
+      caption={<span>Gaps are days the store has not reported yet; hollow points are periods with days still missing.</span>}
+    />
   );
 }
 
