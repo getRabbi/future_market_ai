@@ -135,8 +135,7 @@ describe('uptime monitor (Cloudflare Worker)', () => {
 
   it('treats an unexpected redirect as a failed check', async () => {
     const net = fakeNet();
-    const redirecting = (async (input: RequestInfo | URL, init?: RequestInit) =>
-      String(input) === `${WEB}/login/` ? new Response(null, { status: 302, headers: { location: `${WEB}/maintenance` } }) : net.f(input, init)) as unknown as typeof fetch;
+    const redirecting = (async (input: RequestInfo | URL, init?: RequestInit) => (String(input) === `${WEB}/login/` ? new Response(null, { status: 302, headers: { location: `${WEB}/maintenance` } }) : net.f(input, init))) as unknown as typeof fetch;
     const r = await runMonitor({ WEB_URL: WEB, API_URL: API, STATE: new MemoryKv() }, { fetch: redirecting, failureThreshold: 1 });
     expect(r.results.find((c) => c.name === 'web')).toMatchObject({ ok: false, detail: expect.stringContaining('unexpected status (HTTP 302') });
   });
