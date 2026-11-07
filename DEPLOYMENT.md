@@ -159,3 +159,10 @@ Then in the control plane: Audit trail → **Verify chain now** (valid), Evidenc
 3. Deploy Pages from the merged tree (as in §11) for the App intelligence tab; note the previous deployment id as the rollback target.
 4. Read-only checks: `GET /v1/app-intelligence/accounts` returns an empty list for orgs without an account; the EPS program keeps `campaignIdentity` `shared` (links still carry `utm_campaign=eps_daily`); the EPS goal keeps its schedule.
 5. Owner step to go live: connect a Play account and/or an App Store Connect key (docs/APP_INTELLIGENCE.md). Rollback to the previous binary needs no schema change; the new tables are simply unused.
+
+## 13. Unified product experience release (D-048)
+
+1. Merge through a PR after CI (including browser E2E) is green; the push to `main` builds api and worker. No migration. The api gains one read-only route, `GET /v1/system/status` (check it in `/v1/openapi.json`).
+2. Deploy Pages from the merged tree (as in §11): every signed-in page now uses the unified shell; `/app/advanced` and `/app/?view=…` redirect in the browser. Note the previous deployment id as the rollback target.
+3. Read-only checks, signed in: Home shows the journey, at-a-glance goals, next best action, performance (store reports), blockers, system health and activity; Ctrl+K finds a page and a goal; the bell lists waiting approvals; a 390 px phone shows no sideways scroll; the EPS goal keeps its schedule (the release changes no business rule).
+4. Rollback: redeploy the previous Pages deployment (web only), and revert the merge commit on `main` for the api route if needed; nothing in the database changes.

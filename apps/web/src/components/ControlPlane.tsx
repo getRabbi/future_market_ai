@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, getTenant, type Me, setTenant } from '../lib/api.js';
+import { ApiError, api, getTenant, type Me, setTenant } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
 import { sectionBySlug } from '../lib/catalog.js';
 import { legacyRedirect, pageBySlug } from '../lib/nav.js';
@@ -32,24 +32,55 @@ export function ControlPlane({ section }: { section: string; mode?: 'auto' | 'cl
   const [error, setError] = useState<unknown>(null);
   const slug = section === 'overview' ? '' : section;
 
+  /**
+   * Who is signed in, in which organization. `/v1/me` answers both (it carries every membership),
+   * so an ordinary page load makes no call to the rate-limited /api/auth routes. The organization
+   * list is read only when no organization is selected yet (or the stored one is no longer valid),
+   * and a failed list is an error with a retry, never "you have no organization".
+   */
   const boot = useCallback(async () => {
     setError(null);
-    const session = await authClient.getSession();
-    if (!session.data) {
+    const toLogin = () => {
       window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+    };
+    const fetchStatus = () => api<AutopilotStatus>('GET', '/v1/autopilot/status').catch(() => null);
+    // Asked in parallel only when the organization is already known; otherwise after it is resolved.
+    const startTenant = getTenant();
+    const early = startTenant ? fetchStatus() : null;
+    const readMe = () =>
+      api<Me>('GET', '/v1/me').then(
+        (m) => m,
+        (err: unknown) => err as Error,
+      );
+    let result = await readMe();
+    if (result instanceof ApiError && result.status === 401) return toLogin();
+    if (result instanceof ApiError && (result.status === 400 || result.status === 403)) {
+      // No organization selected, or the stored one is not this user's: choose from the list.
+      setTenant(null);
+      const list = await authClient.organization.list();
+      if (list.error) {
+        if (list.error.status === 401) return toLogin();
+        setError(new ApiError(list.error.message ?? 'Your organizations could not be loaded. Try again in a moment.', list.error.status ?? 0, null, null));
+        return;
+      }
+      const all = (list.data ?? []) as Org[];
+      if (all.length === 0) {
+        setOrgs([]);
+        return;
+      }
+      setTenant(all[0]!.id);
+      result = await readMe();
+    }
+    if (result instanceof Error) {
+      setError(result);
       return;
     }
-    const list = await authClient.organization.list();
-    const all = (list.data ?? []) as Org[];
-    setOrgs(all);
-    if (all.length === 0) return;
-    const chosen = all.find((o) => o.id === getTenant())?.id ?? all[0]!.id;
-    setTenant(chosen);
-    const [meResult, status] = await Promise.all([api<Me>('GET', '/v1/me').catch((err: unknown) => err), api<AutopilotStatus>('GET', '/v1/autopilot/status').catch(() => null)]);
+    const m = result as Me;
+    setTenant(m.tenantId);
+    setOrgs(m.memberships.map((x) => ({ id: x.organizationId, name: x.name, slug: x.slug })));
     // An API without the Autopilot (older deploy) simply has no Autopilot pages content.
-    setAutopilot(status);
-    if (meResult instanceof Error) setError(meResult);
-    else setMe(meResult as Me);
+    setAutopilot(await (early && startTenant === m.tenantId ? early : fetchStatus()));
+    setMe(m);
   }, []);
 
   useEffect(() => {
@@ -74,7 +105,16 @@ export function ControlPlane({ section }: { section: string; mode?: 'auto' | 'cl
         <div className="auth-brand">
           <Logo /> FUTUREGROW
         </div>
-        {error ? <ErrorNotice error={error} /> : <p className="muted loading">Loading your workspace…</p>}
+        {error ? (
+          <>
+            <ErrorNotice error={error} />
+            <button type="button" className="primary" onClick={() => void boot()}>
+              Try again
+            </button>
+          </>
+        ) : (
+          <p className="muted loading">Loading your workspace…</p>
+        )}
       </main>
     );
   }

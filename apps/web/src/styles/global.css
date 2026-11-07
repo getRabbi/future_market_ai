@@ -4674,6 +4674,18 @@ body.nav-locked {
   .perf .card-head {
     flex-wrap: wrap;
   }
+  .perf .card-tools {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    width: 100%;
+  }
+  .mini-select {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .mini-select select {
+    max-width: 100%;
+  }
   .search-box {
     display: none;
   }
@@ -4761,12 +4773,34 @@ body.nav-locked {
     width: 100%;
   }
 }
-@media (max-width: 360px) {
+@media (max-width: 640px) {
+  /* Phones: the logo mark carries the brand; every action stays in the header. */
   .brand-text {
     display: none;
   }
+  .header-brand {
+    padding: 0 0 0 0.5rem;
+  }
   .header-main {
-    padding: 0 0.5rem;
+    padding: 0 0.5rem 0 0.35rem;
+    gap: 0.25rem;
+  }
+}
+@media (max-width: 400px) {
+  .icon-btn,
+  .quick-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+  .header-actions {
+    gap: 0;
+  }
+  .user-btn {
+    padding: 0.15rem;
+  }
+  .avatar {
+    width: 2.05rem;
+    height: 2.05rem;
   }
 }
 @media (prefers-reduced-motion: reduce) {

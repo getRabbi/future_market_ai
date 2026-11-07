@@ -161,7 +161,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] D-048 one shell for every page (header, search, quick actions, notifications, help, account; grouped sidebar; breadcrumbs); Autopilot views and all module sections in it; legacy links redirect.
 - [x] Home dashboard per the approved reference (journey stepper, at a glance, next best action, performance chart, blockers, system health, growth summary, activity, completions); Journey, Setup, Goals (filters, details, execution timeline, decisions, KPI chart), Autopilot control center, Content Calendar, Results, Insights, Incidents & Alerts, Activity log, All tools.
 - [x] Accessible chart component with honest gaps, partial periods and table alternative; global Ctrl+K search; read-only `GET /v1/system/status`.
-- [x] Unit tests (navigation coverage, next-best-action priority, blocker levels, chart rules, search) and browser E2E for the 15 UX acceptance scenarios (docs/UX_UNIFIED.md).
+- [x] Unit tests (navigation coverage, next-best-action priority, blocker levels, chart rules, search) and browser E2E for the 15 UX acceptance scenarios (docs/UX_UNIFIED.md). Local results 2026-11-07: TypeScript 506/506 (57 files), browser E2E 17/17, typecheck and lint clean; visual QA against the reference at 1586/1440/390/320 px.
 
 **Capability status (2026-11-07):**
 

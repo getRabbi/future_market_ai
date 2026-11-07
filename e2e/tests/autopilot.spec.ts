@@ -245,7 +245,7 @@ test('global search reaches every tool from the keyboard, and the notification b
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Search FUTUREGROW' });
   await expect(palette).toBeVisible();
-  const box = palette.getByRole('combobox');
+  const box = palette.getByRole('combobox', { name: /^Search goals/ });
   await expect(box).toBeFocused();
   await box.fill('M17');
   await expect(palette.getByRole('option', { name: /Campaigns & paid media/ })).toHaveAttribute('aria-selected', 'true');
@@ -254,8 +254,8 @@ test('global search reaches every tool from the keyboard, and the notification b
   await expect(page.getByRole('heading', { level: 1, name: 'Campaigns & paid media' })).toBeVisible();
   // Records too: the goal created above, by name.
   await page.getByRole('button', { name: /^Search goals/ }).click();
-  await page.getByRole('combobox').fill('first-time downloads');
-  await expect(page.getByRole('group', { name: 'Goals' }).getByRole('option').first()).toContainText(/Grow app store first-time downloads/i, { timeout: 15_000 });
+  await page.getByRole('combobox', { name: /^Search goals/ }).fill('first-time downloads');
+  await expect(page.getByRole('dialog', { name: 'Search FUTUREGROW' }).getByRole('group', { name: 'Goals', exact: true }).getByRole('option').first()).toContainText(/Grow app store first-time downloads/i, { timeout: 15_000 });
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Search FUTUREGROW' })).toHaveCount(0);
 
@@ -365,9 +365,11 @@ test('on a 390 px phone the unified shell fits the screen, and store reports kee
   await expect(perf).toContainText(/total open: 3 of 28 days reported/);
   await expect(perf).toContainText('shown as gaps, not zero');
   const blockers = page.locator('.area-blockers');
-  await expect(blockers).toContainText('Google Play Developer Reporting API', { timeout: 20_000 });
+  // The card shows the three most severe; the optional API sorts after real problems, so read the full list.
+  await expect(blockers.getByRole('button', { name: /View all/ })).toBeVisible({ timeout: 20_000 });
   await blockers.getByRole('button', { name: /View all/ }).click();
   const drawer = page.getByRole('dialog', { name: 'Blockers' });
+  await expect(drawer).toContainText('Google Play Developer Reporting API', { timeout: 20_000 });
   await expect(drawer.locator('.blocker-detail', { hasText: 'Reporting API' })).toContainText('Optional enhancement');
   await expect(drawer.locator('.blocker-detail', { hasText: 'Reporting API' })).not.toContainText('Critical problem');
   await drawer.getByRole('button', { name: 'Close' }).click();

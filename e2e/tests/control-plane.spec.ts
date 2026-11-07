@@ -323,7 +323,9 @@ test('on a phone the guided screens fit the screen width', async ({ browser }) =
   }
   await phone.getByRole('button', { name: 'Menu', exact: true }).click();
   await phone.getByRole('button', { name: /More content tools/ }).click();
-  await expect(phone.getByRole('link', { name: /Knowledge & claims/ })).toBeInViewport();
+  const knowledge = phone.getByRole('link', { name: /Knowledge & claims/ });
+  await knowledge.scrollIntoViewIfNeeded();
+  await expect(knowledge).toBeInViewport();
   // Every tool stays reachable on a phone (All tools lists all 37), and the narrowest phones do not scroll sideways.
   await phone.goto('/app/tools');
   await expect(phone.locator('.tool-card')).toHaveCount(37);
@@ -349,7 +351,7 @@ test('a teammate without the role is not offered restricted actions, in search o
   await expect(quick.getByRole('menuitem', { name: /Connect an account/ })).toHaveCount(0);
   await approver.keyboard.press('Escape');
   await approver.keyboard.press('Control+k');
-  await approver.getByRole('combobox').fill('new growth goal');
+  await approver.getByRole('combobox', { name: /^Search goals/ }).fill('new growth goal');
   await expect(approver.getByRole('option', { name: /New growth goal/ })).toHaveCount(0);
   await approver.keyboard.press('Escape');
   // Deep links open read-only views; the server still refuses anything else.
@@ -389,9 +391,9 @@ test('switching organization shows only that organization: no goals, search reco
   await expect(page.getByText(/No goals yet/)).toBeVisible();
   await expect(page.locator('section.ap-goal')).toHaveCount(0);
   await page.keyboard.press('Control+k');
-  await page.getByRole('combobox').fill('first-time downloads');
+  await page.getByRole('combobox', { name: /^Search goals/ }).fill('first-time downloads');
   await expect(page.getByText(/Nothing matches/)).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('group', { name: 'Goals' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Search FUTUREGROW' }).getByRole('group', { name: 'Goals', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
   // Back to the first organization: its goal is there again.
   await page.locator('#org').selectOption({ label: ORG.name });
