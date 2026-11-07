@@ -45,20 +45,22 @@ async function signIn(page: Page) {
 
 const SENTENCE = "Grow my app's organic downloads over the next 30 days with a $0 advertising budget.";
 
+const e2eDatabase = () => new pg.Client({ connectionString: fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.data/e2e-database-url'), 'utf8').trim() });
+
 /**
  * Store reports need a real Google account to import, so this browser test seeds the rows an
  * import produces (one account, two apps, three reported days) directly into the e2e database.
+ * The account's last sync found the optional Reporting API denied (B-023).
  */
 async function seedStoreReports() {
-  const url = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.data/e2e-database-url'), 'utf8').trim();
-  const db = new pg.Client({ connectionString: url });
+  const db = e2eDatabase();
   await db.connect();
   try {
     const org = (await db.query<{ id: string }>(`select id from organization where slug = $1`, [ORG.slug])).rows[0]!.id;
     const conn = (await db.query<{ id: string }>(`insert into connections (tenant_id, provider, external_account_id, display_name, created_by) values ($1, 'google_play', 'pubsite_prod_rev_e2e', 'E2E Play account', 'e2e') returning id`, [org])).rows[0]!.id;
     const acct = (
       await db.query<{ id: string }>(
-        `insert into store_accounts (tenant_id, connection_id, provider, account_ref, display_name, health_status, last_success_at, next_sync_at, created_by) values ($1, $2, 'google_play', 'pubsite_prod_rev_e2e', 'E2E Play account', 'ok', now(), now() + interval '1 day', 'e2e') returning id`,
+        `insert into store_accounts (tenant_id, connection_id, provider, account_ref, display_name, health_status, health_detail, last_success_at, next_sync_at, created_by) values ($1, $2, 'google_play', 'pubsite_prod_rev_e2e', 'E2E Play account', 'ok', '{"bucket":"pubsite_prod_rev_e2e","reporting":"permission_denied","appsInBucket":2,"appsInReportingApi":0}', now(), now() + interval '1 day', 'e2e') returning id`,
         [org, conn],
       )
     ).rows[0]!.id;
@@ -90,6 +92,36 @@ async function seedStoreReports() {
         );
       }
     }
+  } finally {
+    await db.end();
+  }
+}
+
+/**
+ * A content studio draft from two Bangladesh days ago that was never submitted (the production
+ * case: a 3 Nov draft still offered after its lesson went out on 6 Nov).
+ */
+async function seedStaleStudioDraft(): Promise<string> {
+  const db = e2eDatabase();
+  await db.connect();
+  try {
+    const org = (await db.query<{ id: string }>(`select id from organization where slug = $1`, [ORG.slug])).rows[0]!.id;
+    const conn = (await db.query<{ id: string }>(`insert into connections (tenant_id, provider, external_account_id, display_name, created_by) values ($1, 'meta', 'e2e-lessons-page', 'E2E Lessons Page', 'e2e') returning id`, [org])).rows[0]!.id;
+    const program = (await db.query<{ id: string }>(`insert into studio_programs (tenant_id, connection_id, pack, status, settings, created_by) values ($1, $2, 'eps-topik-bn', 'paused', '{}', 'e2e') returning id`, [org, conn])).rows[0]!.id;
+    const item = (
+      await db.query<{ id: string }>(
+        `insert into content_plan_items (tenant_id, program_id, day, kind, unit_id, pack_version, objective, segment, template, palette, rationale, status) values ($1, $2, (now() at time zone 'Asia/Dhaka')::date - 2, 'vocab', 'v-anjeonmo', 'e2e', 'EDUCATE', 'beginners', 'vocab', 'navy', 'e2e', 'drafted') returning id`,
+        [org, program],
+      )
+    ).rows[0]!.id;
+    const post = (
+      await db.query<{ id: string }>(
+        `insert into social_posts (tenant_id, connection_id, platform, caption, asset_ids, claim_ids, disclosure, scheduled_at, status, status_reason, created_by) values ($1, $2, 'facebook', 'আজকের শব্দ: 안전모 — হেলমেট (stale e2e draft)', '{}', '{}', $3, now() - interval '2 days', 'draft', 'Studio draft from the verified curriculum', 'system:autopilot') returning id`,
+        [org, conn, JSON.stringify({ review: { draftedBy: 'system:content-studio', planItemId: item, language: 'bn' } })],
+      )
+    ).rows[0]!.id;
+    await db.query(`update content_plan_items set post_id = $1 where id = $2`, [post, item]);
+    return post;
   } finally {
     await db.end();
   }
@@ -165,6 +197,14 @@ test('on a 390 px phone the Autopilot home fits the screen and the goal is reada
   await expect(page.getByRole('heading', { level: 1, name: 'App intelligence' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Alpha Lessons/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Beta Words/ })).toBeVisible();
+  // D-047: the default period is a complete reporting window that ends on the last reported day (3 days ago),
+  // unpublished days are named, open totals say which apps miss days, and the optional API is a warning.
+  await expect(page.getByLabel('Period')).toHaveValue('r28');
+  await expect(page.getByText(/28 days, complete reporting window/)).toBeVisible();
+  await expect(page.getByText(/the 2 newer days are not published by the store yet and left out/)).toBeVisible();
+  await expect(page.getByText(/not totalled: Alpha Lessons reported 3 of 28 days; Beta Words reported 3 of 28 days/).first()).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Optional Google Play Developer Reporting API: permission denied' })).toContainText('not blocking');
+  await expect(page.getByText(/\d{4}-\d{2}-\d{2}T\d{2}:/)).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: /Alpha Lessons/ }).click();
   await expect(page.getByRole('heading', { level: 2, name: 'Alpha Lessons' })).toBeVisible();
@@ -172,8 +212,25 @@ test('on a 390 px phone the Autopilot home fits the screen and the goal is reada
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
   await page.getByRole('button', { name: 'Developer accounts & apps' }).click();
   await expect(page.getByText('E2E Play account')).toBeVisible();
+  const reportingWarning = page.getByRole('status').filter({ hasText: 'Optional Google Play Developer Reporting API: permission denied' });
+  await expect(reportingWarning).toContainText('What to do:');
+  await expect(reportingWarning).toContainText('View app information');
+  await expect(reportingWarning).toContainText('never shown as zero');
   await expect(page.getByRole('heading', { name: 'Connect a developer account' })).toBeVisible();
   await expect(page.getByLabel('Service account key (JSON file)')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+  expect(problems.get(page) ?? []).toEqual([]);
+
+  // D-047: a studio draft whose day passed unsubmitted is no longer offered once the studio refreshes its plan.
+  await seedStaleStudioDraft();
+  await page.getByRole('button', { name: /Pending approvals/ }).click();
+  await expect(page.getByRole('heading', { name: 'Facebook post drafts' })).toBeVisible();
+  await expect(page.getByText(/stale e2e draft/)).toBeVisible();
+  await page.getByRole('button', { name: /Content studio/ }).click();
+  await expect(page.getByText(/Expired: the draft's day \(\d{4}-\d{2}-\d{2}\) passed before it was submitted/)).toBeVisible({ timeout: 20_000 });
+  await page.getByRole('button', { name: /Pending approvals/ }).click();
+  await expect(page.getByText('Nothing waits for you')).toBeVisible();
+  await expect(page.getByText(/stale e2e draft/)).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
   expect(problems.get(page) ?? []).toEqual([]);
 

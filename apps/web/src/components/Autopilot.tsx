@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Me } from '../lib/api.js';
-import { relativeTime, statusLabel } from '../lib/format.js';
+import { formatDay, readableText, relativeTime, statusLabel } from '../lib/format.js';
 import { AppIntelligenceView } from './AppIntelligence.js';
 import { BrandStudioView } from './BrandStudio.js';
 import { ContentStudioView } from './ContentStudio.js';
@@ -89,12 +89,20 @@ interface Measurement {
   forecast: { expected: number; low: number; high: number; position: 'above' | 'within' | 'below'; days: number } | null;
   note: string;
 }
+interface CycleNote {
+  taskId: string;
+  kind: string;
+  title: string;
+  detail: string | null;
+}
 interface Cycle {
   id: string;
   seq: number;
   status: string;
   trigger: string;
   summary: string | null;
+  /** Steps that had no data but did not block what the cycle delivered (e.g. a forecast next to a verified post). */
+  unavailable?: CycleNote[];
   startedAt: string;
   finishedAt: string | null;
   plan: { steps: { kind: string; title: string; modules: string[]; reason: string }[]; notUsed: { modules: string[]; reason: string }[] };
@@ -569,7 +577,7 @@ function GoalCard({ goal: g, me, onChange, go }: { goal: Goal; me: Me; onChange:
           <strong>Measure:</strong> {g.kpi.label}
         </span>
         <span>
-          <strong>Until:</strong> {g.targetDate.slice(0, 10)} ({daysLeft(g.targetDate)} days left)
+          <strong>Until:</strong> {formatDay(g.targetDate.slice(0, 10))} ({daysLeft(g.targetDate)} days left)
         </span>
         <span>
           <strong>Ad budget:</strong> {money(g.adBudgetMicros, g.currency)}
@@ -586,7 +594,7 @@ function GoalCard({ goal: g, me, onChange, go }: { goal: Goal; me: Me; onChange:
         {c ? (
           <>
             <strong>Cycle {c.seq}</strong> <Badge value={c.status} /> {c.status === 'running' ? `started ${relativeTime(c.startedAt)}` : c.finishedAt ? `finished ${relativeTime(c.finishedAt)}` : ''}
-            {c.summary ? <div className="muted">{c.summary}</div> : null}
+            {c.summary ? <div className="muted">{readableText(c.summary, { userId: me.userId })}</div> : null}
           </>
         ) : (
           <span className="muted">The first cycle starts within a minute.</span>
@@ -597,7 +605,7 @@ function GoalCard({ goal: g, me, onChange, go }: { goal: Goal; me: Me; onChange:
             {g.pendingTrigger ? ` (${g.pendingTrigger})` : ''}.
           </div>
         ) : null}
-        {g.statusReason ? <div className="muted">{g.statusReason}</div> : null}
+        {g.statusReason ? <div className="muted">{readableText(g.statusReason, { userId: me.userId })}</div> : null}
       </div>
       <ErrorNotice error={error} />
       <div className="row">
@@ -645,15 +653,16 @@ function GoalCard({ goal: g, me, onChange, go }: { goal: Goal; me: Me; onChange:
 /* 3. AI activity                                                       */
 /* ------------------------------------------------------------------ */
 
-function TaskItem({ t, goalTitle }: { t: Task; goalTitle?: string }) {
+function TaskItem({ t, goalTitle, label }: { t: Task; goalTitle?: string; label?: string }) {
   const need = t.needs ? NEEDS[t.needs] : null;
+  const shown = label ?? t.status;
   return (
-    <li className={`ap-task ${t.status}`}>
+    <li className={`ap-task ${shown}`}>
       <div className="ap-task-head">
         <strong>{t.title}</strong>
-        <Badge value={t.status} />
+        <Badge value={shown} />
       </div>
-      {t.detail ? <div className="small">{t.detail}</div> : null}
+      {t.detail ? <div className="small">{readableText(t.detail)}</div> : null}
       <div className="small muted ap-task-meta">
         {goalTitle ? <span>{goalTitle}</span> : null}
         <span>{t.modules.join(' · ')}</span>
@@ -682,14 +691,17 @@ function ActivityView() {
   usePoll(reload);
   const rows = act.data ?? [];
   const latestCycles = useMemo(() => new Set((goals.data ?? []).map((g) => g.latestCycle?.id).filter(Boolean)), [goals.data]);
+  // A forecast without data next to a verified post is a limitation of that cycle, not a blocker.
+  const unavailableIds = useMemo(() => new Set((goals.data ?? []).flatMap((g) => (g.latestCycle?.unavailable ?? []).map((n) => n.taskId))), [goals.data]);
   if (act.error) return <ErrorNotice error={act.error} />;
   if (!act.data) return <LoadingRows label="Loading activity…" />;
   if (!rows.length) return <EmptyState title="Nothing has run yet">Create a goal; the first cycle starts within a minute and every step appears here as it happens.</EmptyState>;
   const now = rows.filter((r) => r.task.status === 'running' || r.task.status === 'waiting');
-  const blocked = rows.filter((r) => (r.task.status === 'blocked' || r.task.status === 'failed') && latestCycles.has(r.task.cycleId));
+  const blocked = rows.filter((r) => (r.task.status === 'blocked' || r.task.status === 'failed') && latestCycles.has(r.task.cycleId) && !unavailableIds.has(r.task.id));
+  const unavailable = rows.filter((r) => unavailableIds.has(r.task.id));
   const done = rows.filter((r) => r.task.status === 'completed' || r.task.status === 'skipped').slice(0, 40);
   const next = rows.filter((r) => r.task.status === 'pending');
-  const Section = ({ title, items, empty }: { title: string; items: typeof rows; empty: string }) => (
+  const Section = ({ title, items, empty, label }: { title: string; items: typeof rows; empty: string; label?: string }) => (
     <section className="card">
       <header>
         <h2>{title}</h2>
@@ -698,7 +710,7 @@ function ActivityView() {
       {items.length ? (
         <ul className="ap-tasks">
           {items.map((r) => (
-            <TaskItem key={r.task.id} t={r.task} goalTitle={r.goalTitle} />
+            <TaskItem key={r.task.id} t={r.task} goalTitle={r.goalTitle} label={label} />
           ))}
         </ul>
       ) : (
@@ -710,6 +722,7 @@ function ActivityView() {
     <div className="stack">
       <Section title="Doing now" items={now} empty="Nothing is running at this moment." />
       <Section title="Blocked — needs you" items={blocked} empty="Nothing is blocked." />
+      {unavailable.length ? <Section title="Not available yet — not blocking" items={unavailable} empty="" label="unavailable" /> : null}
       <Section title="Up next" items={next} empty="No steps are queued in the current cycles." />
       <section className="card">
         <header>
@@ -833,7 +846,7 @@ function ApprovalsView({ me, onChange }: { me: Me; onChange: () => void }) {
                   <span className="small muted">{relativeTime(a.createdAt)}</span>
                 </div>
                 <div className="small">
-                  For goal “{a.goalTitle}”. {a.statusReason}
+                  For goal “{a.goalTitle}”. {a.statusReason ? readableText(a.statusReason, { userId: me.userId }) : null}
                 </div>
                 <a className="btn primary small-btn" href={`/app/approvals?id=${a.id}`}>
                   Review exactly what will happen
@@ -1003,7 +1016,7 @@ function ResultsView() {
                     <strong>Cycle {c.seq}</strong>
                     <Badge value={c.status} />
                   </div>
-                  <div className="small">{c.summary ?? 'In progress.'}</div>
+                  <div className="small">{c.summary ? readableText(c.summary) : 'In progress.'}</div>
                   <details className="small muted">
                     <summary>Plan: modules used and left out</summary>
                     <ul className="tight">

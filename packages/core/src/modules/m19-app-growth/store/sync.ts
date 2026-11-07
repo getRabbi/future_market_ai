@@ -180,12 +180,14 @@ async function syncPlay(deps: CoreDeps, tenantId: string, ctx: ConnectorContext,
   }
   const fromReports = new Set([...listings.values()].flat().map((x) => x.pkg));
   let reporting: 'ok' | string = 'ok';
+  let reportingReason: string | null = null;
   let apiApps: { packageName: string; displayName: string | null }[] = [];
   try {
     apiApps = await searchPlayApps(ctx);
   } catch (err) {
     const c = classifyPlayError(err, 'reporting');
     reporting = c.access;
+    reportingReason = c.reason;
     stats.notes.push(`Play Developer Reporting API unavailable (${reporting}): ${c.message}. App names and vitals are not imported; bulk reports still are.`.slice(0, 300));
   }
   const apps = await withTenant(deps.db, { tenantId, actor: 'system:store-reporting' }, async (t) => {
@@ -242,7 +244,7 @@ async function syncPlay(deps: CoreDeps, tenantId: string, ctx: ConnectorContext,
       }
     });
   }
-  return { bucket, reporting, appsInBucket: fromReports.size, appsInReportingApi: apiApps.length };
+  return { bucket, reporting, ...(reportingReason ? { reportingReason } : {}), appsInBucket: fromReports.size, appsInReportingApi: apiApps.length };
 }
 
 async function importPlayFile(deps: CoreDeps, tenantId: string, ctx: ConnectorContext, a: Account, app: App, f: PlayFamily, dimension: PlayFamily['dimensions'][number], x: { obj: ReportObject; pkg: string; month: string; dim: string }, uri: string, stats: SyncStats) {

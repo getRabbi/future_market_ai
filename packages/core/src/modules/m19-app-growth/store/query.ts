@@ -19,6 +19,12 @@ export const IntelligenceQuerySchema = z
     platform: z.enum(['android', 'ios']).optional(),
     accountId: z.string().uuid().optional(),
     brandId: z.string().uuid().optional(),
+    /**
+     * `calendar`: exactly from..to. `reported` (overview only): the same number of days, ending on
+     * the latest day every app in scope has reported (Google posts Play statistics 3 to 7 days
+     * late), so the newest unpublished days do not leave every range incomplete.
+     */
+    window: z.enum(['calendar', 'reported']).default('calendar'),
   })
   .strict()
   .superRefine((q, ctx) => {
@@ -157,22 +163,46 @@ function summarizeCoverage(rows: (typeof storeReportCoverage.$inferSelect)[]) {
   return { worst, byStatus };
 }
 
+/** Per app, the latest day with a known (reported) value of any of the metrics, whatever the range. */
+async function reportedThrough(t: DbOrTx, appRowIds: string[], metricKeys: string[]): Promise<Map<string, string>> {
+  if (!appRowIds.length || !metricKeys.length) return new Map();
+  const r = await t.execute<{ app: string; day: string }>(sql`
+    select store_app_id::text as app, max(observation_date)::text as day
+    from store_metric_observations
+    where store_app_id in (${sql.join(
+      appRowIds.map((id) => sql`${id}::uuid`),
+      sql`, `,
+    )})
+      and metric_key in (${sql.join(
+        metricKeys.map((k) => sql`${k}`),
+        sql`, `,
+      )})
+      and value is not null
+    group by store_app_id`);
+  return new Map(r.rows.map((x) => [x.app, x.day]));
+}
+
 /** All Apps overview: per-app headline metrics with freshness and coverage; per-platform totals of like metrics only. */
 export async function appIntelligenceOverview(t: DbOrTx, raw: unknown, now: Date) {
-  const q = IntelligenceQuerySchema.parse(raw);
-  const span = days(q.from, q.to);
-  const prevTo = shift(q.from, -1);
-  const prevFrom = shift(q.from, -span);
-  const apps = await scopedApps(t, q);
+  const query = IntelligenceQuerySchema.parse(raw);
+  const span = days(query.from, query.to);
+  const apps = await scopedApps(t, query);
   const ids = apps.map((a) => a.app.id);
   const keys = [...new Set(Object.values(HEADLINE_METRICS).flatMap((h) => [...h.acquisition, ...h.installs, ...h.quality]))];
+  const latest = await reportedThrough(t, ids, keys);
+  // The common reported day: the earliest of the apps' latest reported days (apps with no report yet do not hold it back).
+  const commonThrough = [...latest.values()].sort()[0] ?? null;
+  const shifted = query.window === 'reported' && commonThrough !== null && commonThrough < query.to;
+  const q = shifted ? { ...query, from: shift(commonThrough, -(span - 1)), to: commonThrough } : query;
+  const prevTo = shift(q.from, -1);
+  const prevFrom = shift(q.from, -span);
   const [cur, prev, coverage, lastFiles] = await Promise.all([
     dailyTotals(t, ids, keys, q.from, q.to),
     dailyTotals(t, ids, keys, prevFrom, prevTo),
     latestCoverage(t, ids, q.from.slice(0, 7), q.to.slice(0, 7)),
     ids.length
       ? t
-          .select({ app: storeReportFiles.storeAppId, last: sql<string>`max(${storeReportFiles.importedAt})::text` })
+          .select({ app: storeReportFiles.storeAppId, last: sql<string>`to_char(max(${storeReportFiles.importedAt}) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')` })
           .from(storeReportFiles)
           .where(inArray(storeReportFiles.storeAppId, ids))
           .groupBy(storeReportFiles.storeAppId)
@@ -197,12 +227,7 @@ export async function appIntelligenceOverview(t: DbOrTx, raw: unknown, now: Date
       }),
     );
     const cov = coverage.filter((c) => c.storeAppId === app.id);
-    const latestDay =
-      cur
-        .filter((x) => x.appRowId === app.id && x.value !== null)
-        .map((x) => x.day)
-        .sort()
-        .at(-1) ?? null;
+    const latestDay = latest.get(app.id) ?? null;
     return {
       id: app.id,
       platform: app.platform,
@@ -216,7 +241,7 @@ export async function appIntelligenceOverview(t: DbOrTx, raw: unknown, now: Date
     };
   });
   // Totals add the same metric across apps of one platform, only when every app's range is complete.
-  const totals: Record<string, Record<string, { value: number | null; apps: number; appsComplete: number; label: string }>> = {};
+  const totals: Record<string, Record<string, { value: number | null; apps: number; appsComplete: number; label: string; incomplete: { appId: string; name: string; daysWithData: number; expectedDays: number }[] }>> = {};
   for (const platform of ['android', 'ios'] as const) {
     const group = out.filter((a) => a.platform === platform);
     if (!group.length) continue;
@@ -224,16 +249,19 @@ export async function appIntelligenceOverview(t: DbOrTx, raw: unknown, now: Date
     for (const k of [...HEADLINE_METRICS[platform].acquisition, ...HEADLINE_METRICS[platform].installs]) {
       const def = METRIC_DEFINITIONS[k];
       if (!def || (def.aggregation !== 'sum' && def.aggregation !== 'daily_unique')) continue;
-      const vals = group.map((a) => (a.metrics as Record<string, { value: number | null; complete: boolean }>)[k]!);
+      const vals = group.map((a) => (a.metrics as Record<string, { value: number | null; complete: boolean; daysWithData: number; expectedDays: number }>)[k]!);
       const complete = vals.filter((v) => v.complete && v.value !== null);
-      totals[platform]![k] = { value: complete.length === group.length ? complete.reduce((s, v) => s + v.value!, 0) : null, apps: group.length, appsComplete: complete.length, label: def.label };
+      // Which apps keep the total open (missing days are never filled), so the gap is explained, not hidden.
+      const incomplete = group.flatMap((a, i) => (vals[i]!.complete && vals[i]!.value !== null ? [] : [{ appId: a.appId, name: a.displayName ?? a.appId, daysWithData: vals[i]!.daysWithData, expectedDays: vals[i]!.expectedDays }]));
+      totals[platform]![k] = { value: complete.length === group.length ? complete.reduce((s, v) => s + v.value!, 0) : null, apps: group.length, appsComplete: complete.length, label: def.label, incomplete };
     }
   }
   return {
-    range: { from: q.from, to: q.to, days: span, previous: { from: prevFrom, to: prevTo } },
+    range: { from: q.from, to: q.to, days: span, previous: { from: prevFrom, to: prevTo }, window: query.window, requested: { from: query.from, to: query.to }, reportedThrough: commonThrough, unpublishedDaysExcluded: shifted ? days(shift(commonThrough, 1), query.to) : 0 },
     apps: out,
     totals,
     notes: [
+      ...(query.window === 'reported' ? ['The period ends on the latest day every app shown has reported. Newer days are not published by the store yet; they are left out, never counted as zero.'] : []),
       'Values are official aggregate store reports (Layer 1). Google posts Play statistics within 3 to 7 days, so the latest days are often not available yet; they are shown as missing, never as zero.',
       'Android and iOS metrics have different definitions and populations and are never added together. Platform totals only add the same metric across apps, and only when every app has the full range.',
       'Store listing visitors are daily unique counts: a range total is the sum of daily values, not unique people.',

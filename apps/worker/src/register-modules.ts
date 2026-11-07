@@ -1,4 +1,4 @@
-import { autopilot, brain, competitorsModule, customers, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
+import { autopilot, brain, competitorsModule, contentStudio, customers, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
 import { competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
 import { loadEnv, triggerNorthflankJob } from '@futuregrow/runtime';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
@@ -34,6 +34,16 @@ registerTasks((deps) => ({
     await forEachTenant(deps, (tenantId) =>
       withTenant(deps.db, { tenantId, actor: 'system:claims-sweep' }, async (tx) => {
         await knowledge.sweepClaims(tx, tenantId, systemActor('claims-sweep'), new Date());
+      }),
+    );
+  },
+
+  /** Content studio: a draft whose day passed unsubmitted is expired or superseded (never published, approved or deleted). */
+  studio_drafts_sweep: async () => {
+    await forEachTenant(deps, (tenantId) =>
+      withTenant(deps.db, { tenantId, actor: 'system:autopilot' }, async (tx) => {
+        const r = await contentStudio.expireStaleDrafts(tx, tenantId, deps.clock.now());
+        if (r.expired || r.superseded) deps.logger.info({ tenantId, ...r }, 'stale studio drafts closed');
       }),
     );
   },
@@ -92,4 +102,4 @@ registerEventHandlers((bus, deps) => {
   });
 });
 
-export const MODULE_CRONTAB = ['* * * * * autopilot_tick', '13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];
+export const MODULE_CRONTAB = ['* * * * * autopilot_tick', '13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '19 * * * * studio_drafts_sweep', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];

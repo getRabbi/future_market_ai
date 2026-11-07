@@ -5,4 +5,5 @@
  */
 export * from './engine.js';
 export * from './goals.js';
+export { classifyCycle, cycleView } from './outcome.js';
 export { type Measurement, MIN_KPI_POINTS, measureGoal, SETTLED_ACTION_STATES } from './steps.js';

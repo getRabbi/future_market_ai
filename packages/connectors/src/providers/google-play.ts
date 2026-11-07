@@ -367,6 +367,7 @@ export async function probePlayAccess(ctx: ConnectorContext, bucket: string): Pr
     reporting = c.access;
     details.reportingError = c.message;
     details.reportingHttpStatus = c.status;
+    details.reportingReason = c.reason;
   }
   return { reports, reporting, details };
 }

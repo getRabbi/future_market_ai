@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { api, type Me } from '../lib/api.js';
-import { relativeTime } from '../lib/format.js';
+import { formatDay, relativeTime } from '../lib/format.js';
 import { Badge, DataTable, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
 
 /** Every API call this screen makes (checked against the API's routes in catalog.test.ts). */
@@ -35,6 +35,14 @@ interface Account {
   backfillPending: boolean;
   syncing: boolean;
   lastRun: { mode: string; status: string; started_at: string; stats: { filesImported?: number; deferred?: number; notes?: string[] }; error: { message?: string } | null } | null;
+  /** Non-blocking problems of optional surfaces (the Play Developer Reporting API). */
+  warnings?: AccountWarning[];
+}
+interface AccountWarning {
+  code: string;
+  title: string;
+  detail: string;
+  action: string;
 }
 interface StoreApp {
   id: string;
@@ -71,9 +79,9 @@ interface OverviewApp {
   metrics: Record<string, RangeValue>;
 }
 interface Overview {
-  range: { from: string; to: string; days: number };
+  range: { from: string; to: string; days: number; window?: 'calendar' | 'reported'; reportedThrough?: string | null; unpublishedDaysExcluded?: number };
   apps: OverviewApp[];
-  totals: Record<string, Record<string, { value: number | null; apps: number; appsComplete: number; label: string }>>;
+  totals: Record<string, Record<string, { value: number | null; apps: number; appsComplete: number; label: string; incomplete?: { appId: string; name: string; daysWithData: number; expectedDays: number }[] }>>;
   notes: string[];
 }
 interface Bucket {
@@ -143,19 +151,32 @@ export function AppIntelligenceView({ me }: { me: Me }) {
 /* All apps                                                            */
 /* ------------------------------------------------------------------ */
 
+/** Period presets: "reported" windows end on the latest day every app has reported; one calendar option stays for comparison. */
+const PERIODS = [
+  { key: 'r7', days: 7, window: 'reported', label: 'Latest 7 reported days' },
+  { key: 'r28', days: 28, window: 'reported', label: 'Latest 28 reported days' },
+  { key: 'r90', days: 90, window: 'reported', label: 'Latest 90 reported days' },
+  { key: 'r365', days: 365, window: 'reported', label: 'Latest 365 reported days' },
+  { key: 'c28', days: 28, window: 'calendar', label: 'Last 28 calendar days (newest days may be unpublished)' },
+] as const;
+
 function AppsOverview() {
-  const [preset, setPreset] = useState(28);
+  const [preset, setPreset] = useState<(typeof PERIODS)[number]['key']>('r28');
   const [platform, setPlatform] = useState('');
   const [accountId, setAccountId] = useState('');
   const [brandId, setBrandId] = useState('');
   const [open, setOpen] = useState<string | null>(null);
-  const range = useMemo(() => {
+  const period = PERIODS.find((p) => p.key === preset) ?? PERIODS[1];
+  const requested = useMemo(() => {
     const to = new Date(Date.now() - 86_400_000);
-    return { from: day(new Date(to.getTime() - (preset - 1) * 86_400_000)), to: day(to) };
-  }, [preset]);
-  const q = new URLSearchParams({ ...range, ...(platform ? { platform } : {}), ...(accountId ? { accountId } : {}), ...(brandId ? { brandId } : {}) });
+    return { from: day(new Date(to.getTime() - (period.days - 1) * 86_400_000)), to: day(to) };
+  }, [period.days]);
+  const q = new URLSearchParams({ ...requested, window: period.window, ...(platform ? { platform } : {}), ...(accountId ? { accountId } : {}), ...(brandId ? { brandId } : {}) });
   const overview = useApi<Overview>(`/v1/app-intelligence/overview?${q}`);
+  // The detail view follows the period the overview actually used (a reported window may end earlier).
+  const range = overview.data ? { from: overview.data.range.from, to: overview.data.range.to } : requested;
   const accounts = useApi<{ accounts: Account[] }>('/v1/app-intelligence/accounts');
+  const warnings = (accounts.data?.accounts ?? []).filter((a) => a.status === 'active' && (!accountId || a.id === accountId)).flatMap((a) => (a.warnings ?? []).map((w) => ({ ...w, account: a.displayName })));
   const brands = useApi<{ id: string; name: string }[]>('/v1/brands');
   const signals = useApi<Signals>('/v1/app-intelligence/signals');
   return (
@@ -166,11 +187,12 @@ function AppsOverview() {
         <div className="form-grid">
           <label>
             Period
-            <select value={preset} onChange={(e) => setPreset(Number(e.target.value))}>
-              <option value={7}>Last 7 days</option>
-              <option value={28}>Last 28 days</option>
-              <option value={90}>Last 90 days</option>
-              <option value={365}>Last 365 days</option>
+            <select value={preset} onChange={(e) => setPreset(e.target.value as typeof preset)}>
+              {PERIODS.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                </option>
+              ))}
             </select>
           </label>
           <label>
@@ -204,6 +226,12 @@ function AppsOverview() {
             </select>
           </label>
         </div>
+        {overview.data?.apps.length ? <WindowNote overview={overview.data} /> : null}
+        {warnings.map((w) => (
+          <p key={`${w.account}-${w.code}`} className="notice warn small" role="status">
+            <strong>{w.title}</strong> ({w.account}, not blocking). App names and crash and ANR rates are unavailable; the report metrics below are not affected. What to do: see Developer accounts &amp; apps.
+          </p>
+        ))}
         <ErrorNotice error={overview.error} />
         {!overview.data && !overview.error ? <LoadingRows /> : null}
         {overview.data && !overview.data.apps.length ? <EmptyState title="No apps reporting yet">Connect a Google Play developer account or App Store Connect in Developer accounts &amp; apps. Every app the account publishes is found automatically.</EmptyState> : null}
@@ -246,6 +274,23 @@ function AppsOverview() {
   );
 }
 
+/** Which days the figures cover, and how fresh the store's reports are. */
+function WindowNote({ overview: o }: { overview: Overview }) {
+  const r = o.range;
+  const through = r.reportedThrough ?? null;
+  const excluded = r.unpublishedDaysExcluded ?? 0;
+  return (
+    <p className="small ai-window">
+      <strong>
+        {formatDay(r.from)} – {formatDay(r.to)}
+      </strong>{' '}
+      ({r.days} days{r.window === 'reported' ? ', complete reporting window' : ', calendar days'}). {r.window === 'reported' && excluded > 0 ? `Every app has reported through ${formatDay(r.to)}; the ${excluded} newer day${excluded === 1 ? ' is' : 's are'} not published by the store yet and left out.` : null}
+      {r.window !== 'reported' && through && through < r.to ? `Reports are published through ${formatDay(through)}; later days in this period are missing, so totals stay open.` : null}
+      {!through ? 'No reported day yet.' : null}
+    </p>
+  );
+}
+
 function AppCard({ app, onOpen, active }: { app: OverviewApp; onOpen: () => void; active: boolean }) {
   const keys = HEADLINE[app.platform].slice(0, 3);
   return (
@@ -270,14 +315,16 @@ function AppCard({ app, onOpen, active }: { app: OverviewApp; onOpen: () => void
         })}
       </span>
       <span className="small muted">
-        Data through {app.freshness.latestDay ?? 'no day yet'} · <Badge value={app.coverage.worst ?? 'pending'} /> · account <Badge value={app.account.health} />
+        Reported through {app.freshness.latestDay ? formatDay(app.freshness.latestDay) : 'no day yet'} · report coverage <Badge value={app.coverage.worst ?? 'pending'} /> · account <Badge value={app.account.health} />
       </span>
     </button>
   );
 }
 
 function Totals({ totals }: { totals: Overview['totals'] }) {
-  const rows = Object.entries(totals).flatMap(([platform, ms]) => Object.entries(ms).map(([, v]) => ({ platform: platform === 'android' ? 'Android' : 'iOS', metric: v.label, total: v.value === null ? `— (${v.appsComplete} of ${v.apps} apps have the full period)` : num(v.value) })));
+  // An open total names the apps missing days (they are never filled with zero).
+  const open = (v: Overview['totals'][string][string]) => (v.incomplete?.length ? `— not totalled: ${v.incomplete.map((x) => `${x.name} reported ${x.daysWithData} of ${x.expectedDays} days`).join('; ')}` : `— (${v.appsComplete} of ${v.apps} apps have the full period)`);
+  const rows = Object.entries(totals).flatMap(([platform, ms]) => Object.entries(ms).map(([, v]) => ({ platform: platform === 'android' ? 'Android' : 'iOS', metric: v.label, total: v.value === null ? open(v) : num(v.value) })));
   return (
     <>
       <h3>Totals of like metrics</h3>
@@ -473,6 +520,15 @@ function DeveloperAccounts({ me }: { me: Me }) {
               {a.syncing ? ' · syncing now' : ''}
             </p>
             {a.health !== 'ok' && a.health !== 'unknown' ? <p className="notice error small">{healthHelp(a)}</p> : null}
+            {(a.warnings ?? []).map((w) => (
+              <div key={w.code} className="notice warn small" role="status">
+                <strong>{w.title}</strong> <span className="muted">(not blocking)</span>
+                <p>{w.detail}</p>
+                <p>
+                  <strong>What to do:</strong> {w.action}
+                </p>
+              </div>
+            ))}
             {a.lastRun?.stats?.notes?.length ? (
               <details>
                 <summary className="small">Notes from the last sync</summary>

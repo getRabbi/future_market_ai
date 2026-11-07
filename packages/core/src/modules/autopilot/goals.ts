@@ -8,6 +8,7 @@ import { audit, record, requireRole } from '../../util.js';
 import { FACEBOOK_ENGAGEMENT_SERIES_KEY, FACEBOOK_INSIGHT_SERIES, listPostDrafts } from '../m16-social/index.js';
 import { DOWNLOADS_SERIES_KEY } from '../m19-app-growth/index.js';
 import { perAppKey } from '../m19-app-growth/store/signals.js';
+import { cycleView } from './outcome.js';
 
 export type GoalRow = typeof growthGoals.$inferSelect;
 export const GOAL_EDITORS = ['owner', 'admin', 'growth_operator'] as const;
@@ -151,7 +152,31 @@ export async function listGoals(tx: DbOrTx) {
     )
     .orderBy(desc(goalCycles.seq))
     .limit(500);
-  return goals.map((g) => ({ ...g, latestCycle: cycles.find((c) => c.goalId === g.id) ?? null, cycleCount: cycles.filter((c) => c.goalId === g.id).length }));
+  const latest = goals.map((g) => cycles.find((c) => c.goalId === g.id)).filter((c): c is (typeof cycles)[number] => Boolean(c));
+  const tasks = latest.length
+    ? await tx
+        .select({ id: goalTasks.id, cycleId: goalTasks.cycleId, kind: goalTasks.kind, status: goalTasks.status, needs: goalTasks.needs, title: goalTasks.title, detail: goalTasks.detail, output: goalTasks.output })
+        .from(goalTasks)
+        .where(
+          inArray(
+            goalTasks.cycleId,
+            latest.map((c) => c.id),
+          ),
+        )
+    : [];
+  return goals.map((g) => {
+    const c = latest.find((x) => x.goalId === g.id);
+    return {
+      ...g,
+      latestCycle: c
+        ? cycleView(
+            c,
+            tasks.filter((t) => t.cycleId === c.id),
+          )
+        : null,
+      cycleCount: cycles.filter((x) => x.goalId === g.id).length,
+    };
+  });
 }
 
 /** The goal an action's social post was drafted for (D-036), or null. */
@@ -214,7 +239,18 @@ export async function goalDetail(tx: DbOrTx, goalId: string) {
     .orderBy(desc(growthDecisions.createdAt))
     .limit(50);
   const actions = await goalActions(tx, goalId);
-  return { goal, cycles: cycles.map((c) => ({ ...c, tasks: tasks.filter((t) => t.cycleId === c.id) })), decisions, actions };
+  return {
+    goal,
+    cycles: cycles.map((c) => ({
+      ...cycleView(
+        c,
+        tasks.filter((t) => t.cycleId === c.id),
+      ),
+      tasks: tasks.filter((t) => t.cycleId === c.id),
+    })),
+    decisions,
+    actions,
+  };
 }
 
 /** Recent steps across goals (the activity feed). Only persisted state, never simulated. */

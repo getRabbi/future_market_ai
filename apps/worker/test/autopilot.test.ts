@@ -4,7 +4,30 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type ModelProvider, PROMPTS, type ProviderOutcome, type StructuredRequest } from '@futuregrow/agent-kernel';
 import { analytics, autopilot, brain, clearModelCache, connectionsModule, contentStudio, createModelGateway, evidence, execution, experimentsModule, governance, ideas, knowledge, record, social, systemActor } from '@futuregrow/core';
-import { actionRequests, analyticsRequests, approvals, appStoreReports, assets, auditLog, creativeBriefs, forecastPoints, forecastRuns, goalCycles, goalTasks, growthDecisions, growthGoals, growthIdeas, killSwitches, metricSeries, organization, outboxEvents, socialPosts, withSystem, withTenant } from '@futuregrow/db';
+import {
+  actionRequests,
+  analyticsRequests,
+  approvals,
+  appStoreReports,
+  assets,
+  auditLog,
+  contentPlanItems,
+  creativeBriefs,
+  forecastPoints,
+  forecastRuns,
+  goalCycles,
+  goalTasks,
+  growthDecisions,
+  growthGoals,
+  growthIdeas,
+  killSwitches,
+  metricSeries,
+  organization,
+  outboxEvents,
+  socialPosts,
+  withSystem,
+  withTenant,
+} from '@futuregrow/db';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobHelpers, Task } from 'graphile-worker';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -1367,6 +1390,16 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     expect(k.submit, String(k.submit!.detail)).toMatchObject({ status: 'completed', output: { actionType: 'social.facebook.publish_post' } });
     expect(k.track).toMatchObject({ status: 'completed', output: { status: 'VERIFIED' } });
     expect(provider.calls.length).toBe(modelCalls);
+    // No Page insights series exists (no read_insights): the forecast is unavailable, but the cycle that
+    // published and verified the post is completed, not blocked. The goal still wakes up when Page data arrives.
+    expect(k.forecast).toMatchObject({ status: 'blocked', needs: 'data' });
+    const [finished] = await otx((t) => t.select().from(goalCycles).where(eq(goalCycles.id, k.track!.cycleId)));
+    expect(finished).toMatchObject({ status: 'completed', summary: expect.stringMatching(/Not available yet \(not blocking\): Forecast/) });
+    expect(finished!.summary).not.toMatch(/Needs attention/);
+    expect(finished!.outcome).toMatchObject({ blocked: [], unavailable: [{ kind: 'forecast', needs: 'data' }], actionStatus: 'VERIFIED' });
+    expect((await goalRow(g.id, org)).memory).toMatchObject({ blockedOn: ['data'] });
+    const listed = (await otx((t) => autopilot.listGoals(t))).find((x) => x.id === g.id)!;
+    expect(listed.latestCycle).toMatchObject({ status: 'completed', recordedStatus: 'completed', unavailable: [{ kind: 'forecast', taskId: k.forecast!.id }] });
 
     // The exact rendered card went to Meta as a photo with the caption, and the read-back matched.
     expect(published).toHaveLength(1);
@@ -1487,6 +1520,86 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     const dayPosts = await otx((t) => t.select().from(socialPosts).where(sql`${socialPosts.disclosure}->'review'->>'planItemId' = ${drafts[0]!.planItemId}`));
     expect(dayPosts).toHaveLength(1);
     expect(published).toHaveLength(2);
+
+    // A draft whose day passed unsubmitted stops being actionable. The same lesson published on a later day
+    // supersedes it (the 3 Nov / 6 Nov production case): draft -> cancelled, plan item skipped, audited, kept.
+    const staleId = drafts[0]!.postId;
+    const [staleItem] = await otx((t) => t.select().from(contentPlanItems).where(eq(contentPlanItems.id, drafts[0]!.planItemId)));
+    expect(staleItem).toMatchObject({ status: 'drafted', postId: staleId });
+    const [laterItem] = await otx((t) =>
+      t
+        .select()
+        .from(contentPlanItems)
+        .where(and(eq(contentPlanItems.programId, program.id), eq(contentPlanItems.status, 'planned'), sql`${contentPlanItems.day} > ${staleItem!.day}`))
+        .orderBy(asc(contentPlanItems.day))
+        .limit(1),
+    );
+    await otx((t) => t.update(contentPlanItems).set({ unitId: staleItem!.unitId, status: 'published' }).where(eq(contentPlanItems.id, laterItem!.id)));
+    expect((await otx((t) => autopilot.inbox(t))).postDrafts.map((p) => p.id)).toContain(staleId);
+    // Still its own day: nothing changes yet.
+    await contentStudio.refreshPlan(h.deps, org, program.id);
+    expect((await otx((t) => t.select().from(socialPosts).where(eq(socialPosts.id, staleId))))[0]!.status).toBe('draft');
+    h.clock.current = new Date(Date.parse(`${laterItem!.day}T12:00:00Z`));
+    await contentStudio.refreshPlan(h.deps, org, program.id);
+    const [superseded] = await otx((t) => t.select().from(socialPosts).where(eq(socialPosts.id, staleId)));
+    expect(superseded).toMatchObject({ status: 'cancelled', statusReason: expect.stringMatching(new RegExp(`^Superseded: the same lesson was published on ${laterItem!.day}`)), caption: expect.any(String) });
+    expect(superseded!.assetIds).toHaveLength(1);
+    expect(superseded!.statusReason).not.toMatch(new RegExp(UUID));
+    expect((await otx((t) => t.select().from(contentPlanItems).where(eq(contentPlanItems.id, staleItem!.id))))[0]).toMatchObject({ status: 'skipped', postId: staleId, statusReason: superseded!.statusReason });
+    const [supersededAudit] = await otx((t) =>
+      t
+        .select()
+        .from(auditLog)
+        .where(and(eq(auditLog.action, 'studio.post.superseded'), eq(auditLog.subjectId, staleId))),
+    );
+    expect(supersededAudit!.payload).toMatchObject({ from: 'draft', to: 'cancelled', planItemId: staleItem!.id, day: staleItem!.day, supersededBy: { planItemId: laterItem!.id, day: laterItem!.day } });
+    expect((await otx((t) => autopilot.inbox(t))).postDrafts.map((p) => p.id)).not.toContain(staleId);
+
+    // Without a later publication of its lesson, a past-day draft expires (hourly worker sweep).
+    h.clock.advance(DAY);
+    const fresh = await contentStudio.draftPlannedPost(h.deps, org, { ...draftArgs, cycleId: randomUUID() });
+    if (fresh.kind !== 'drafted') throw new Error(fresh.detail);
+    const [freshItem] = await otx((t) => t.select().from(contentPlanItems).where(eq(contentPlanItems.id, fresh.planItemId)));
+    const lessonPublished =
+      (
+        await otx((t) =>
+          t
+            .select({ id: contentPlanItems.id })
+            .from(contentPlanItems)
+            .where(and(eq(contentPlanItems.programId, program.id), eq(contentPlanItems.status, 'published'), eq(contentPlanItems.unitId, freshItem!.unitId!))),
+        )
+      ).length > 0;
+    h.clock.advance(DAY);
+    await tasks.studio_drafts_sweep!({}, helpers);
+    const [closed] = await otx((t) => t.select().from(socialPosts).where(eq(socialPosts.id, fresh.postId)));
+    expect(closed).toMatchObject({ status: 'cancelled', statusReason: expect.stringMatching(lessonPublished ? /^Superseded:/ : new RegExp(`^Expired: the draft's day \\(${freshItem!.day}\\) passed`)) });
+    expect(
+      await otx((t) =>
+        t
+          .select()
+          .from(auditLog)
+          .where(and(eq(auditLog.action, lessonPublished ? 'studio.post.superseded' : 'studio.post.expired'), eq(auditLog.subjectId, fresh.postId))),
+      ),
+    ).toHaveLength(1);
+    // The sweep is idempotent and never publishes, approves or deletes.
+    await tasks.studio_drafts_sweep!({}, helpers);
+    expect(
+      await otx((t) =>
+        t
+          .select()
+          .from(auditLog)
+          .where(and(sql`${auditLog.action} in ('studio.post.superseded', 'studio.post.expired')`, eq(auditLog.subjectId, fresh.postId))),
+      ),
+    ).toHaveLength(1);
+    expect(published).toHaveLength(2);
+    expect(
+      await otx((t) =>
+        t
+          .select()
+          .from(socialPosts)
+          .where(inArray(socialPosts.id, [staleId, fresh.postId])),
+      ),
+    ).toHaveLength(2);
     await otx((t) => autopilot.commandGoal(t, h.deps, org, h.users.owner, g.id, 'cancel'));
   }, 300_000);
 });

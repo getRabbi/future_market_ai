@@ -13,6 +13,7 @@ const Range = z.object({
   platform: z.enum(['android', 'ios']).optional(),
   accountId: z.string().uuid().optional(),
   brandId: z.string().uuid().optional(),
+  window: z.enum(['calendar', 'reported']).optional(),
 });
 
 /**

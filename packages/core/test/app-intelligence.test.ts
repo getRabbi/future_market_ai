@@ -13,6 +13,7 @@ import { rotateConnectionCredentials } from '../src/modules/connections.js';
 import { assertUserWritableSeries } from '../src/modules/m08-analytics/index.js';
 import { recordInstall } from '../src/modules/m19-app-growth/index.js';
 import {
+  accountWarnings,
   appIntelligenceDetail,
   appIntelligenceOverview,
   connectStoreAccount,
@@ -430,6 +431,31 @@ describe('dashboard, campaigns, telemetry and the Growth Brain', () => {
     expect(alpha.metrics['play.daily_device_uninstalls']).toMatchObject({ complete: false, daysWithData: 30 });
   });
 
+  it('a reported window ends on the latest day every app has reported; open totals name the apps missing days (D-047)', async () => {
+    const q = { from: '2026-08-05', to: '2026-09-04', platform: 'android' };
+    // Calendar days past the last published report leave every app incomplete: no total, and it says why.
+    const calendar = await tx((t) => appIntelligenceOverview(t, q, h.clock.now()));
+    expect(calendar.range).toMatchObject({ from: '2026-08-05', to: '2026-09-04', window: 'calendar', reportedThrough: '2026-08-31', unpublishedDaysExcluded: 0 });
+    expect(calendar.totals.android!['play.daily_user_installs']).toMatchObject({ value: null, appsComplete: 0, incomplete: expect.arrayContaining([{ appId: BETA, name: expect.any(String), daysWithData: 27, expectedDays: 31 }]) });
+    // The same 31 days ending on the common reported day are complete for both apps, so the total is stated.
+    const reported = await tx((t) => appIntelligenceOverview(t, { ...q, window: 'reported' }, h.clock.now()));
+    expect(reported.range).toMatchObject({ from: '2026-08-01', to: '2026-08-31', days: 31, window: 'reported', requested: { from: '2026-08-05', to: '2026-09-04' }, reportedThrough: '2026-08-31', unpublishedDaysExcluded: 4 });
+    const alpha = reported.apps.find((a) => a.appId === ALPHA)!;
+    const beta = reported.apps.find((a) => a.appId === BETA)!;
+    expect(reported.totals.android!['play.daily_user_installs']).toMatchObject({ value: alpha.metrics['play.daily_user_installs']!.value! + beta.metrics['play.daily_user_installs']!.value!, appsComplete: 2, incomplete: [] });
+    // Strictness is unchanged: Beta has no traffic-source report, so acquisitions stay open, never zero-filled.
+    expect(reported.totals.android!['play.store_listing_acquisitions']).toMatchObject({ value: null, incomplete: [{ appId: BETA, name: expect.any(String), daysWithData: 0, expectedDays: 31 }] });
+    expect(beta.metrics['play.store_listing_acquisitions']).toMatchObject({ value: null, daysWithData: 0 });
+    // Freshness is the app's latest reported day whatever the period, and the import time is ISO.
+    expect(alpha.freshness.latestDay! >= '2026-10-14').toBe(true);
+    expect(beta.freshness.latestDay).toBe('2026-08-31');
+    expect(alpha.freshness.lastImportAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(reported.notes[0]).toMatch(/never counted as zero/);
+    // A window that already ends on or before the reported day is not moved.
+    const past = await tx((t) => appIntelligenceOverview(t, { from: '2026-08-01', to: '2026-08-10', platform: 'android', window: 'reported' }, h.clock.now()));
+    expect(past.range).toMatchObject({ from: '2026-08-01', to: '2026-08-10', unpublishedDaysExcluded: 0 });
+  });
+
   it('maps reported UTM campaigns through the registry: post, program or unregistered', async () => {
     const LISTING = `https://play.google.com/store/apps/details?id=${ALPHA}`;
     const brand = await tx((t) => createBrand(t, h.tenantId, h.users.owner, { slug: 'alpha', name: 'Alpha', profile: { visual: { palette: { background: '#0F1E45', ink: '#FFFFFF', accent: '#FFC845', onAccent: '#0B3A2F' } }, audience: { countries: ['BD'], languages: ['bn'] }, objectives: ['installs'] } }));
@@ -741,6 +767,19 @@ describe('final completion: KPI correctness, store context for the Growth Brain,
     expect(all).not.toMatch(/PRIVATE KEY|ya29|secret-ish/);
   });
 
+  it('turns the Reporting API state into one specific warning, never a blocker', () => {
+    const play = (healthDetail: Record<string, unknown>) => accountWarnings({ provider: 'google_play', healthDetail });
+    expect(play({ reporting: 'ok' })).toEqual([]);
+    expect(play({})).toEqual([]);
+    expect(play({ reporting: 'permission_denied', appsInReportingApi: 0 })).toEqual([expect.objectContaining({ code: 'PLAY_REPORTING_API_PERMISSION_DENIED', blocking: false })]);
+    expect(play({ reporting: 'permission_denied', reportingReason: 'SERVICE_DISABLED' })).toEqual([expect.objectContaining({ code: 'PLAY_REPORTING_API_DISABLED', action: expect.stringMatching(/enable the "Google Play Developer Reporting API"/) })]);
+    expect(play({ reporting: 'rate_limited' })).toEqual([expect.objectContaining({ code: 'PLAY_REPORTING_API_UNAVAILABLE' })]);
+    expect(play({ reportingError: 'access denied', reportingHttpStatus: 403 })).toEqual([expect.objectContaining({ code: 'PLAY_REPORTING_API_PERMISSION_DENIED' })]);
+    expect(accountWarnings({ provider: 'app_store_connect', healthDetail: { reporting: 'permission_denied' } })).toEqual([]);
+    const text = JSON.stringify(play({ reporting: 'permission_denied', reportingError: 'ya29.token' }));
+    expect(text).not.toMatch(/ya29/);
+  });
+
   it('connects when bulk reports work even if the optional Reporting API is unavailable, and names each failure', async () => {
     play.install(); // its routes answer again (a later fixture registered its own Reporting API route)
     play.denyReporting = true;
@@ -748,6 +787,9 @@ describe('final completion: KPI correctness, store context for the Growth Brain,
     const acct = await connectStoreAccount(h.deps, other, h.users.owner, { provider: 'google_play', displayName: 'Reports only', bucket: BUCKET, serviceAccountKey: KEY.json, settings: { vitals: false } });
     play.denyReporting = false;
     expect(acct).toMatchObject({ health: 'ok', healthDetail: { reportingError: expect.stringMatching(/Reporting API/) } });
+    // B-023: a specific, non-blocking warning with the fix; bulk reports are unaffected.
+    expect(acct.warnings).toEqual([expect.objectContaining({ code: 'PLAY_REPORTING_API_PERMISSION_DENIED', severity: 'warning', blocking: false, action: expect.stringMatching(/Google Play Developer Reporting API.*View app information/) })]);
+    expect(acct.warnings[0]!.detail).toMatch(/never estimated and never shown as zero/);
     const [conn] = await tx((t) => t.select().from(connections).where(eq(connections.id, acct.connectionId)), other);
     expect(conn).toMatchObject({ healthStatus: 'degraded', grantedScopes: ['https://www.googleapis.com/auth/devstorage.read_only'] });
     play.denyBucket = true;
