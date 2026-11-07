@@ -664,41 +664,6 @@ button.backdrop:hover {
   color: var(--muted);
 }
 
-.tiles .tile {
-  margin: 0;
-  text-decoration: none;
-  color: inherit;
-  border-left: 4px solid var(--ok);
-  transition:
-    transform 0.12s,
-    box-shadow 0.12s;
-}
-.tiles .tile:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-.tile-label {
-  font-size: 0.8rem;
-  font-weight: 650;
-  color: var(--muted);
-}
-.tile-hint {
-  font-size: 0.76rem;
-  color: var(--muted);
-}
-.tile.warn {
-  border-left-color: var(--warn);
-}
-.tile.warn .stat {
-  color: var(--warn);
-}
-.tile.danger {
-  border-left-color: var(--danger);
-}
-.tile.danger .stat {
-  color: var(--danger);
-}
-
 .roadmap {
   list-style: none;
   margin: 0;
@@ -2227,6 +2192,7 @@ button.pager-link.next {
 .ai-card {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 0.6rem;
   text-align: left;
   border: 1px solid var(--border);
@@ -3601,7 +3567,7 @@ body.nav-locked {
 }
 .next-buttons {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
   gap: 0.7rem;
   margin-top: 0.9rem;
 }
@@ -3622,6 +3588,32 @@ body.nav-locked {
   align-items: center;
   gap: 0.7rem;
   margin-top: 0.5rem;
+}
+.perf .card-head {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+.perf .card-title {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.perf .card-scope {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.perf .card-tools {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+.perf-value.open {
+  color: var(--faint);
+}
+.nav-link.has-pill .nav-title {
+  font-size: 0.87rem;
+  white-space: normal;
+  line-height: 1.25;
 }
 .perf-value {
   font-size: 2.1rem;
@@ -3925,7 +3917,7 @@ body.nav-locked {
   margin: 0.8rem 0 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(5.2rem, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.55rem;
 }
 .health-tile {
@@ -3969,7 +3961,7 @@ body.nav-locked {
 /* growth summary tiles */
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(5.6rem, 1fr));
   gap: 0.55rem;
   margin-top: 0.8rem;
 }
@@ -4672,6 +4664,15 @@ body.nav-locked {
 @media (max-width: 640px) {
   :root {
     --header-h: 62px;
+  }
+  .health-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .perf .card-head {
+    flex-wrap: wrap;
   }
   .search-box {
     display: none;

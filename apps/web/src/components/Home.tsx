@@ -28,6 +28,9 @@ export function Home() {
   const [period, setPeriod] = useState<PeriodKey>(readPeriod);
   const days = PERIODS.find((p) => p.key === period)!.days;
   const overview = useStoreOverview(days);
+  // Shared by several cards: one request each.
+  const audit = useApi<AuditRow[]>('/v1/governance/audit?limit=80');
+  const status = useApi<SystemStatus>('/v1/system/status');
   const choose = (k: PeriodKey) => {
     setPeriod(k);
     try {
@@ -58,10 +61,10 @@ export function Home() {
         <NextActionCard />
         <PerformancePanel overview={overview} days={days} />
         <BlockersCard />
-        <SystemHealthCard />
+        <SystemHealthCard status={status} />
         <GrowthSummary overview={overview} />
-        <RecentActivityCard />
-        <CompletionsCard />
+        <RecentActivityCard audit={audit} />
+        <CompletionsCard audit={audit} status={status} />
       </div>
     </div>
   );
@@ -337,8 +340,9 @@ function stateWord(kind: 'worker' | 'database' | 'backups' | 'jobs', s: Componen
   return { word: 'Unknown', tone: 'muted' };
 }
 
-export function SystemHealthCard() {
-  const status = useApi<SystemStatus>('/v1/system/status');
+type Loadable<T> = { data: T | null; error: unknown };
+
+export function SystemHealthCard({ status }: { status: Loadable<SystemStatus> }) {
   const s = status.data;
   const jobs: ComponentState | undefined = s
     ? [s.components.analytics_queue?.state, s.components.media_queue?.state].includes('failing')
@@ -409,9 +413,8 @@ export function stamp(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function RecentActivityCard() {
+function RecentActivityCard({ audit }: { audit: Loadable<AuditRow[]> }) {
   const { me } = useWorkspace();
-  const audit = useApi<AuditRow[]>('/v1/governance/audit?limit=80');
   const items = activityFromAudit(audit.data, me.userId, 5);
   return (
     <section className="card activity area-activity" aria-labelledby="home-activity" aria-busy={!items && !audit.error}>
@@ -463,11 +466,9 @@ interface Completion {
   href: string | null;
 }
 
-function CompletionsCard() {
+function CompletionsCard({ audit, status }: { audit: Loadable<AuditRow[]>; status: Loadable<SystemStatus> }) {
   const { attention } = useWorkspace();
   const verified = useApi<{ id: string; actionType: string; updatedAt: string }[]>('/v1/actions?status=VERIFIED&limit=10');
-  const audit = useApi<AuditRow[]>('/v1/governance/audit?limit=80');
-  const status = useApi<SystemStatus>('/v1/system/status');
   const goals = attention.goals.data;
   const items = useMemo<Completion[] | null>(() => {
     if (!verified.data && !verified.error) return null;

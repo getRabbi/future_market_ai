@@ -463,8 +463,9 @@ export function blockers(i: BlockerInput): Blocker[] | null {
 
 function guessNeed(n: CycleNoteLite): string | null {
   const t = `${n.kind} ${n.title} ${n.detail ?? ''}`.toLowerCase();
-  if (/approv/.test(t)) return 'approval';
   if (/model/.test(t)) return 'model';
+  if (n.kind === 'forecast' || n.kind === 'observe') return 'data';
+  if (/approv/.test(t)) return 'approval';
   if (/connect|reauth|token/.test(t)) return 'connection';
   if (/claim/.test(t)) return 'claims';
   if (/evidence/.test(t)) return 'evidence';
@@ -503,7 +504,7 @@ export interface ActivityItem {
   record: AuditRow;
 }
 
-const NOISE = new Set(['action.preflight.evaluated', 'action.request.proposed', 'social.posts.snapshot', 'analytics.series.points_invalidated', 'knowledge.entity.upserted', 'knowledge.relation.created', 'store.sync.requested', 'connector.connection.tested', 'store.account.tested']);
+const NOISE = new Set(['autopilot.cycle.started', 'action.preflight.evaluated', 'action.request.proposed', 'social.posts.snapshot', 'analytics.series.points_invalidated', 'knowledge.entity.upserted', 'knowledge.relation.created', 'store.sync.requested', 'connector.connection.tested', 'store.account.tested']);
 
 export function actorLabel(type: string, id: string, userId: string): string {
   if (type === 'user') return id === userId ? 'You' : 'A team member';
@@ -595,6 +596,8 @@ export function describeAudit(r: AuditRow, userId: string): ActivityItem | null 
     'store.app.confirmed': ['store', 'App confirmed'],
     'store.app.added': ['store', 'App added'],
     'autopilot.settings.changed': ['autopilot', 'Autopilot settings changed', 'Changed'],
+    'autopilot.goal.created': ['autopilot', 'Growth goal created'],
+    'autopilot.cycle.finished': ['autopilot', 'Autopilot cycle finished', 'Finished'],
     'governance.policy.updated': ['governance', 'Autonomy policy updated', 'Updated'],
     'governance.kill_switch.engaged': ['governance', 'Emergency stop engaged', 'Engaged'],
     'governance.kill_switch.released': ['governance', 'Emergency stop released', 'Released'],
@@ -613,11 +616,11 @@ export function describeAudit(r: AuditRow, userId: string): ActivityItem | null 
     const [kind, title, label] = hit;
     const bad = label === 'Failed' || label === 'Rejected';
     const detail = typeof p.reason === 'string' ? readableText(p.reason, { userId }) : typeof p.statusReason === 'string' ? readableText(p.statusReason, { userId }) : '';
-    return { ...base, kind, title, detail, status: { label: label ?? 'Completed', tone: bad ? 'danger' : label === 'Closed' || label === 'Discarded' ? 'muted' : label === 'Submitted' || label === 'Drafted' || label === 'Proposed' ? 'info' : 'ok' } };
+    return { ...base, kind, title, detail, status: { label: label ?? 'Completed', tone: bad ? 'danger' : label === 'Closed' || label === 'Discarded' ? 'muted' : label === 'Submitted' || label === 'Drafted' || label === 'Proposed' || label === 'Finished' ? 'info' : 'ok' } };
   }
   // Anything else: the action name in words ("creator.contract.signed" → "Creator contract signed").
   const words = r.action.replace(/[._]/g, ' ').trim();
-  return { ...base, kind: area === 'governance' ? 'governance' : 'other', title: words.charAt(0).toUpperCase() + words.slice(1), detail: '', status: { ...ok, label: verb ? statusLabel(verb) : 'Recorded', tone: 'info' } };
+  return { ...base, kind: area === 'governance' ? 'governance' : area === 'autopilot' ? 'autopilot' : 'other', title: words.charAt(0).toUpperCase() + words.slice(1), detail: '', status: { ...ok, label: verb ? statusLabel(verb) : 'Recorded', tone: 'info' } };
 }
 
 export function activityFromAudit(rows: AuditRow[] | null, userId: string, limit = 50): ActivityItem[] | null {

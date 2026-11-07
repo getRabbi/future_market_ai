@@ -387,7 +387,7 @@ function UserMenu() {
   };
   return (
     <div className="popover-wrap" ref={p.ref}>
-      <button type="button" ref={p.button} className="user-btn" aria-label={`Account menu for ${me.email ?? 'you'}`} aria-haspopup="menu" aria-expanded={p.open} onClick={() => p.setOpen(!p.open)}>
+      <button type="button" ref={p.button} className="user-btn" aria-label={`Your account (${me.email ?? 'signed in'})`} aria-haspopup="menu" aria-expanded={p.open} onClick={() => p.setOpen(!p.open)}>
         <span className="avatar" aria-hidden="true">
           {initials(me)}
         </span>
@@ -525,7 +525,7 @@ function Sidebar({ current, open, onClose }: { current: string; open: boolean; o
     return null;
   };
   const link = (p: NavPage) => (
-    <a key={p.slug} href={pageHref(p.slug)} className="nav-link" aria-current={p.slug === current ? 'page' : undefined}>
+    <a key={p.slug} href={pageHref(p.slug)} className={`nav-link${p.badge === 'auto' ? ' has-pill' : ''}`} aria-current={p.slug === current ? 'page' : undefined}>
       <Ico name={p.icon} size={19} />
       <span className="nav-title">{p.title}</span>
       {badge(p)}

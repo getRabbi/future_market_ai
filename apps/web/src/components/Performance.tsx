@@ -269,7 +269,7 @@ export function PerformancePanel({ overview, days, initialApp, initialMetric, he
     <section className={`card perf ${variant}`} aria-label={heading}>
       {head}
       <div className="perf-figure">
-        <span className="perf-value">{value === null ? '—' : formatCompact(value, chosen.unit)}</span>
+        <span className={`perf-value${value === null ? ' open' : ''}`}>{value === null ? '—' : formatCompact(value, chosen.unit)}</span>
         <ChangeChip pct={change} />
       </div>
       <p className="perf-sub">
@@ -354,7 +354,7 @@ export function summaryTiles(o: Overview | null, posts: PostLite[] | null): Tile
       label,
       value: t.value,
       change: t.value !== null ? pctChange(t.value, prev) : null,
-      note: t.value === null ? (t.incomplete?.length ? `Open: ${t.incomplete.length} app${t.incomplete.length === 1 ? '' : 's'} missing days` : 'Not reported yet') : `${t.apps} app${t.apps === 1 ? '' : 's'} · reported`,
+      note: t.value === null ? (t.incomplete?.length ? 'Days missing — total open' : 'Not reported yet') : `${t.apps} app${t.apps === 1 ? '' : 's'} · reported`,
       kind: t.value === null ? 'unavailable' : 'reported',
     });
   };
