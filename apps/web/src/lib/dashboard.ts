@@ -304,6 +304,18 @@ export function nextBestAction(i: NextActionInput): NextAction | null {
       secondary: { label: 'Autopilot activity', href: '/app/autopilot' },
     };
   }
+  const narrowStops = i.killSwitches.filter((k) => k.engaged && k.scope !== 'tenant');
+  if (narrowStops.length) {
+    const targets = [...new Set(narrowStops.map((k) => k.targetRef ?? statusLabel(k.scope).toLowerCase()))];
+    return {
+      tone: 'action',
+      title: `Review ${narrowStops.length === 1 ? 'an engaged emergency stop' : `${narrowStops.length} engaged emergency stops`}`,
+      text: `Stopped: ${targets.slice(0, 3).join(', ')}${targets.length > 3 ? ' and more' : ''}. Matching actions do not run until a stop is released; release the ones you no longer need.`,
+      meta: 'Releasing needs a two-factor session.',
+      primary: { label: 'Review emergency stops', href: '/app/governance' },
+      secondary: { label: 'Incidents & Alerts', href: '/app/incidents' },
+    };
+  }
   if (i.journeyNext) {
     const t = i.journeyNext;
     return { tone: 'setup', title: t.title, text: t.why, meta: `How: ${t.how}`, primary: { label: `Go to ${i.pageTitle(t.section)}`, href: `/app/${t.section}` }, secondary: { label: 'View full journey', href: '/app/journey' } };
@@ -390,13 +402,18 @@ const NEED_REMEDY: Record<string, { label: string; href: string; level: BlockerL
 export function blockers(i: BlockerInput): Blocker[] | null {
   if (i.killSwitches === null || i.incidents === null || i.goals === null) return null;
   const out: Blocker[] = [];
-  for (const k of i.killSwitches.filter((x) => x.engaged)) {
+  // One row per stopped target (several switches on the same target are one stop for the reader).
+  const stops = new Map<string, KillSwitchLite[]>();
+  for (const k of i.killSwitches.filter((x) => x.engaged)) stops.set(`${k.scope}:${k.targetRef ?? ''}`, [...(stops.get(`${k.scope}:${k.targetRef ?? ''}`) ?? []), k]);
+  for (const [key, ks] of stops) {
+    const k = ks[0]!;
+    const tenant = k.scope === 'tenant';
     out.push({
-      id: `kill-${k.id}`,
-      level: 'critical',
-      title: k.scope === 'tenant' ? 'Emergency stop: everything is paused' : `Emergency stop on ${k.targetRef ?? statusLabel(k.scope).toLowerCase()}`,
+      id: `kill-${key}`,
+      level: tenant ? 'critical' : 'action',
+      title: tenant ? 'Emergency stop: everything is paused' : `Emergency stop on ${k.targetRef ?? statusLabel(k.scope).toLowerCase()}${ks.length > 1 ? ` (${ks.length} switches)` : ''}`,
       detail: k.reason ? readableText(k.reason) : 'A kill switch is engaged.',
-      impact: 'Matching actions do not run until the switch is released.',
+      impact: tenant ? 'Nothing in this organization runs until it is released.' : `Only actions of this ${statusLabel(k.scope).toLowerCase()} are stopped; release it once the cause is fixed or the stop is no longer needed.`,
       remedy: { label: 'Review emergency stops', href: '/app/governance' },
     });
   }
@@ -623,12 +640,15 @@ export function describeAudit(r: AuditRow, userId: string): ActivityItem | null 
   return { ...base, kind: area === 'governance' ? 'governance' : area === 'autopilot' ? 'autopilot' : 'other', title: words.charAt(0).toUpperCase() + words.slice(1), detail: '', status: { ...ok, label: verb ? statusLabel(verb) : 'Recorded', tone: 'info' } };
 }
 
-export function activityFromAudit(rows: AuditRow[] | null, userId: string, limit = 50): ActivityItem[] | null {
+/** Kinds worth a line on Home; background syncs and data upkeep stay in the Activity log. */
+export const SIGNIFICANT_KINDS: ReadonlySet<ActivityKind> = new Set(['publish', 'content', 'store', 'autopilot', 'approval', 'governance', 'connection', 'team']);
+
+export function activityFromAudit(rows: AuditRow[] | null, userId: string, limit = 50, kinds?: ReadonlySet<ActivityKind>): ActivityItem[] | null {
   if (!rows) return null;
   const out: ActivityItem[] = [];
   for (const r of rows) {
     const item = describeAudit(r, userId);
-    if (item) out.push(item);
+    if (item && (!kinds || kinds.has(item.kind))) out.push(item);
     if (out.length >= limit) break;
   }
   return out;

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { type ActivityItem, type AuditRow, activityFromAudit, BLOCKER_LEVEL_LABEL, type Blocker, blockers, type ConnectionLite, glance, nextBestAction, type StoreAccountLite, verifiedTitle } from '../lib/dashboard.js';
+import { type ActivityItem, type AuditRow, activityFromAudit, BLOCKER_LEVEL_LABEL, type Blocker, blockers, type ConnectionLite, glance, nextBestAction, SIGNIFICANT_KINDS, type StoreAccountLite, verifiedTitle } from '../lib/dashboard.js';
 import { relativeTime } from '../lib/format.js';
 import { pageBySlug } from '../lib/nav.js';
 import { type AnyIcon, Ico } from './Icons.js';
@@ -29,7 +29,7 @@ export function Home() {
   const days = PERIODS.find((p) => p.key === period)!.days;
   const overview = useStoreOverview(days);
   // Shared by several cards: one request each.
-  const audit = useApi<AuditRow[]>('/v1/governance/audit?limit=80');
+  const audit = useApi<AuditRow[]>('/v1/governance/audit?limit=250');
   const status = useApi<SystemStatus>('/v1/system/status');
   const choose = (k: PeriodKey) => {
     setPeriod(k);
@@ -415,7 +415,7 @@ export function stamp(iso: string): string {
 
 function RecentActivityCard({ audit }: { audit: Loadable<AuditRow[]> }) {
   const { me } = useWorkspace();
-  const items = activityFromAudit(audit.data, me.userId, 5);
+  const items = activityFromAudit(audit.data, me.userId, 5, SIGNIFICANT_KINDS);
   return (
     <section className="card activity area-activity" aria-labelledby="home-activity" aria-busy={!items && !audit.error}>
       <header className="card-head">

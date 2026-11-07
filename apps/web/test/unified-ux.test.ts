@@ -121,6 +121,9 @@ describe('home dashboard logic', () => {
     // A blocked goal is the next thing when nothing waits for approval.
     const blocked = nextBestAction(base({ goals: [goal({ latestCycle: { id: 'c', seq: 3, status: 'blocked', summary: null, finishedAt: null, startedAt: '2026-11-06T00:00:00Z', attention: [{ taskId: 't', kind: 'observe', title: 'Connect App Store Connect', detail: null }] } })] }))!;
     expect(blocked.primary.href).toBe('/app/goals?id=g1');
+    // An engaged narrower stop is reviewed before journey tasks (but after approvals and blocked goals).
+    const stop = nextBestAction(base({ killSwitches: [{ id: 'k', scope: 'agent', targetRef: 'smoke-test-agent', engaged: true }], journeyNext: TASKS[0]! }))!;
+    expect(stop).toMatchObject({ tone: 'action', title: 'Review an engaged emergency stop', primary: { href: '/app/governance' } });
   });
 
   it('grades blockers: optional provider limits are never critical', () => {
@@ -133,10 +136,29 @@ describe('home dashboard logic', () => {
       policyConfigured: true,
       userId: 'u1',
     })!;
-    expect(list.map((b) => b.level)).toEqual(['critical', 'optional']);
+    expect(list.map((b) => b.level)).toEqual(['action', 'optional']);
     expect(list[1]!.title).toBe('Google Play Developer Reporting API: not enabled');
     expect(list[1]!.impact).toMatch(/not affected/);
     expect(blockers({ killSwitches: null, incidents: [], goals: [], storeAccounts: [], connections: [], policyConfigured: true, userId: 'u1' })).toBeNull();
+    // Several switches on one target are one stop; only an organization-wide stop is critical.
+    const stops = blockers({
+      killSwitches: [
+        { id: 'a', scope: 'agent', targetRef: 'smoke-test-agent', engaged: true, reason: 'smoke test' },
+        { id: 'b', scope: 'agent', targetRef: 'smoke-test-agent', engaged: true, reason: 'smoke test' },
+        { id: 'c', scope: 'agent', targetRef: 'smoke-test-agent', engaged: false, reason: 'released' },
+        { id: 't', scope: 'tenant', targetRef: null, engaged: true, reason: 'incident' },
+      ],
+      incidents: [],
+      goals: [],
+      storeAccounts: [],
+      connections: [],
+      policyConfigured: true,
+      userId: 'u1',
+    })!;
+    expect(stops.map((b) => [b.level, b.title])).toEqual([
+      ['critical', 'Emergency stop: everything is paused'],
+      ['action', 'Emergency stop on smoke-test-agent (2 switches)'],
+    ]);
   });
 
   it('writes audit records as sentences and drops internal steps', () => {
