@@ -45,6 +45,7 @@ from typing import Iterable, Protocol
 import psycopg
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
 
 from .pgtls import secure_dsn
 
@@ -450,6 +451,16 @@ def restore_backup(store: ObjectStore, object_key: str, key: bytes, target_dsn: 
 # --------------------------------------------------------------------------- CLI
 
 
+def same_database(a: str, b: str) -> bool:
+    """True when two libpq URLs/DSNs name the same server and database (libpq defaults applied)."""
+
+    def ident(dsn: str) -> tuple[str, str, str]:
+        p = conninfo_to_dict(dsn)
+        return ((p.get("host") or p.get("hostaddr") or "localhost").lower(), str(p.get("port") or "5432"), p.get("dbname") or p.get("user") or "")
+
+    return ident(a) == ident(b)
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m futuregrow_analytics.backup", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -465,6 +476,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         print("DATABASE_URL is required", file=sys.stderr)
+        return 2
+    if args.cmd == "verify" and args.restore_into and same_database(args.restore_into, dsn):
+        print("refusing: --restore-into names the DATABASE_URL database; a restore drill needs a separate, empty database", file=sys.stderr)
         return 2
     dsn = secure_dsn(dsn)
     store = store_from_env()

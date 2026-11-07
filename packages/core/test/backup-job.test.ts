@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { verifyAuditChain, withSystem, withTenant } from '@futuregrow/db';
+import { appendAudit, organization, verifyAuditChain, withSystem, withTenant } from '@futuregrow/db';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { agentActor, type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
@@ -20,6 +20,7 @@ let h: CoreHarness;
 let target: TestDatabase;
 let dir: string;
 const KEY = randomBytes(32).toString('base64');
+const OTHER = `org_${randomUUID().slice(0, 8)}`;
 const tx = <T>(fn: Parameters<typeof withTenant<T>>[2]) => withTenant(h.t.handle.db, { tenantId: h.tenantId, actor: 'user:test' }, fn);
 
 function backup(args: string[], env: Record<string, string> = {}, module = 'futuregrow_analytics.backup') {
@@ -65,6 +66,11 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     await tx((t) => recordConsent(t, h.tenantId, h.users.owner, { profileId: r.profileIds[0]!, purpose: 'marketing_email', status: 'granted', lawfulBasis: 'consent', source: 'form', capturedAt: h.clock.now().toISOString() }));
     await tx((t) => ingestDocument(t, h.deps, h.tenantId, h.users.owner, { title: 'Importing contacts', text: 'Import contacts from a CSV file under Settings.', evidenceId: ev.evidenceId, visibility: 'public' }));
     await proposeAction(h.deps, h.tenantId, agentActor(), { actionType: 'experiment.start', connectionId: null, params: { experimentId: randomUUID() }, evidenceIds: [ev.evidenceId], idempotencyKey: `bk-${randomUUID()}` });
+    // A second tenant, so the post-restore check has a separation to prove.
+    await h.t.handle.db.insert(organization).values({ id: OTHER, name: 'Other', slug: OTHER });
+    await withTenant(h.t.handle.db, { tenantId: OTHER, actor: 'user:test' }, async (t) => {
+      for (const n of [1, 2]) await appendAudit(t, { tenantId: OTHER, actorType: 'user', actorId: 'test', action: `other.event.${n}`, subjectType: 'test', subjectId: `s${n}`, payload: {} });
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -109,6 +115,18 @@ describe.skipIf(!py)('encrypted logical backup, verification and restore drill',
     const seqRow = (await target.handle.db.execute<{ next: string; max: string }>(sql`select nextval(pg_get_serial_sequence('audit_log','id'))::text as next, (select max(id) from audit_log)::text as max`)).rows[0]!;
     expect(BigInt(seqRow.next)).toBeGreaterThan(BigInt(seqRow.max));
   }, 120_000);
+
+  it('post-restore check (scripts/restore-drill-check.ts): audit chains, tenant separation, nothing queued', () => {
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/restore-drill-check.ts'], { cwd: root, env: { ...process.env, FG_DRILL_DATABASE_URL: target.url }, encoding: 'utf8', timeout: 120_000 });
+    expect(r.status, r.stderr).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ ok: true, queuedJobs: 0, problems: [] });
+    expect(out.perTenant[h.tenantId]).toMatchObject({ auditValid: true, foreignVisible: 0 });
+    expect(out.perTenant[OTHER]).toMatchObject({ auditValid: true, auditChecked: 2, visible: 2, foreignVisible: 0 });
+    const refused = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/restore-drill-check.ts'], { cwd: root, env: { ...process.env, FG_DRILL_DATABASE_URL: 'postgres://app:x@primary.postgres.example:5432/futuregrow' }, encoding: 'utf8' });
+    expect(refused.status).toBe(2);
+    expect(refused.stderr).toContain('refusing');
+  });
 
   it('refuses to restore over data and records every run', async () => {
     const r = backup(['restore', '--into', target.url]);

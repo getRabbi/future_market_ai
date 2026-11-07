@@ -1,6 +1,7 @@
 /**
  * Local development database: real PostgreSQL 17 (embedded binaries), persistent under
- * .data/pg-dev. Prints the DATABASE_URL and keeps running until interrupted.
+ * .data/pg-dev (FG_DEV_PG_DIR names another folder under .data, e.g. for a restore drill, RUNBOOK §9).
+ * Prints the DATABASE_URL and keeps running until interrupted.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,7 +10,9 @@ import pg from 'pg';
 import { runAllMigrations } from '../packages/db/src/migrate.js';
 
 const port = Number(process.env.FG_DEV_PG_PORT ?? 54320);
-const dir = path.resolve('.data', 'pg-dev');
+const dirName = process.env.FG_DEV_PG_DIR ?? 'pg-dev';
+if (!/^[A-Za-z0-9_-]+$/.test(dirName)) throw new Error('FG_DEV_PG_DIR must be a plain folder name under .data');
+const dir = path.resolve('.data', dirName);
 const password = process.env.FG_DEV_PG_PASSWORD ?? 'futuregrow-dev';
 const fresh = !fs.existsSync(path.join(dir, 'PG_VERSION'));
 

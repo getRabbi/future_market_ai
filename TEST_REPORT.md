@@ -140,7 +140,7 @@ Additional manual verification: the bundled api booted against PostgreSQL (`/hea
 | Container image builds locally | No Docker/Podman here (B-016) | Bundles booted locally; CI `images` job builds all four and Northflank builds them on every push |
 | pgvector path | Not available in the embedded build (B-004) | Exact-cosine fallback is the tested path |
 | Load and DR timing (P2) | Out of scope for the beta; RTO/RPO `[U]` | Restore drill procedure in RUNBOOK §9; model-provider failover is tested with scripted providers (`agent-kernel`) |
-| Uptime Worker on Cloudflare | Not deployed: no `ALERT_WEBHOOK_URL`, and the Cloudflare token is refused by the Workers KV API | Monitor logic tested with fake fetch and KV (`infra/cloudflare/uptime-worker/test`) |
+| Uptime Worker on Cloudflare | Deployed 2026-10-30 and running (deployed bundle = source, PR #25); no `ALERT_WEBHOOK_URL` secret yet, so its alerts reach Workers Logs only (B-024) | Monitor logic tested with fake fetch and KV (`infra/cloudflare/uptime-worker/test`) |
 
 Resolved since the first report: browser click-through (B-017, Playwright E2E in CI), CI execution (B-018) and the Northflank deployment (B-001).
 
@@ -171,4 +171,4 @@ Resolved since the first report: browser click-through (B-017, Playwright E2E in
 | Real Facebook test post | **prepared, not published** — action `248fcf33-2b87-4a42-936d-536a490e0b12` at `APPROVAL_REQUIRED` (operational + legal approval, distinct approver) |
 | Instagram | **blocked** — no Instagram professional account linked to the Page |
 | Comments from real users | **blocked** — app in Development mode (App Review, B-005) |
-| Uptime Worker | **blocked** — no `ALERT_WEBHOOK_URL`; Cloudflare token refused by the Workers KV API |
+| Uptime Worker | **live** since 2026-10-30 (cron every 5 min, 4 checks healthy); alert delivery **not configured** (B-024) |
