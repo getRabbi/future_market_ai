@@ -6,7 +6,9 @@ import { type OpsAlert, webhookFormat, webhookPayload } from '../../../../packag
  *
  * Every run probes the web app, the Pages→API proxy, the API liveness and the API component
  * status. A check is reported after `failureThreshold` consecutive failures (no flapping alerts),
- * re-reported every `renotifyMs` while it stays down, and its recovery is reported once.
+ * re-reported every `renotifyMs` while it stays down (at once when it turns critical, e.g. the
+ * database fails behind a degraded status), and its recovery is reported once; an undelivered
+ * recovery is retried on later runs, up to MAX_RECOVERY_ATTEMPTS.
  * State lives in one KV key and is written only when something changes.
  */
 export interface KvLike {
@@ -35,6 +37,10 @@ export interface CheckState {
   since: string | null;
   alertedAt: string | null;
   detail: string;
+  /** Whether the last problem announcement was critical (a later critical failure escalates). */
+  alertedCritical?: boolean;
+  /** Undelivered recovery announcements so far (the recovery stays pending until delivered). */
+  recoveryAttempts?: number;
 }
 
 export type MonitorState = Record<string, CheckState>;
@@ -48,6 +54,9 @@ export interface MonitorOptions {
 }
 
 const STATE_KEY = 'uptime-state:v1';
+const MAX_RECOVERY_ATTEMPTS = 5;
+/** Component states behind /statusz that mean the database itself is not usable. */
+const DB_DOWN = new Set(['failing', 'stale', 'unknown']);
 
 async function probe(f: typeof fetch, url: string, timeoutMs: number, accept: (res: Response, body: string) => string | null): Promise<{ ok: boolean; detail: string }> {
   const started = Date.now();
@@ -65,6 +74,9 @@ async function probe(f: typeof fetch, url: string, timeoutMs: number, accept: (r
 export async function runChecks(env: Pick<MonitorEnv, 'WEB_URL' | 'API_URL'>, f: typeof fetch, timeoutMs = 10_000): Promise<CheckResult[]> {
   const web = env.WEB_URL.replace(/\/$/, '');
   const api = env.API_URL.replace(/\/$/, '');
+  // A degraded status is a warning, unless the database itself is down: that is an outage
+  // (/healthz is liveness only and stays 200 while the database is unreachable).
+  let databaseDown = false;
   const checks = await Promise.all([
     probe(f, `${web}/login/`, timeoutMs, (r, b) => (r.status !== 200 ? 'unexpected status' : b.includes('FUTUREGROW') ? null : 'unexpected page content')).then((r) => ({ name: 'web', critical: true, ...r })),
     probe(f, `${web}/v1/openapi.json`, timeoutMs, (r, b) => (r.status !== 200 ? 'unexpected status' : /"openapi"\s*:/.test(b) ? null : 'not the API document')).then((r) => ({ name: 'pages-proxy', critical: true, ...r })),
@@ -77,11 +89,12 @@ export async function runChecks(env: Pick<MonitorEnv, 'WEB_URL' | 'API_URL'>, f:
         return 'unreadable status document';
       }
       if (r.status === 200 && s.ok) return null;
+      databaseDown = DB_DOWN.has(s.components?.database?.state ?? '');
       const bad = Object.entries(s.components ?? {})
         .filter(([, c]) => !['ok', 'not_configured'].includes(c.state))
         .map(([k, c]) => `${k}=${c.state}`);
-      return bad.length ? `degraded: ${bad.join(', ')}` : 'status not ok';
-    }).then((r) => ({ name: 'components', critical: false, ...r })),
+      return `${databaseDown ? 'database unavailable; ' : ''}${bad.length ? `degraded: ${bad.join(', ')}` : 'status not ok'}`;
+    }).then((r) => ({ name: 'components', critical: databaseDown, ...r })),
   ]);
   return checks;
 }
@@ -99,11 +112,14 @@ export function evaluate(prev: MonitorState, results: CheckResult[], now: Date, 
       if (p.failures || p.alertedAt) changed = true;
       continue;
     }
-    const s: CheckState = { failures: p.failures + 1, since: p.since ?? now.toISOString(), alertedAt: p.alertedAt, detail: r.detail };
-    const due = s.failures >= threshold && (!p.alertedAt || now.getTime() - Date.parse(p.alertedAt) >= renotifyMs);
+    const s: CheckState = { failures: p.failures + 1, since: p.since ?? now.toISOString(), alertedAt: p.alertedAt, detail: r.detail, ...(p.alertedCritical === undefined ? {} : { alertedCritical: p.alertedCritical }) };
+    // Announced as a warning and now critical (e.g. degraded, then the database fails): say so at once.
+    const escalated = Boolean(p.alertedAt) && r.critical && p.alertedCritical === false;
+    const due = s.failures >= threshold && (!p.alertedAt || escalated || now.getTime() - Date.parse(p.alertedAt) >= renotifyMs);
     if (due) {
       alerts.push({ ...base, severity: r.critical ? 'critical' : 'warning', status: 'problem', title: `${r.name} check failing`, text: r.detail, fields: { failingSince: s.since, consecutiveFailures: s.failures } });
       s.alertedAt = now.toISOString();
+      s.alertedCritical = r.critical;
     }
     next[r.name] = s;
     changed = true;
@@ -127,9 +143,16 @@ export async function runMonitor(env: MonitorEnv, opts: MonitorOptions): Promise
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       delivered++;
     } catch (err) {
-      // Not delivered: forget the alert so the next run tries again.
-      const s = next[a.dedupKey.replace(/^uptime:/, '')];
+      // Not delivered: a problem is forgotten so the next run announces it again; a recovery stays
+      // pending (the previous alert state is kept) so the next healthy run announces it again.
+      const name = a.dedupKey.replace(/^uptime:/, '');
+      const s = next[name];
+      const p = prev[name];
       if (s && a.status === 'problem') s.alertedAt = null;
+      if (s && p?.alertedAt && a.status === 'recovery') {
+        const attempts = (p.recoveryAttempts ?? 0) + 1;
+        if (attempts < MAX_RECOVERY_ATTEMPTS) Object.assign(s, { since: p.since, alertedAt: p.alertedAt, recoveryAttempts: attempts, ...(p.alertedCritical === undefined ? {} : { alertedCritical: p.alertedCritical }) });
+      }
       console.log(JSON.stringify({ alertDeliveryFailed: a.dedupKey, error: (err as Error).message }));
     }
   }
