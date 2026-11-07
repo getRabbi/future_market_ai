@@ -172,7 +172,7 @@ export function PerformancePanel({ overview, days, initialApp, initialMetric, he
     <header className="card-head">
       <h2 className="card-title">
         <Ico name="chart" size={19} /> {heading}
-        {chosen?.kind === 'app' ? <span className="card-scope">({chosen.app.displayName ?? chosen.app.appId})</span> : chosen ? <span className="card-scope">(KPI series)</span> : null}
+        {chosen?.kind === 'app' ? <span className="card-scope">({appName(chosen.app)})</span> : chosen ? <span className="card-scope">(KPI series)</span> : null}
       </h2>
       {chosen ? (
         <div className="card-tools">
@@ -189,7 +189,7 @@ export function PerformancePanel({ overview, days, initialApp, initialMetric, he
               >
                 {apps.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.displayName ?? a.appId} ({a.platform === 'ios' ? 'iOS' : 'Android'})
+                    {appName(a)} ({a.platform === 'ios' ? 'iOS' : 'Android'})
                   </option>
                 ))}
               </select>
@@ -199,7 +199,7 @@ export function PerformancePanel({ overview, days, initialApp, initialMetric, he
             <span className="sr-only">Metric</span>
             <select value={chosen.id} onChange={(e) => setMetric(e.target.value)} aria-label="Metric">
               {appChoices.length ? (
-                <optgroup label={app?.displayName ?? 'App'}>
+                <optgroup label={app ? appName(app) : 'App'}>
                   {appChoices.map((c) => (
                     <option key={c.id} value={c.id}>
                       {shortMetric(c.label)}
@@ -316,6 +316,9 @@ export function PerformancePanel({ overview, days, initialApp, initialMetric, he
     </section>
   );
 }
+
+/** The store name, else the linked brand, else the package id (store names need the optional Reporting API). */
+export const appName = (a: Pick<OverviewApp, 'displayName' | 'brand' | 'appId'>) => a.displayName ?? a.brand?.name ?? a.appId;
 
 const installsOf = (a: OverviewApp) => a.metrics['play.daily_user_installs']?.value ?? a.metrics['asc.first_time_downloads']?.value ?? null;
 const shortMetric = (label: string) => label.replace(/^Daily /, '').replace(/^Store listing /, 'Store ');

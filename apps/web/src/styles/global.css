@@ -3590,12 +3590,16 @@ body.nav-locked {
   margin-top: 0.5rem;
 }
 .perf .card-head {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: flex-start;
 }
 .perf .card-title {
+  flex: 1 1 12rem;
   flex-wrap: nowrap;
   min-width: 0;
+}
+.perf .mini-select select {
+  max-width: 12rem;
 }
 .perf .card-scope {
   overflow: hidden;
