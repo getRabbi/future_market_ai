@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { chatwootListInboxes, chatwootPostMessage, READ_CONNECTORS } from '../src/index.js';
+import { chatwootListInboxes, chatwootPostMessage, EXECUTORS, READ_CONNECTORS } from '../src/index.js';
 import { FixtureServer, makeCtx } from './helpers.js';
 
 const server = new FixtureServer();
@@ -92,5 +92,41 @@ describe('P2 health checks (read-only)', () => {
         dmarc: expect.stringMatching(/_dmarc/),
       },
     });
+  });
+});
+
+describe('PayPal Payouts adapter (P2-14, contract only; execution disabled B-015)', () => {
+  const p = { payoutRequestId: '7c9e6679-7425-40de-944b-e07fc1f90ae7', creatorId: '00000000-0000-4000-8000-0000000000c1', items: [{ itemId: 'item-0', receiver: 'riley@pay.example', amountMicros: 15_000_000, currency: 'USD', note: 'Commission payout' }] };
+  const ctx = () => makeCtx(server, { provider: 'paypal', clientId: 'cid', clientSecret: 'sec', environment: 'sandbox' });
+  const exec = EXECUTORS['creator.payout'] as unknown as { execute: (c: unknown, p: unknown, m: unknown) => Promise<any>; verify: (c: unknown, p: unknown, r: unknown) => Promise<any> };
+
+  it('ships disabled and maps amounts to PayPal decimal strings', async () => {
+    const { CAPABILITY_SEEDS, paypalAmount, mapPaypalBatchStatus } = await import('../src/index.js');
+    expect(CAPABILITY_SEEDS.find((c) => c.capability === 'creator_payout_create')).toMatchObject({ supported: false });
+    expect(paypalAmount(15_000_000, 'USD')).toBe('15.00');
+    expect(paypalAmount(1_500_000_000, 'JPY')).toBe('1500');
+    expect(['SUCCESS', 'PENDING', 'DENIED', 'WEIRD'].map(mapPaypalBatchStatus)).toEqual(['paid', 'pending', 'denied', 'unknown']);
+  });
+
+  it('pays one idempotent batch (sender_batch_id = request id) and is paid only after read-back SUCCESS', async () => {
+    let status = 'PENDING';
+    server.on('POST', '/v1/oauth2/token', (req) => (req.headers.authorization === `Basic ${Buffer.from('cid:sec').toString('base64')}` ? { json: { access_token: 'A21' } } : { status: 401, json: {} }));
+    server.on('POST', '/v1/payments/payouts', { status: 201, json: { batch_header: { payout_batch_id: 'BATCH1', batch_status: 'PENDING' } } });
+    server.on('GET', '/v1/payments/payouts/BATCH1', () => ({ json: { batch_header: { batch_status: status }, items: [{ payout_item: { sender_item_id: 'item-0' }, transaction_status: status === 'SUCCESS' ? 'SUCCESS' : 'PENDING' }] } }));
+    const r = await exec.execute(ctx(), p, { actionId: 'a', idempotencyKey: 'k' });
+    expect(r.receipt.providerObjectId).toBe('BATCH1');
+    const sent = server.find('POST', '/v1/payments/payouts')[0]!;
+    expect(sent.headers['paypal-request-id']).toBe(p.payoutRequestId);
+    expect(sent.json).toMatchObject({ sender_batch_header: { sender_batch_id: p.payoutRequestId }, items: [{ recipient_type: 'EMAIL', amount: { value: '15.00', currency: 'USD' }, receiver: 'riley@pay.example', sender_item_id: 'item-0' }] });
+    expect((await exec.verify(ctx(), p, r.receipt)).verdict).toBe('PENDING');
+    status = 'SUCCESS';
+    expect((await exec.verify(ctx(), p, r.receipt)).verdict).toBe('VERIFIED');
+    status = 'DENIED';
+    expect((await exec.verify(ctx(), p, r.receipt)).verdict).toBe('MISMATCH');
+  });
+
+  it('refuses invalid items before calling PayPal', async () => {
+    await expect(exec.execute(ctx(), { ...p, items: [{ ...p.items[0]!, receiver: 'not-an-email' }] }, { actionId: 'a', idempotencyKey: 'k' })).rejects.toThrow(/invalid payout item/);
+    expect(server.requests).toHaveLength(0);
   });
 });

@@ -488,6 +488,23 @@ const seeds: Seed[] = [
     sourceUrl: 'https://developers.google.com/google-ads/api/docs/campaigns/create-campaigns',
     notes: `${LIVE_UNVERIFIED} One atomic GoogleAdsService.Mutate after a validate-only pass; campaign PAUSED; start/end via start_date_time/end_date_time (v23+). Disabled (B-026) until the owner authorizes paid campaign creation.`,
   },
+  // ---------------- PayPal Payouts (creator payouts, P2-14): disabled (B-015) ----------------
+  {
+    platform: 'paypal',
+    apiVersion: 'v1',
+    capability: 'creator_payout_create',
+    supported: false,
+    requiredScopes: ['https://uri.paypal.com/services/payments/payouts'],
+    requiredAccountType: 'paypal_business_account_with_payouts',
+    appReviewRequired: 'true',
+    rateLimitPolicy: { kind: 'provider_dynamic', capacity: 5, refillPerSecond: 0.1, notes: 'PayPal REST rate limits' },
+    quota: {},
+    regionalRestrictions: ['receiver countries and currencies supported by PayPal Payouts'],
+    termsVersion: null,
+    fallback: 'disable',
+    sourceUrl: 'https://developer.paypal.com/docs/api/payments.payouts-batch/v1/',
+    notes: `${LIVE_UNVERIFIED} sender_batch_id = payout request id (idempotent); paid only when the batch reads back SUCCESS. Disabled until legal review, a merchant agreement, KYC and tax handling exist (B-015).`,
+  },
   // ---------------- Pexels (licensed stock media, P3-03) ----------------
   {
     platform: 'pexels',

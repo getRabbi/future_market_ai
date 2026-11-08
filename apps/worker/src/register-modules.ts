@@ -1,4 +1,4 @@
-import { autopilot, brain, competitorsModule, contentStudio, customers, governance, knowledge, media, registerEventHandlers, systemActor } from '@futuregrow/core';
+import { autopilot, brain, competitorsModule, contentStudio, customers, eventForwarding, governance, knowledge, media, registerEventHandlers, systemActor } from '@futuregrow/core';
 import { competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
 import { loadEnv, triggerNorthflankJob } from '@futuregrow/runtime';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
@@ -46,6 +46,17 @@ registerTasks((deps) => ({
         if (r.expired || r.superseded) deps.logger.info({ tenantId, ...r }, 'stale studio drafts closed');
       }),
     );
+  },
+
+  /** PostHog forwarding (P2-11): only enabled destinations, only consented events; failures leave the cursor in place. */
+  posthog_forward: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      const rows = await withTenant(deps.db, { tenantId, actor: 'system:event-forwarding' }, (tx) => eventForwarding.forwardingStatus(tx));
+      for (const r of rows.filter((x) => x.enabled)) {
+        const out = await eventForwarding.forwardEvents(deps, tenantId, r.connectionId);
+        if (out.status === 'failed') deps.logger.warn({ tenantId, connectionId: r.connectionId, error: out.error }, 'posthog forwarding failed; will retry');
+      }
+    });
   },
 
   /** Stock imports and AI images (P3-02/P3-03): up to five queued media jobs per tick, each leased and crash-safe. */
@@ -153,6 +164,7 @@ export const MODULE_CRONTAB = [
   '19 * * * * studio_drafts_sweep',
   '*/15 * * * * studio_items_sync',
   '* * * * * media_jobs_tick',
+  '*/5 * * * * posthog_forward',
   '*/2 * * * * video_projects_sync',
   '33 4 * * * stock_licence_sweep',
   '53 3 * * * retention_sweep',

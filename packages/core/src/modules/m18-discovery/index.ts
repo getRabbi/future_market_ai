@@ -526,3 +526,57 @@ registerHooks('store.app_store.update_localization', {
 export async function listListings(tx: DbOrTx) {
   return tx.select().from(storeListings).orderBy(desc(storeListings.createdAt)).limit(200);
 }
+
+/* ------------------------------------------------------------------ */
+/* Grounded SEO opportunities → Idea Lab (P2-13)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Striking-distance queries (position 4–20, CTR at or below the median, enough impressions) with
+ * the Search Console evidence behind each one. These are observations of the past period, not a
+ * forecast: no ranking, traffic or click outcome is promised.
+ */
+export async function groundedSeoOpportunities(tx: DbOrTx, opts: { minImpressions?: number; limit?: number } = {}) {
+  const base = await keywordOpportunities(tx, opts);
+  const rows = [];
+  for (const r of base.rows) {
+    const ev = await tx.execute<{ evidence_id: string; period_start: string; period_end: string }>(sql`
+      select evidence_id, period_start, period_end from keyword_metrics
+      where query = ${r.query} and ${r.page_url === null ? sql`page_url is null` : sql`page_url = ${r.page_url}`} and evidence_id is not null
+      order by period_end desc limit 3`);
+    rows.push({ ...r, evidenceIds: [...new Set(ev.rows.map((e) => e.evidence_id))], periods: ev.rows.map((e) => `${e.period_start}..${e.period_end}`) });
+  }
+  return { ...base, rows: rows.filter((r) => r.evidenceIds.length > 0) };
+}
+
+/** Turns the top grounded opportunities into Idea Lab hypotheses (each cites its Search Console evidence); duplicates are left to M06 screening. */
+export async function proposeSeoIdeas(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, opts: { limit?: number } = {}) {
+  requireRole(actor, ['owner', 'admin', 'growth_operator'], 'turning SEO opportunities into ideas');
+  const { rows } = await groundedSeoOpportunities(tx, { limit: opts.limit ?? 5 });
+  const { createIdea } = await import('../m06-ideas/index.js');
+  const created = [];
+  for (const r of rows.slice(0, opts.limit ?? 5)) {
+    const page = r.page_url ?? 'the ranking page';
+    created.push(
+      await createIdea(
+        tx,
+        deps,
+        tenantId,
+        actor,
+        {
+          title: `Improve the snippet for “${r.query.slice(0, 120)}”`,
+          hypothesis: `“${r.query}” has ${r.impressions} impressions at an average position of ${Number(r.position).toFixed(1)} with a CTR of ${(Number(r.ctr) * 100).toFixed(1)}%. A clearer title and description on ${page} may raise its click-through rate.`,
+          mechanism: 'Searchers choose results by title and description; a snippet that matches the query intent earns more clicks at the same position.',
+          audience: 'People searching for this query on Google',
+          targetMetric: 'search_console.ctr',
+          evidenceIds: r.evidenceIds,
+          test: { type: 'smoke_test' },
+          killCriteria: ['CTR does not rise after 28 days with comparable impressions', 'average position drops by more than 3'],
+          risks: ['Search Console data is sampled and delayed; positions move for reasons outside the page'],
+        },
+        'agent',
+      ),
+    );
+  }
+  return { created: created.length, ideas: created };
+}

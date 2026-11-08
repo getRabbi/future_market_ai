@@ -41,6 +41,8 @@ export interface PosthogEvent {
   distinctId: string;
   timestamp: string;
   properties: Record<string, unknown>;
+  /** Deterministic event uuid: PostHog deduplicates a resent event with the same uuid. */
+  uuid?: string;
 }
 
 export async function posthogCaptureBatch(ctx: ConnectorContext, events: PosthogEvent[]): Promise<{ accepted: number }> {
@@ -52,7 +54,7 @@ export async function posthogCaptureBatch(ctx: ConnectorContext, events: Posthog
     url: `${host.replace(/\/$/, '')}/batch/`,
     json: {
       api_key: projectApiKey,
-      batch: events.map((e) => ({ event: e.event, distinct_id: e.distinctId, timestamp: e.timestamp, properties: e.properties })),
+      batch: events.map((e) => ({ event: e.event, distinct_id: e.distinctId, timestamp: e.timestamp, properties: e.properties, ...(e.uuid ? { uuid: e.uuid } : {}) })),
     },
     idempotent: false,
   });

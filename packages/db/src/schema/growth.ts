@@ -699,6 +699,9 @@ export const conversations = pgTable(
     authenticated: boolean('authenticated').notNull().default(false),
     status: text('status').notNull().default('open'),
     assignedUserId: text('assigned_user_id'),
+    /** Chatwoot conversation this one was handed off to (P2-12); null when not mirrored. */
+    chatwootConversationId: integer('chatwoot_conversation_id'),
+    handoffStatus: text('handoff_status'),
     startedAt: ts('started_at').notNull().defaultNow(),
     lastMessageAt: ts('last_message_at').notNull().defaultNow(),
   },
@@ -716,13 +719,15 @@ export const conversationMessages = pgTable(
     role: text('role').notNull(),
     text: text('text').notNull(),
     redactedText: text('redacted_text').notNull(),
+    /** Provider message id for mirrored messages (e.g. chatwoot:123): each delivery is stored once. */
+    externalId: text('external_id'),
     citations: json<unknown[]>('citations').notNull().default([]),
     confidence: dbl('confidence'),
     handoffReason: text('handoff_reason'),
     modelInfo: json<Record<string, unknown> | null>('model_info'),
     createdAt: createdAt(),
   },
-  (t) => [index('conversation_messages_conv_idx').on(t.conversationId, t.createdAt), oneOf('conversation_messages_role_chk', t.role, ['customer', 'assistant', 'human_agent', 'system'])],
+  (t) => [index('conversation_messages_conv_idx').on(t.conversationId, t.createdAt), uniqueIndex('conversation_messages_external_uq').on(t.tenantId, t.externalId), oneOf('conversation_messages_role_chk', t.role, ['customer', 'assistant', 'human_agent', 'system'])],
 );
 
 export const supportTickets = pgTable(
@@ -996,4 +1001,80 @@ export const paidCampaignDrafts = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [index('paid_campaign_drafts_idx').on(t.tenantId, t.updatedAt), oneOf('paid_campaign_drafts_platform_chk', t.platform, ['meta', 'google_ads']), oneOf('paid_campaign_drafts_status_chk', t.status, ['draft', 'submitted', 'created', 'failed', 'cancelled'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* P2-11 PostHog forwarding                                            */
+/* ------------------------------------------------------------------ */
+
+/** Forwarding of consented events to an analytics destination: on/off, cursor and counters (idempotent by event uuid). */
+export const eventForwarding = pgTable(
+  'event_forwarding',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    destination: text('destination').notNull(),
+    connectionId: uuid('connection_id').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    cursorReceivedAt: ts('cursor_received_at'),
+    cursorEventId: uuid('cursor_event_id'),
+    forwarded: integer('forwarded').notNull().default(0),
+    skippedNoConsent: integer('skipped_no_consent').notNull().default(0),
+    lastRunAt: ts('last_run_at'),
+    lastStatus: text('last_status'),
+    lastError: text('last_error'),
+    updatedBy: text('updated_by'),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('event_forwarding_dest_uq').on(t.tenantId, t.destination, t.connectionId), oneOf('event_forwarding_dest_chk', t.destination, ['posthog'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* P2-14 Creator payouts                                               */
+/* ------------------------------------------------------------------ */
+
+/** What must be true before a creator can be paid: destination, identity/KYC and tax evidence. */
+export const creatorPayoutProfiles = pgTable(
+  'creator_payout_profiles',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    creatorId: uuid('creator_id').notNull(),
+    provider: text('provider').notNull(),
+    /** Receiver at the provider (e.g. PayPal email); stored only for payout execution. */
+    receiver: text('receiver').notNull(),
+    kycStatus: text('kyc_status').notNull().default('not_started'),
+    kycEvidenceId: uuid('kyc_evidence_id'),
+    taxFormEvidenceId: uuid('tax_form_evidence_id'),
+    country: text('country'),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('creator_payout_profiles_uq').on(t.tenantId, t.creatorId), oneOf('creator_payout_profiles_kyc_chk', t.kycStatus, ['not_started', 'pending', 'verified', 'rejected'])],
+);
+
+/**
+ * One payout request: the readiness check at request time, the M23 action, the provider batch and
+ * its reconciliation. A request is only "paid" after the provider reports the batch as paid.
+ */
+export const payoutRequests = pgTable(
+  'payout_requests',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    creatorId: uuid('creator_id').notNull(),
+    status: text('status').notNull(),
+    amounts: json<{ currency: string; amountMicros: number }[]>('amounts').notNull(),
+    readiness: json<Record<string, unknown>>('readiness').notNull(),
+    blockers: textArray('blockers').notNull().default(sql`'{}'::text[]`),
+    actionId: uuid('action_id'),
+    providerBatchId: text('provider_batch_id'),
+    providerStatus: text('provider_status'),
+    reconciledAt: ts('reconciled_at'),
+    dispute: json<Record<string, unknown> | null>('dispute'),
+    requestedBy: text('requested_by').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('payout_requests_creator_idx').on(t.tenantId, t.creatorId, t.createdAt), oneOf('payout_requests_status_chk', t.status, ['blocked', 'proposed', 'approved', 'sent', 'paid', 'failed', 'denied', 'disputed', 'cancelled'])],
 );

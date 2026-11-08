@@ -1,5 +1,5 @@
 import { verifyMetaSignature, verifyShopifyHmac, verifySvixSignature, verifyTikTokSignature } from '@futuregrow/connectors';
-import { webhooks } from '@futuregrow/core';
+import { conversationsModule, webhooks } from '@futuregrow/core';
 import { safeEqual, sha256Hex } from '@futuregrow/observability';
 import type { Env } from '@futuregrow/runtime';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -77,6 +77,15 @@ export function registerWebhookRoutes(app: FastifyInstance, ctx: ApiContext, env
     const body = req.body as { type?: string } | null;
     const stored = await accept(req, { provider: 'resend', providerEventId: h(req, 'svix-id') ?? null, topic: body?.type ?? null, signatureValid: valid, accountRef: null });
     return reply.status(valid ? 200 : 401).send({ received: valid, duplicate: stored.duplicate });
+  });
+
+  app.post('/webhooks/chatwoot/:connectionId/:token', { config: { public: true } }, async (req, reply) => {
+    const { connectionId, token } = req.params as { connectionId: string; token: string };
+    // The path token is a keyed hash of the connection id; a wrong token is recorded as unsigned and never processed.
+    const valid = /^[0-9a-f-]{36}$/.test(connectionId) && safeEqual(token, conversationsModule.chatwootWebhookToken(ctx.deps.config.identifierPepper, connectionId));
+    const body = req.body as { event?: string; id?: number; conversation?: { id?: number } } | null;
+    const stored = await accept(req, { provider: 'chatwoot', providerEventId: `chatwoot:${connectionId}:${body?.event ?? 'unknown'}:${body?.id ?? sha256Hex(req.rawBody ?? '')}`, topic: body?.event ?? null, signatureValid: valid, accountRef: null, connectionId: valid ? connectionId : null });
+    return reply.status(valid ? 200 : 401).send({ received: true, duplicate: stored.duplicate });
   });
 
   app.post('/webhooks/tiktok', { config: { public: true } }, async (req, reply) => {

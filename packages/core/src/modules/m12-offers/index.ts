@@ -224,3 +224,5 @@ export async function listGuardrails(tx: DbOrTx) {
 export async function listCro(tx: DbOrTx) {
   return tx.select().from(croHypotheses).orderBy(desc(croHypotheses.createdAt)).limit(200);
 }
+
+export * as catalog from './catalog.js';

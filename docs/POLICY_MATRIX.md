@@ -28,7 +28,7 @@ Every consequential write is an ActionRequest evaluated by the deterministic pol
 | `data.export_customer_data` | internal | DATA_EXPORT |  |  |  | database_readback | impossible | yes |
 | `sms.send` | internal | MESSAGING |  |  | yes | status_poll | impossible | no (D-018) |
 | `whatsapp.send` | internal | MESSAGING |  |  | yes | status_poll | impossible | no (D-018) |
-| `creator.payout` | internal | PAYOUT | yes |  |  | reconciliation | manual | no (B-015) |
+| `creator.payout` | paypal | PAYOUT | yes |  |  | reconciliation | manual | no (B-015) |
 
 ## Default approver roles
 

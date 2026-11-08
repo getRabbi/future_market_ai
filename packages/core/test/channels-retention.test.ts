@@ -436,9 +436,11 @@ describe('M22 creators, affiliates and referrals', () => {
     const later = await tx((t) => cre.creatorBalance(t, creatorId, new Date(now.getTime() + 31 * 86_400_000)));
     expect(later[0]!.payable).toBe(15_000_000);
     h.clock.advance(31 * 86_400_000);
-    const view = await cre.proposePayout(h.deps, h.tenantId, h.users.finance, creatorId);
-    expect(view.status).toBe('DENIED');
-    expect(view.statusReason).toMatch(/UNSUPPORTED|B-015|not supported/i);
+    const out = await cre.proposePayout(h.deps, h.tenantId, h.users.finance, creatorId);
+    expect(out.action).toBeNull();
+    expect(out.request).toMatchObject({ status: 'blocked', amounts: [{ currency: 'USD', amountMicros: 15_000_000 }] });
+    expect(out.request.blockers.join(' | ')).toMatch(/payout execution disabled \(B-015\)/);
+    expect(out.request.blockers.join(' | ')).toMatch(/identity: KYC not_started/);
   });
 
   it('fails content closed when the disclosure is missing or buried', async () => {

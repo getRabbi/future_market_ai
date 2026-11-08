@@ -526,10 +526,11 @@ export const ACTION_TYPES = [
   },
   {
     type: 'creator.payout',
-    provider: 'internal',
-    capability: 'creator_payout',
+    provider: 'paypal',
+    capability: 'creator_payout_create',
     category: 'PAYOUT',
-    description: 'Pay a creator/affiliate. Payment provider unspecified [U].',
+    alwaysRequiresApproval: true,
+    description: 'Pay a creator/affiliate through PayPal Payouts (P2-14). Disabled until legal review, a merchant agreement, KYC and tax handling exist.',
     affectsSpend: true,
     publicFacing: false,
     contactsPeople: false,
@@ -537,7 +538,14 @@ export const ACTION_TYPES = [
     rollback: 'manual',
     supported: false,
     blockerRef: 'B-015',
-    paramsSchema: z.object({}).passthrough(),
+    paramsSchema: z.object({
+      payoutRequestId: z.string().uuid(),
+      creatorId: z.string().uuid(),
+      items: z
+        .array(z.object({ itemId: z.string().min(1).max(30), receiver: z.string().email(), amountMicros: z.number().int().positive(), currency: z.string().length(3), note: z.string().max(4000) }))
+        .min(1)
+        .max(10),
+    }),
   },
 ] as const satisfies readonly ActionTypeDefinition[];
 

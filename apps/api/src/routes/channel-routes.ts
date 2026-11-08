@@ -65,6 +65,10 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.get('/v1/seo/audits', { schema: { tags: ['seo'] } }, async (req) => tenantTx(ctx, req, (tx) => discovery.listAudits(tx)));
   r.post('/v1/seo/audits', { schema: { tags: ['seo'], body: Body } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => discovery.requestSeoAudit(tx, deps, tenantOf(req), actorOf(req), req.body))));
   r.get('/v1/seo/audits/:id', { schema: { tags: ['seo'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => discovery.auditDetail(tx, req.params.id)));
+  r.get('/v1/seo/opportunities/grounded', { schema: { tags: ['seo'], querystring: z.object({ minImpressions: z.coerce.number().int().min(1).max(1_000_000).optional() }) } }, async (req) =>
+    tenantTx(ctx, req, (tx) => discovery.groundedSeoOpportunities(tx, req.query.minImpressions ? { minImpressions: req.query.minImpressions } : {})),
+  );
+  r.post('/v1/seo/opportunities/ideas', { schema: { tags: ['seo'], body: z.object({ limit: z.number().int().min(1).max(10).default(5) }).default({ limit: 5 }) } }, async (req) => tenantTx(ctx, req, (tx) => discovery.proposeSeoIdeas(tx, deps, tenantOf(req), actorOf(req), req.body)));
   r.post('/v1/seo/keywords/upload', { schema: { tags: ['seo'], body: Body } }, async (req) => tenantTx(ctx, req, (tx) => discovery.uploadKeywordMetrics(tx, tenantOf(req), actorOf(req), req.body)));
   r.post('/v1/seo/search-console/sync', { schema: { tags: ['seo'], body: z.object({ connectionId: z.string().uuid(), siteUrl: z.string().min(4), startDate: Day, endDate: Day }) } }, async (req) => {
     paidMedia.requireOperator(actorOf(req));
@@ -138,5 +142,9 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   );
   r.post('/v1/creators/submissions/:id/review', { schema: { tags: ['creators'], params: Id, body: z.object({ decision: z.enum(['approved', 'rejected']) }) } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.reviewSubmission(tx, tenantOf(req), actorOf(req), req.params.id, req.body.decision)));
   r.get('/v1/creators/:id', { schema: { tags: ['creators'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.creatorDetail(tx, req.params.id, deps.clock.now())));
+  r.get('/v1/creators/:id/payout-readiness', { schema: { tags: ['creators'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.payoutReadiness(tx, req.params.id, deps.clock.now())));
+  r.put('/v1/creators/:id/payout-profile', { schema: { tags: ['creators'], params: Id, body: Body } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.setPayoutProfile(tx, tenantOf(req), actorOf(req), req.params.id, req.body)));
+  r.get('/v1/creators/payout-requests', { schema: { tags: ['creators'] } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.listPayoutRequests(tx)));
+  r.post('/v1/creators/payout-requests/:id/dispute', { schema: { tags: ['creators'], params: Id, body: z.object({ reason: z.string().min(5).max(1000) }) } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.recordPayoutDispute(tx, tenantOf(req), actorOf(req), req.params.id, req.body.reason)));
   r.post('/v1/creators/:id/payout', { schema: { tags: ['creators'], params: Id } }, async (req, reply) => reply.status(201).send(await creatorsModule.proposePayout(deps, tenantOf(req), actorOf(req), req.params.id)));
 }
