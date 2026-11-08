@@ -16,7 +16,11 @@ export type ProviderCredentials =
   | { provider: 'resend'; apiKey: string }
   | { provider: 'posthog'; projectApiKey: string; host: string }
   | { provider: 'chatwoot'; baseUrl: string; apiAccessToken: string; accountId: string }
-  | { provider: 'search_console'; clientId: string; clientSecret: string; refreshToken: string };
+  | { provider: 'search_console'; clientId: string; clientSecret: string; refreshToken: string }
+  /** Licensed stock media (P3-03). */
+  | { provider: 'pexels'; apiKey: string }
+  /** Creator payouts (P2-14); execution stays disabled until legal approval (B-015). */
+  | { provider: 'paypal'; clientId: string; clientSecret: string; environment: 'sandbox' | 'live' };
 
 export interface ConnectionInfo {
   id: string;
@@ -43,6 +47,11 @@ export interface ProviderEndpoints {
   playReporting: string;
   resend: string;
   searchConsole: string;
+  /** Pexels API (photos at /v1, videos at /videos). */
+  pexels: string;
+  /** PayPal REST API (sandbox host unless the connection is live). */
+  paypal: string;
+  paypalSandbox: string;
   /** Shopify host override (tests); production uses https://{shop}.myshopify.com */
   shopifyOverride: string | null;
 }
@@ -61,6 +70,9 @@ export const DEFAULT_ENDPOINTS: ProviderEndpoints = {
   playReporting: 'https://playdeveloperreporting.googleapis.com',
   resend: 'https://api.resend.com',
   searchConsole: 'https://www.googleapis.com/webmasters/v3',
+  pexels: 'https://api.pexels.com',
+  paypal: 'https://api-m.paypal.com',
+  paypalSandbox: 'https://api-m.sandbox.paypal.com',
   shopifyOverride: null,
 };
 

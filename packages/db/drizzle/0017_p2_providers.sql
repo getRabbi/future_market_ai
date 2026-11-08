@@ -1,0 +1,4 @@
+ALTER TABLE "connections" DROP CONSTRAINT "connections_provider_chk";--> statement-breakpoint
+ALTER TABLE "webhook_inbox" DROP CONSTRAINT "webhook_inbox_provider_chk";--> statement-breakpoint
+ALTER TABLE "connections" ADD CONSTRAINT "connections_provider_chk" CHECK ("connections"."provider" in ('internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'linkedin', 'x', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console', 'pexels', 'paypal'));--> statement-breakpoint
+ALTER TABLE "webhook_inbox" ADD CONSTRAINT "webhook_inbox_provider_chk" CHECK ("webhook_inbox"."provider" in ('internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'linkedin', 'x', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console', 'pexels', 'paypal'));

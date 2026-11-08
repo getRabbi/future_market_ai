@@ -120,6 +120,13 @@
       "when": 1793903603487,
       "tag": "0016_store_reporting",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794124038939,
+      "tag": "0017_p2_providers",
+      "breakpoints": true
     }
   ]
 }

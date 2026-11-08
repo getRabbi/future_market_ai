@@ -1,4 +1,4 @@
-const OK = new Set(['VERIFIED', 'ROLLED_BACK', 'approved', 'active', 'admitted', 'completed', 'delivered', 'published_verified', 'live_verified', 'sent_verified', 'healthy', 'ok', 'confirmed', 'qualified', 'running', 'current', 'granted', 'ready', 'passed', 'Ready']);
+const OK = new Set(['VERIFIED', 'ROLLED_BACK', 'approved', 'active', 'admitted', 'completed', 'delivered', 'published_verified', 'live_verified', 'sent_verified', 'healthy', 'ok', 'confirmed', 'qualified', 'running', 'current', 'granted', 'ready', 'passed', 'Ready', 'connected']);
 const WARN = new Set([
   'APPROVAL_REQUIRED',
   'PROPOSED',
@@ -30,8 +30,40 @@ const WARN = new Set([
   'Needs review',
   'Out of date',
   'Suggestion',
+  'requires_connection',
+  'requires_provider_approval',
+  'requires_owner_authorization',
+  'requires_legal_review',
+  'requires_paid_infrastructure',
+  'requires_compute',
+  'owner_assisted',
 ]);
-const DANGER = new Set(['FAILED', 'DENIED', 'REJECTED', 'blocked', 'block', 'failed', 'rejected', 'bounced', 'complained', 'suppressed', 'invalid', 'discrepancy', 'failing', 'revoked', 'critical', 'sev1', 'sev2', 'rejected_missing_disclosure', 'blocked_dark_pattern', 'expired', 'Rejected', 'Expired', 'Must fix']);
+const DANGER = new Set([
+  'FAILED',
+  'DENIED',
+  'REJECTED',
+  'blocked',
+  'block',
+  'failed',
+  'rejected',
+  'bounced',
+  'complained',
+  'suppressed',
+  'invalid',
+  'discrepancy',
+  'failing',
+  'revoked',
+  'critical',
+  'sev1',
+  'sev2',
+  'rejected_missing_disclosure',
+  'blocked_dark_pattern',
+  'expired',
+  'connection_unhealthy',
+  'Rejected',
+  'Expired',
+  'Must fix',
+]);
 
 export function tone(v: unknown): 'ok' | 'warn' | 'danger' | 'info' | 'muted' {
   const s = String(v);

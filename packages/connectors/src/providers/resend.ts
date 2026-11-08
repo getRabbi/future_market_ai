@@ -75,14 +75,27 @@ export const resendRead: ReadConnector = {
   provider: 'resend',
   async healthCheck(ctx): Promise<HealthResult> {
     try {
-      const res = await ctx.http.request<{ data: { name: string; status: string }[] }>({
-        method: 'GET',
-        url: `${ctx.endpoints.resend}/domains`,
-        headers: { authorization: `Bearer ${creds(ctx).apiKey}` },
-        idempotent: true,
-      });
+      const auth = { authorization: `Bearer ${creds(ctx).apiKey}` };
+      const res = await ctx.http.request<{ data: { id?: string; name: string; status: string }[] }>({ method: 'GET', url: `${ctx.endpoints.resend}/domains`, headers: auth, idempotent: true });
       const verified = res.data.data.filter((d) => d.status === 'verified').map((d) => d.name);
-      return { healthy: verified.length > 0, status: verified.length ? 'healthy' : 'degraded', grantedScopes: null, details: { verifiedDomains: verified } };
+      // Sending-domain readiness: for each domain that is not verified yet, which DNS records (SPF, DKIM) Resend still waits for.
+      const pending: { name: string; status: string; records: { record: string; type: string; name: string; status: string }[] }[] = [];
+      for (const d of res.data.data.filter((x) => x.status !== 'verified' && x.id).slice(0, 5)) {
+        const r = await ctx.http.request<{ records?: { record: string; type: string; name: string; status: string }[] }>({ method: 'GET', url: `${ctx.endpoints.resend}/domains/${encodeURIComponent(d.id!)}`, headers: auth, idempotent: true });
+        pending.push({ name: d.name, status: d.status, records: (r.data.records ?? []).map((x) => ({ record: x.record, type: x.type, name: x.name, status: x.status })) });
+      }
+      return {
+        healthy: verified.length > 0,
+        status: verified.length ? 'healthy' : 'degraded',
+        grantedScopes: null,
+        details: {
+          verifiedDomains: verified,
+          pendingDomains: pending,
+          // Resend verifies SPF and DKIM; DMARC is a separate TXT record at _dmarc.<domain> that Resend does not check.
+          dmarc: 'not checked by Resend: publish a TXT record at _dmarc.<domain> (p=none or stricter) before sending lifecycle email',
+          ...(verified.length ? {} : { warning: 'No verified sending domain: add the SPF and DKIM records Resend lists, then verify the domain in Resend.' }),
+        },
+      };
     } catch (err) {
       const e = err as ProviderHttpError;
       return { healthy: false, status: e.isAuthError ? 'failing' : 'degraded', grantedScopes: null, details: { error: e.message } };

@@ -8,7 +8,7 @@ import { AppIntelligenceView } from './AppIntelligence.js';
 import { Approvals } from './Approvals.js';
 import { ApprovalsInbox, AutopilotCenter, AutopilotOffer, type AutopilotStatus, GoalsView } from './Autopilot.js';
 import { BrandStudioView } from './BrandStudio.js';
-import { Connections } from './Connections.js';
+import { Connections, IntegrationStatus } from './Connections.js';
 import { ContentStudioView } from './ContentStudio.js';
 import { Governance } from './Governance.js';
 import { GroundTruth } from './GroundTruth.js';
@@ -196,7 +196,12 @@ function SectionContent({ slug, onBoot, onTenant }: { slug: string; onBoot: () =
       {s.custom === 'audit' ? <Audit /> : null}
       {s.custom === 'settings' ? <Settings me={me} onTenant={onTenant} onChanged={onBoot} /> : null}
       {s.custom === 'assets' ? <AssetUpload /> : null}
-      {s.custom === 'connections' ? <Connections me={me} /> : null}
+      {s.custom === 'connections' ? (
+        <>
+          <IntegrationStatus />
+          <Connections me={me} />
+        </>
+      ) : null}
       {s.slug === 'app' ? <AppConversions /> : null}
       {s.custom === 'knowledge' ? <GroundTruth /> : s.resources.map((r) => <ResourcePanel key={r.title} resource={r} />)}
     </div>

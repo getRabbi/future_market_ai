@@ -18,6 +18,7 @@ interface Setup {
 /** Every API call this screen makes (checked against the API routes in apps/web/test). */
 export const CONNECTION_CALLS = [
   { method: 'GET', path: '/v1/connections' },
+  { method: 'GET', path: '/v1/integrations' },
   { method: 'GET', path: '/v1/connections/setup' },
   { method: 'POST', path: '/v1/connections' },
   { method: 'POST', path: '/v1/connections/test' },
@@ -317,5 +318,92 @@ function ConnectForm({ p, connection, requiredScopes, canSave, onSaved }: { p: P
       </div>
       {!ready && missing.length ? <span className="small muted">Still needed: {missing.join(', ')}</span> : null}
     </form>
+  );
+}
+
+interface IntegrationRow {
+  key: string;
+  workstream: string;
+  name: string;
+  modules: string[];
+  status: string;
+  summary: string;
+  reasons: string[];
+  setup: string[];
+  docsUrl: string | null;
+  connections: { id: string; displayName: string; status: string; healthStatus: string; lastHealthCheckAt: string | null }[];
+  writes: { actionType: string; supported: boolean; blocker: string | null }[];
+}
+
+const STATUS_ORDER = ['connection_unhealthy', 'requires_connection', 'requires_provider_approval', 'requires_owner_authorization', 'requires_legal_review', 'requires_paid_infrastructure', 'owner_assisted', 'connected', 'live_verified'];
+
+/**
+ * One honest status per external integration (P2): what works now, what blocks it and the next
+ * step. Built only from persisted facts (connections, last health check, capability registry,
+ * verified posts, store syncs); a connected account is not "live" until a sync or verified action.
+ */
+export function IntegrationStatus() {
+  const list = useApi<IntegrationRow[]>('/v1/integrations');
+  const [open, setOpen] = useState<string | null>(null);
+  const rows = [...(list.data ?? [])].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
+  const live = rows.filter((r) => r.status === 'live_verified' || r.status === 'connected').length;
+  return (
+    <section className="card" aria-labelledby="integrations-title">
+      <header className="card-head">
+        <h2 className="card-title" id="integrations-title">
+          Integration status
+        </h2>
+        <span className="small muted">{list.data ? `${live} of ${rows.length} connected` : 'Loading…'}</span>
+      </header>
+      <p className="small muted">Each integration shows what it can do for this organization right now. “Connected” means a healthy connection; “Live verified” needs a verified post or a successful import. Anything that posts, sends or spends still goes through approvals.</p>
+      <ErrorNotice error={list.error} />
+      <ul className="row-list">
+        {rows.map((r) => (
+          <li key={r.key} className="row-item">
+            <div className="row">
+              <div>
+                <strong>{r.name}</strong>{' '}
+                <span className="small muted">
+                  {r.workstream} · {r.modules.join(', ')}
+                </span>
+                <div className="small">{r.summary}</div>
+              </div>
+              <div className="row-actions">
+                <Badge value={r.status} />
+                <button type="button" className="small-btn" aria-expanded={open === r.key} onClick={() => setOpen(open === r.key ? null : r.key)}>
+                  {open === r.key ? 'Hide' : 'Details'}
+                </button>
+              </div>
+            </div>
+            {open === r.key ? (
+              <div className="stack-xs">
+                {r.reasons.length ? (
+                  <ul className="small">
+                    {r.reasons.map((x) => (
+                      <li key={x}>{x}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {r.connections.length ? <p className="small">Connections: {r.connections.map((c) => `${c.displayName} (${c.status}, health ${c.healthStatus})`).join('; ')}</p> : null}
+                {r.writes.length ? <p className="small">Actions through approvals: {r.writes.map((w) => `${w.actionType}${w.supported ? '' : ` — disabled (${w.blocker})`}`).join('; ')}</p> : null}
+                <p className="small">
+                  <strong>Setup</strong>
+                </p>
+                <ol className="small">
+                  {r.setup.map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ol>
+                {r.docsUrl ? (
+                  <a className="small" href={r.docsUrl} target="_blank" rel="noreferrer noopener">
+                    Provider documentation
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

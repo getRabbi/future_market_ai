@@ -4,6 +4,7 @@ import { googleAdsRead, googleSetCampaignStatus, googleUpdateCampaignBudget } fr
 import { googlePlayRead } from './providers/google-play.js';
 import { linkedinPublishPost, linkedinRead } from './providers/linkedin.js';
 import { facebookPublishPost, facebookReplyComment, instagramPublishMedia, metaRead, metaSetCampaignStatus, metaUpdateCampaignBudget } from './providers/meta.js';
+import { chatwootRead, posthogRead, searchConsoleRead } from './providers/misc.js';
 import { resendRead, resendSendEmail } from './providers/resend.js';
 import { shopifyCreateDiscount, shopifyRead } from './providers/shopify.js';
 import { tiktokPublishVideo, tiktokRead } from './providers/tiktok.js';
@@ -34,7 +35,7 @@ export { clearGoogleTokenCache, gaqlSearch, googleAccessToken } from './provider
 export * from './providers/google-play.js';
 export { fromLittle, toLittle } from './providers/linkedin.js';
 export { fetchPageInsights, fetchPagePosts, fetchPageProfile, PAGE_INSIGHT_METRICS, PAGE_POST_METRICS, type PageInsightMetricResult, type PagePostCounter, type PagePostMetric, type PagePostObservation, type PageProfile } from './providers/meta.js';
-export { chatwootCreateHandoff, posthogCaptureBatch, searchConsoleQuery } from './providers/misc.js';
+export { type ChatwootInbox, chatwootCreateHandoff, chatwootListInboxes, chatwootPostMessage, type PosthogEvent, posthogCaptureBatch, searchConsoleQuery } from './providers/misc.js';
 export * from './providers/money.js';
 export type { ResolvedEmail } from './providers/resend.js';
 export * from './robots.js';
@@ -60,4 +61,7 @@ export const READ_CONNECTORS: Partial<Record<Provider, ReadConnector>> = {
   app_store_connect: appStoreRead,
   google_play: googlePlayRead,
   resend: resendRead,
+  posthog: posthogRead,
+  chatwoot: chatwootRead,
+  search_console: searchConsoleRead,
 };

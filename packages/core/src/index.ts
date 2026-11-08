@@ -3,6 +3,7 @@ export * from './bootstrap.js';
 export * from './deps.js';
 export * from './event-handlers.js';
 export * as connectionsModule from './modules/connections.js';
+export * as integrations from './modules/integrations.js';
 export * as evidence from './modules/m01-evidence/index.js';
 export * as customers from './modules/m02-customers/index.js';
 export * as knowledge from './modules/m03-knowledge/index.js';

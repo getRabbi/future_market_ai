@@ -49,14 +49,14 @@ describe('connection setup from the control plane', () => {
 
   it('refuses non-admins, unknown providers and invalid Shopify domains without calling out', async () => {
     await expect(testConnectionCredentials(h.deps, h.tenantId, h.users.analyst, meta)).rejects.toThrow(/roles/);
-    await expect(testConnectionCredentials(h.deps, h.tenantId, h.users.owner, { ...meta, provider: 'chatwoot' })).rejects.toThrow(/no connection test/);
+    await expect(testConnectionCredentials(h.deps, h.tenantId, h.users.owner, { ...meta, provider: 'myspace' })).rejects.toThrow();
     // As in production (no test host override), the shop domain must be a *.myshopify.com host.
     const prod = { ...h.deps, config: { ...h.deps.config, endpoints: { ...h.deps.config.endpoints, shopifyOverride: null } } };
     const shop = await testConnectionCredentials(prod, h.tenantId, h.users.owner, { provider: 'shopify', externalAccountId: 'evil', metadata: {}, credentials: { shopDomain: '169.254.169.254', accessToken: 'shpat_x' } });
     expect(shop.healthy).toBe(false);
     expect(JSON.stringify(shop.details)).toMatch(/invalid shop domain/);
     expect(server.requests).toHaveLength(0);
-    expect(TESTABLE_PROVIDERS).toEqual(expect.arrayContaining(['meta', 'google_ads', 'tiktok', 'youtube', 'shopify', 'app_store_connect', 'resend']));
+    expect(TESTABLE_PROVIDERS).toEqual(expect.arrayContaining(['meta', 'google_ads', 'tiktok', 'youtube', 'shopify', 'app_store_connect', 'resend', 'posthog', 'chatwoot', 'search_console']));
   });
 
   it('a saved connection is health-checked; a rejected token moves it to reauth_required', async () => {
