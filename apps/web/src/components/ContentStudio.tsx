@@ -33,7 +33,17 @@ export interface Program {
   connectionId: string;
   pack: string;
   status: 'active' | 'paused';
-  settings: { appCtaPerWeek?: number; linkPerWeek?: number; campaign?: string };
+  settings: { appCtaPerWeek?: number; linkPerWeek?: number; campaign?: string; campaignIdentity?: 'shared' | 'per_post' };
+}
+export interface StoreAttribution {
+  campaign: string;
+  status: 'awaiting_reports' | 'reported' | 'not_listed';
+  windowStart: string;
+  windowEnd: string;
+  reportedThrough: string | null;
+  acquisitions: number | null;
+  visitors: number | null;
+  daysListed: number;
 }
 export interface PlanItem {
   id: string;
@@ -51,9 +61,11 @@ export interface PlanItem {
   learningEligible: boolean;
   metrics: { reactions?: number | null; comments?: number | null; shares?: number | null; url?: string | null; observedAt?: string };
   unit: { korean: string } | null;
+  storeAttribution?: StoreAttribution | null;
 }
 export interface StudioOverview {
   program: Program;
+  campaignIdentity?: 'shared' | 'per_post';
   today: string;
   calendar: PlanItem[];
   history: PlanItem[];
@@ -166,6 +178,16 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
       setError(err);
     }
   };
+  const setIdentity = async (campaignIdentity: 'shared' | 'per_post') => {
+    setError(null);
+    try {
+      await api('PUT', '/v1/content/programs', { connectionId: program.connectionId, pack: program.pack, status: program.status, settings: { ...program.settings, campaignIdentity } });
+      onChange();
+      ov.reload();
+    } catch (err) {
+      setError(err);
+    }
+  };
   const show = async (id: string) => {
     setPreview({ id });
     try {
@@ -195,6 +217,25 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
         </header>
         <ErrorNotice error={error} />
         <p className="small muted">Image source: branded lesson templates with licensed Korean and Bangla fonts. The studio uses these templates while no approved image provider is configured.</p>
+        <p className="small muted">
+          Store link campaigns:{' '}
+          {o.campaignIdentity === 'per_post' ? (
+            <>one campaign per post, so Google Play can report each post's store listing acquisitions.</>
+          ) : (
+            <>
+              one shared campaign ({program.settings.campaign ?? 'eps_daily'}) for every post, so Google Play reports results for the program only, not per post.
+              {canEdit ? (
+                <>
+                  {' '}
+                  <button type="button" className="btn" onClick={() => void setIdentity('per_post')}>
+                    Use one campaign per post
+                  </button>{' '}
+                  Applies to future posts only; past posts keep their links.
+                </>
+              ) : null}
+            </>
+          )}
+        </p>
         <div className="studio-grid">
           {o.calendar.map((i) => (
             <article key={i.id} className="studio-day">
@@ -256,6 +297,7 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
                   : i.status === 'published'
                     ? ' · awaiting measurement'
                     : ''}
+                {i.storeAttribution ? <span className="muted"> · {attributionText(i.storeAttribution)}</span> : null}
                 {i.statusReason ? <span className="muted"> · {readableText(i.statusReason)}</span> : null}
               </li>
             ))}
@@ -271,6 +313,13 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
       </section>
     </>
   );
+}
+
+/** Google's attribution of store visits to this post's own campaign; never called installs caused by the post. */
+export function attributionText(a: StoreAttribution): string {
+  if (a.status === 'awaiting_reports') return `Google Play results for this post's link after final reports through ${day(a.windowEnd)}`;
+  if (a.status === 'not_listed') return `Google Play listed no store visits for this post's link through ${day(a.windowEnd)} (unknown, not zero)`;
+  return `Google Play: ${a.acquisitions ?? 'unavailable'} store listing acquisitions and ${a.visitors ?? 'unavailable'} visitors from this post's link, ${day(a.windowStart)}–${day(a.windowEnd)} (Google-reported attribution, not proven effect)`;
 }
 
 const PERMISSIONS: { key: string; label: string }[] = [

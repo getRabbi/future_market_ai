@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { type ModelProvider, PROMPTS, type ProviderOutcome, type StructuredRequest } from '@futuregrow/agent-kernel';
-import { analytics, autopilot, brain, clearModelCache, connectionsModule, contentStudio, createModelGateway, evidence, execution, experimentsModule, governance, ideas, knowledge, record, social, systemActor } from '@futuregrow/core';
+import { analytics, autopilot, brain, brandsModule, clearModelCache, connectionsModule, contentStudio, createModelGateway, evidence, execution, experimentsModule, governance, ideas, knowledge, record, social, systemActor } from '@futuregrow/core';
 import {
   actionRequests,
   analyticsRequests,
@@ -732,6 +732,11 @@ describe('Autopilot: a small Facebook Page without Page insights gets explorator
     const unrelated = await otx((t) => knowledge.proposeClaim(t, h.deps, org, h.users.operator, { text: 'Smoke widget exports reports nightly', claimType: 'product_capability', evidenceIds: [otherEv.evidenceId] }));
     await otx((t) => knowledge.reviewClaim(t, org, h.users.approver, unrelated.id, 'approved'));
 
+    // The Page belongs to a brand with its own Android app (D-041); the Brain may read only that app's store reports (P1-03).
+    const brand = await otx((t) => brandsModule.createBrand(t, org, h.users.owner, { slug: 'eps', name: 'EPS', profile: { visual: { palette: { background: '#0F1E45', ink: '#FFFFFF', accent: '#FFC845', onAccent: '#0B3A2F' } }, audience: { countries: ['BD'], languages: ['bn'] }, objectives: ['engagement'] } }));
+    await otx((t) => brandsModule.bindChannel(t, org, h.users.owner, brand.id, conn.id));
+    await otx((t) => brandsModule.bindApp(t, org, h.users.owner, brand.id, { platform: 'android', listingUrl: 'https://play.google.com/store/apps/details?id=com.example.eps' }));
+
     const plan = autopilot.interpretGoal('Improve our organic Facebook engagement over the next 30 days with $0 advertising budget.', { now: h.clock.now(), series: [], market: 'BD' });
     const g = await otx((t) => autopilot.createGoal(t, h.deps, org, h.users.owner, { ...plan.draft, market: 'BD', autoSubmit: false }));
     const kinds = async () => Object.fromEntries((await otx((t) => t.select().from(goalTasks).where(eq(goalTasks.goalId, g.id)).orderBy(asc(goalTasks.createdAt), asc(goalTasks.seq)))).map((x) => [x.kind, x]));
@@ -750,6 +755,8 @@ describe('Autopilot: a small Facebook Page without Page insights gets explorator
     expect(k.observe!.detail).toMatch(/Facebook Page EPS Page: 3 posts in the last 90 days.*reactions 3 \(from 3 posts\).*shares not returned by Meta/);
     expect(k.observe!.detail).toMatch(/Bootstrap mode: .* has 0 of the 33 daily values/);
     expect(k.observe!.output.brand).toMatchObject({ approvedClaimIds: [], pendingClaims: 1, entityIds: [profile.entityId] });
+    // No store report is imported for the brand's app yet, so nothing is stated and the prompt carries no store trend.
+    expect(k.observe!.output.storeTrend).toMatchObject({ scope: 'brand_apps', apps: ['com.example.eps'], stated: [], withheld: [] });
     expect(k.forecast).toMatchObject({ status: 'blocked', needs: 'data' });
     expect(k.research!.detail).toMatch(/EPS Page: 3 posts on .* by format: added_photos 3 \(mean reactions 1, mean top-level comments 0\).*Too few posts/);
     expect(k.ideas).toMatchObject({ status: 'completed', output: { exploratory: true } });
@@ -945,6 +952,8 @@ describe('Autopilot: under a pre-authorized publishing policy an exploratory Fac
     expect(k.track).toMatchObject({ status: 'completed' });
     expect(k.track!.detail).toMatch(/independently verified/);
     expect(k.learn!.detail).toMatch(/a post went to the execution gateway and is verified/);
+    // The Page token lacks read_insights: the lesson says the KPI values cannot arrive, not that they are late.
+    expect(k.learn!.detail).toMatch(/need the read_insights permission that the connected Page token does not have/);
     const actionId = k.submit!.refs.actionId!;
     const [a] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, actionId)));
     expect(a).toMatchObject({ status: 'VERIFIED', proposedByType: 'agent', proposedById: 'autopilot', decisionId: null });
@@ -1486,7 +1495,11 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     // The fixture Page returns no share counter: it stays unknown and the post has no engagement score.
     expect(first).toMatchObject({ status: 'published', engagement: null, learningEligible: false });
     expect(first.metrics).toMatchObject({ reactions: 3, comments: 1, shares: null, observationComplete: false, missingMetrics: ['shares'], measurementVersion: 2 });
-    expect(overview.measurement.notes.join(' ')).toMatch(/no install or conversion figure is shown/);
+    // Store results are Google's attribution of visits to a per-post campaign, never installs credited to a post;
+    // with no imported store report nothing is attributed (P1-05).
+    expect(overview.measurement.notes.join(' ')).toMatch(/not installs proven to be caused by the post/);
+    expect(overview.campaignIdentity).toBe('per_post');
+    expect(overview.history.every((i) => i.storeAttribution === null || i.storeAttribution.status !== 'reported')).toBe(true);
     // A post the Page made without the studio uses that day's slot: the calendar plans around it.
     h.clock.advance(DAY);
     // A submitted post scheduled for a future Dhaka date must not consume today's calendar slot.

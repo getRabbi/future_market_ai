@@ -1,4 +1,4 @@
-import { assetRights, assets, brandChannels, claims, connections, contentPlanItems, type DbOrTx, evidenceRecords, socialPosts, studioPrograms, type Tx, withTenant } from '@futuregrow/db';
+import { assetRights, assets, brandChannels, campaignLinks, claims, connections, contentPlanItems, type DbOrTx, evidenceRecords, socialPosts, studioPrograms, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
 import { type CardSpec, FONT_SOURCES, hammingDistance, PALETTE_IDS, type PaletteId, renderCard } from '@futuregrow/visuals';
@@ -11,6 +11,7 @@ import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { lintCopy } from '../m03-knowledge/index.js';
 import { recomputeEligibility } from '../m14-assets/index.js';
 import { pageBrandScope, postResults } from '../m16-social/index.js';
+import { campaignReportDays } from '../m19-app-growth/store/query.js';
 import { type ClaimRef, type Composition, compose, type Objective } from './compose.js';
 import { type CurriculumRef, PACKS, packVersion, unitById, verifyCurriculumText } from './curriculum.js';
 import { engagementScore, learningScore, measurePost } from './measurement.js';
@@ -662,6 +663,68 @@ export async function programHistory(t: DbOrTx, programId: string): Promise<Hist
   return rows.map(toHistory);
 }
 
+/** Days after a post's day over which Google-reported acquisitions of its own campaign are compared. */
+export const ATTRIBUTION_WINDOW_DAYS = 14;
+
+export interface StoreAttribution {
+  basis: 'provider_reported_attribution';
+  campaign: string;
+  /** `awaiting_reports`: Google has not published final reports through the window's end yet. `not_listed`: the window is reported but Google listed no row for this campaign (no visits, or grouped as "Other"): unknown, not zero. */
+  status: 'awaiting_reports' | 'reported' | 'not_listed';
+  windowStart: string;
+  windowEnd: string;
+  reportedThrough: string | null;
+  /** Sum over the days Google listed this campaign in the window; null unless `reported`. */
+  acquisitions: number | null;
+  visitors: number | null;
+  daysListed: number;
+}
+
+/**
+ * Google-reported store results of posts whose store link carries a campaign unique to that post
+ * (per-post campaigns, D-045). Shared campaigns (e.g. the legacy `eps_daily`) cannot be split per
+ * post, so their posts get nothing here; App intelligence shows them at program level. This is
+ * Google's attribution of store visits to the link's campaign, not proof that the post caused them.
+ */
+export async function postStoreAttribution(t: DbOrTx, programId: string, items: { id: string; day: string }[]): Promise<Map<string, StoreAttribution>> {
+  const out = new Map<string, StoreAttribution>();
+  const ids = items.map((i) => i.id);
+  if (!ids.length) return out;
+  const links = await t
+    .select({ planItemId: campaignLinks.planItemId, appId: campaignLinks.appId, campaign: campaignLinks.campaign })
+    .from(campaignLinks)
+    .where(and(eq(campaignLinks.programId, programId), eq(campaignLinks.reportScope, 'campaign'), eq(campaignLinks.appPlatform, 'android'), inArray(campaignLinks.planItemId, ids)));
+  const dayOf = new Map(items.map((i) => [i.id, i.day]));
+  for (const appId of [...new Set(links.map((l) => l.appId))]) {
+    const mine = links.filter((l) => l.appId === appId && l.planItemId && dayOf.has(l.planItemId));
+    if (!mine.length) continue;
+    const from = mine.map((l) => dayOf.get(l.planItemId!)!).sort()[0]!;
+    const report = await campaignReportDays(
+      t,
+      appId,
+      mine.map((l) => l.campaign),
+      from,
+      dayOffset(
+        mine
+          .map((l) => dayOf.get(l.planItemId!)!)
+          .sort()
+          .at(-1)!,
+        ATTRIBUTION_WINDOW_DAYS - 1,
+      ),
+    );
+    for (const l of mine) {
+      const windowStart = dayOf.get(l.planItemId!)!;
+      const windowEnd = dayOffset(windowStart, ATTRIBUTION_WINDOW_DAYS - 1);
+      const rows = report.days.filter((d) => d.campaign === l.campaign && d.day >= windowStart && d.day <= windowEnd);
+      const settled = report.reportedThrough !== null && report.reportedThrough >= windowEnd;
+      const sum = (k: 'acquisitions' | 'visitors') => (rows.some((r) => r[k] === null) ? null : rows.reduce((s, r) => s + r[k]!, 0));
+      const status = !settled ? 'awaiting_reports' : rows.length ? 'reported' : 'not_listed';
+      out.set(l.planItemId!, { basis: 'provider_reported_attribution', campaign: l.campaign, status, windowStart, windowEnd, reportedThrough: report.reportedThrough, acquisitions: status === 'reported' ? sum('acquisitions') : null, visitors: status === 'reported' ? sum('visitors') : null, daysListed: rows.length });
+    }
+  }
+  return out;
+}
+
 /** Calendar, history, learning and funnel measurement for one program (API + Autopilot detail). */
 export async function overview(deps: CoreDeps, tenantId: string, programId: string) {
   const plan = await refreshPlan(deps, tenantId, programId);
@@ -672,12 +735,22 @@ export async function overview(deps: CoreDeps, tenantId: string, programId: stri
       .where(and(eq(contentPlanItems.programId, programId), lt(contentPlanItems.day, plan.today)))
       .orderBy(desc(contentPlanItems.day))
       .limit(60);
-    const learning = learnFrom([...history, ...plan.items.filter((i) => i.status !== 'planned')].map(toHistory));
+    const done = [...history, ...plan.items.filter((i) => i.status !== 'planned')];
+    const attribution = await postStoreAttribution(
+      t,
+      programId,
+      done.filter((r) => r.status === 'published'),
+    );
+    const learning = learnFrom(done.map((r) => ({ ...toHistory(r), ...(attribution.has(r.id) ? { storeAcquisitions: attribution.get(r.id)!.acquisitions } : {}) })));
     const pack = PACKS[plan.program.pack]!;
-    const describe = (r: PlanRow) => ({ ...r, engagement: engagementScore(r.metrics), learningEligible: learningScore(r.metrics) !== null, unit: r.unitId ? summarizeUnit(pack, r.unitId) : null });
+    const describe = (r: PlanRow) => ({ ...r, engagement: engagementScore(r.metrics), learningEligible: learningScore(r.metrics) !== null, unit: r.unitId ? summarizeUnit(pack, r.unitId) : null, storeAttribution: attribution.get(r.id) ?? null });
     const published = [...history, ...plan.items].filter((h) => h.status === 'published');
+    const campaignIdentity = ProgramSettingsSchema.parse(plan.program.settings ?? {}).campaignIdentity;
+    const [page] = await t.select({ grantedScopes: connections.grantedScopes }).from(connections).where(eq(connections.id, plan.program.connectionId));
+    const readInsights = Boolean(page?.grantedScopes.includes('read_insights'));
     return {
       program: plan.program,
+      campaignIdentity,
       today: plan.today,
       calendar: plan.items.map(describe),
       history: history.map(describe),
@@ -689,8 +762,12 @@ export async function overview(deps: CoreDeps, tenantId: string, programId: stri
         linkPosts: published.filter((h) => h.objective === 'VISIT_APP' || h.objective === 'INSTALL_APP').length,
         notes: [
           'Missing counters are unavailable, never zero. Scores require observed reactions, comments and shares with evidence. Learning uses only frozen seven-day windows observed at age 144–168 hours; provisional, incomplete and legacy scores are excluded. Comparisons are descriptive, not causal or statistical winners.',
-          'Reactions, top-level comments and shares are read from the Page once a day; reach, impressions and link clicks need the read_insights permission, which the Page token does not have.',
-          'Store links carry a Google Play referrer (utm_source=facebook, utm_medium=organic_social, utm_campaign, utm_content). Google Play reports acquisitions by UTM source and campaign only; with a connected Play developer account they appear in Autopilot › App intelligence (per post only for programs with per-post campaigns), so no install or conversion figure is shown here.',
+          readInsights
+            ? 'Reactions, top-level comments and shares are read from the Page once a day; Page-level insights (engagements, follows, views) are synced daily into the Facebook KPI series.'
+            : 'Reactions, top-level comments and shares are read from the Page once a day; reach, impressions and link clicks need the read_insights permission, which the Page token does not have.',
+          campaignIdentity === 'per_post'
+            ? `Each store link carries its own campaign, so Google Play can report store listing acquisitions per post. A post shows them only after Google publishes final reports through ${ATTRIBUTION_WINDOW_DAYS} days after the post; a post Google does not list is unknown, not zero. These are Google's attribution of store visits to the link, not installs proven to be caused by the post.`
+            : 'Store links share one campaign for the whole program, so Google Play cannot report results per post: App intelligence shows them for the program. Switch to one campaign per post to measure future posts individually; past posts keep their links.',
         ],
       },
     };

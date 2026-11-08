@@ -16,6 +16,7 @@ import {
   accountWarnings,
   appIntelligenceDetail,
   appIntelligenceOverview,
+  appsTrendContext,
   connectStoreAccount,
   decideStoreApp,
   developerAccountsOverview,
@@ -30,7 +31,7 @@ import {
   storeTrendContext,
   syncStoreKpiSeries,
 } from '../src/modules/m19-app-growth/store/index.js';
-import { upsertProgram } from '../src/modules/studio/index.js';
+import { postStoreAttribution, upsertProgram } from '../src/modules/studio/index.js';
 import { loadCredentials } from '../src/secrets.js';
 
 let h: CoreHarness;
@@ -495,6 +496,32 @@ describe('dashboard, campaigns, telemetry and the Growth Brain', () => {
     expect(rows.lessons_260815_ab12).toMatchObject({ acquisitions: 4, identity: { status: 'post', postId: a.post.id } });
     expect(rows.lessons_daily).toMatchObject({ acquisitions: 62, identity: { status: 'program', programId: program.id } });
     expect(d.campaigns!.basis).toBe('provider_reported_attribution');
+    expect(rows.lessons_260815_ab12).toMatchObject({ visitors: 39, days: 31, excludedDays: 0, firstDay: '2026-08-01', lastDay: '2026-08-31' });
+    // A provisional day is left out and counted, never added (the KPI rule of D-046 applies to campaigns too).
+    const day15 = and(eq(storeReportPartitions.storeAppId, alpha.id), eq(storeReportPartitions.dimension, 'traffic_source'), eq(storeReportPartitions.observationDate, '2026-08-15'));
+    await tx((t) => t.update(storeReportPartitions).set({ status: 'provisional' }).where(day15));
+    const pending = Object.fromEntries((await tx((t) => appIntelligenceDetail(t, alpha.id, { from: '2026-08-01', to: '2026-08-31' }, h.clock.now()))).campaigns!.rows.map((r) => [r.utmCampaign, r]));
+    expect(pending.lessons_260815_ab12).toMatchObject({ acquisitions: 0, visitors: 30, days: 30, excludedDays: 1 });
+    await tx((t) => t.update(storeReportPartitions).set({ status: 'complete' }).where(day15));
+    // Studio (P1-05): each post with its own campaign gets Google-reported results over a settled 14-day window.
+    const c = await item('2026-08-10');
+    expect(await tx((t) => registerCampaignLink(t, h.tenantId, { ...reg, planItemId: c.item.id, postId: c.post.id, url: url('lessons_260810_ab12', 'feature-20260810'), reportScope: 'campaign' }))).toMatchObject({ registered: true });
+    const e = await item('2026-08-25');
+    expect(await tx((t) => registerCampaignLink(t, h.tenantId, { ...reg, planItemId: e.item.id, postId: e.post.id, url: url('lessons_260825_ab12', 'feature-20260825'), reportScope: 'campaign' }))).toMatchObject({ registered: true });
+    const att = await tx((t) =>
+      postStoreAttribution(
+        t,
+        program.id,
+        [a, b, c, e].map((x) => ({ id: x.item.id, day: x.item.day })),
+      ),
+    );
+    expect(att.get(a.item.id)).toMatchObject({ basis: 'provider_reported_attribution', status: 'reported', campaign: 'lessons_260815_ab12', windowStart: '2026-08-15', windowEnd: '2026-08-28', reportedThrough: '2026-08-31', acquisitions: 4, visitors: 22, daysListed: 14 });
+    // The shared campaign cannot be split per post, so that post gets nothing (program level only).
+    expect(att.has(b.item.id)).toBe(false);
+    // Reported window, but Google listed no row for the campaign: unknown, not zero.
+    expect(att.get(c.item.id)).toMatchObject({ status: 'not_listed', acquisitions: null, visitors: null, daysListed: 0 });
+    // The window ends after the newest final report day: nothing is shown yet.
+    expect(att.get(e.item.id)).toMatchObject({ status: 'awaiting_reports', windowEnd: '2026-09-07', acquisitions: null });
     expect(d.breakdowns.sources.map((s) => s.value).sort()).toEqual(['Google Play search', 'Third-party referrals']);
   });
 
@@ -742,6 +769,17 @@ describe('final completion: KPI correctness, store context for the Growth Brain,
     ]);
     expect((await tx((t) => storeTrendContext(t, A, h.clock.now())))!.withheld.map((w) => w.appId)).toEqual([ALPHA]);
     const lines = storeTrendLines({ observe: { output: { storeTrend: ctx } } as never });
+    // An organic Page goal gets only its brand's own app (P1-03): never another app of the developer account.
+    const own = await tx((t) => appsTrendContext(t, [{ platform: 'android', appId: ALPHA }], h.clock.now()));
+    expect(own).toMatchObject({ scope: 'brand_apps', apps: [ALPHA] });
+    expect([...own!.stated, ...own!.withheld].every((x) => x.appId === ALPHA)).toBe(true);
+    expect(new Set(own!.withheld.map((w) => w.metricKey))).toEqual(new Set(['play.daily_user_installs', 'play.store_listing_acquisitions']));
+    const ownLines = storeTrendLines({ observe: { output: { storeTrend: own } } as never });
+    expect(ownLines).toMatch(/for this brand's own app \(com\.example\.alpha; other apps of the developer account are excluded\)/);
+    expect(ownLines).toMatch(/User installs of com\.example\.alpha \(insufficient data\)/);
+    expect(ownLines).not.toMatch(/com\.example\.beta/);
+    expect(ownLines).toMatch(/no post is credited with installs/);
+    expect(await tx((t) => appsTrendContext(t, [], h.clock.now()))).toBeNull();
     expect(lines).toMatch(/No trend is stated for .*com\.example\.alpha \(insufficient data\)/);
     expect(lines).toMatch(/no post is credited with installs/);
     const step = (now: Date) => EXECUTORS.forecast({ deps: h.deps, tenantId: h.tenantId, goal: { id: randomUUID(), kpi: { metricKey: A, label: 'Alpha installs', unit: 'installs' }, targetDate: new Date(now.getTime() + 30 * 86_400_000) }, cycle: {}, task: { refs: {} }, prior: {}, aiCallsLeft: 0, now } as never);

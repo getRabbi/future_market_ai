@@ -180,7 +180,7 @@ export interface Glance {
   paused: number;
   onTrack: number;
   attention: number;
-  /** Active goals with no measured result yet (not a problem: data has not arrived). */
+  /** Active goals with no measured result yet. Not counted as needing attention, but not assumed to be only late either: the KPI may need a permission (e.g. read_insights). */
   notMeasured: number;
 }
 

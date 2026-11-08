@@ -153,7 +153,7 @@ function GlanceCard() {
                 </>
               )
             ) : (
-              [g.notMeasured ? `${g.notMeasured} not measured yet (data has not arrived — not a problem)` : null, g.paused ? `${g.paused} paused` : null].filter(Boolean).join(' · ') || 'Every active goal has a measured result.'
+              [g.notMeasured ? `${g.notMeasured} not measured yet (no KPI values recorded; publishing is not blocked, and the goal shows what it waits for)` : null, g.paused ? `${g.paused} paused` : null].filter(Boolean).join(' · ') || 'Every active goal has a measured result.'
             )}
           </p>
         </>

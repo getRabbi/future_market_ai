@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compareArms, MIN_POSTS_PER_ARM, MIN_POSTS_TOTAL } from '../src/modules/studio/learning.js';
+import { type HistoryItem, learnFrom } from '../src/modules/studio/planner.js';
 
 const obs = (arm: string, values: (number | null)[]) => values.map((value) => ({ arm, value }));
 
@@ -39,5 +40,19 @@ describe('uncertainty-aware learning (D-043)', () => {
     const c1 = compareArms('kind', input);
     expect(c1.arms.find((x) => x.arm === 'a')!.posts).toBe(4);
     expect(compareArms('kind', input)).toEqual(c1);
+  });
+
+  it('reports Google-reported store results as their own comparison, never as engagement or a calendar driver (P1-05)', () => {
+    const base = { unitId: null, objective: 'INSTALL_APP', template: 'feature', palette: 'navy', variant: 0, hookId: null, promptId: null, status: 'published', engagement: null } as const;
+    const hist: HistoryItem[] = Array.from({ length: 6 }, (_, i) => ({ ...base, day: `2026-08-${10 + i}`, kind: i % 2 ? 'quiz' : 'vocab', storeAcquisitions: i === 5 ? null : i % 2 ? 9 : 1 }));
+    const l = learnFrom(hist);
+    expect(l).toMatchObject({ measuredPosts: 0, phase: 'exploring' });
+    const store = l.comparisons.find((c) => c.dimension.startsWith('store listing acquisitions'));
+    // Five reported values (the null one is unknown, not zero) are far below the sample a comparison needs.
+    expect(store).toMatchObject({ verdict: 'insufficient_data', best: null });
+    expect(store!.arms.reduce((n, a) => n + a.posts, 0)).toBe(5);
+    expect(l.comparisons[0]!.dimension).toBe('lesson type');
+    // Posts without a per-post campaign add no store comparison at all.
+    expect(learnFrom(hist.map(({ storeAcquisitions: _, ...h }) => h)).comparisons.some((c) => c.dimension.startsWith('store'))).toBe(false);
   });
 });

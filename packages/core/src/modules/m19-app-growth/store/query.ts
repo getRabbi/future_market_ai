@@ -431,18 +431,33 @@ export function bucketSeries(metricKey: string, totals: DailyTotal[], from: stri
  * Play traffic-source rows with a UTM campaign, mapped through the campaign registry: `post` when
  * the campaign was registered as unique to one post, `program` when it is shared by several posts
  * of one program (Play cannot split it), `unregistered` otherwise.
+ *
+ * Like KPI points (D-046), only final days of the winning report version with admitted evidence are
+ * counted; provisional or unadmitted days are left out and counted in `excludedDays`, never added.
+ * One partition holds a day's traffic-source rows, so a restated day replaces, never adds.
  */
 export async function reportedCampaigns(t: DbOrTx, appId: string, from: string, to: string) {
-  const r = await t.execute<{ utm_source: string | null; utm_campaign: string; acquisitions: number | null; visitors: number | null; days: number; nulls: boolean }>(sql`
-    select dims ->> 'utm_source' as utm_source, dims ->> 'utm_campaign' as utm_campaign,
-      sum(value) filter (where metric_key = 'play.store_listing_acquisitions') as acquisitions,
-      sum(value) filter (where metric_key = 'play.store_listing_visitors') as visitors,
-      count(distinct observation_date)::int as days,
-      bool_or(value is null and metric_key in ('play.store_listing_acquisitions', 'play.store_listing_visitors')) as nulls
-    from store_metric_observations
-    where platform = 'android' and app_id = ${appId} and family = 'play.store_performance' and dimension = 'traffic_source'
-      and coalesce(dims ->> 'utm_campaign', '') not in ('', 'Other', '(not set)')
-      and observation_date between ${from}::date and ${to}::date
+  const r = await t.execute<{ utm_source: string | null; utm_campaign: string; acquisitions: number | null; visitors: number | null; days: number; nulls: boolean; first_day: string | null; last_day: string | null; excluded_days: number }>(sql`
+    with rows as (
+      select o.dims ->> 'utm_source' as utm_source, o.dims ->> 'utm_campaign' as utm_campaign, o.metric_key, o.value, o.observation_date,
+        (p.status = 'complete' and e.status = 'admitted') as final
+      from store_metric_observations o
+      join store_report_partitions p on p.id = o.partition_id
+      join store_report_files f on f.id = p.report_file_id
+      left join evidence_records e on e.id = f.evidence_id
+      where o.platform = 'android' and o.app_id = ${appId} and o.family = 'play.store_performance' and o.dimension = 'traffic_source'
+        and coalesce(o.dims ->> 'utm_campaign', '') not in ('', 'Other', '(not set)')
+        and o.observation_date between ${from}::date and ${to}::date
+    )
+    select utm_source, utm_campaign,
+      sum(value) filter (where final and metric_key = 'play.store_listing_acquisitions') as acquisitions,
+      sum(value) filter (where final and metric_key = 'play.store_listing_visitors') as visitors,
+      count(distinct observation_date) filter (where final)::int as days,
+      coalesce(bool_or(final and value is null and metric_key in ('play.store_listing_acquisitions', 'play.store_listing_visitors')), false) as nulls,
+      min(observation_date) filter (where final)::text as first_day,
+      max(observation_date) filter (where final)::text as last_day,
+      (count(distinct observation_date) - count(distinct observation_date) filter (where final))::int as excluded_days
+    from rows
     group by 1, 2 order by 3 desc nulls last`);
   const names = [...new Set(r.rows.map((x) => x.utm_campaign))];
   const links = names.length
@@ -468,10 +483,41 @@ export async function reportedCampaigns(t: DbOrTx, appId: string, from: string, 
           : unique
             ? { status: 'post' as const, brandId: unique.brandId, programId: unique.programId, planItemId: unique.planItemId, postId: unique.postId, channelPlatform: unique.channelPlatform }
             : { status: 'program' as const, brandId: mine[0]!.brandId, programId: programs.length === 1 ? programs[0] : null, posts: mine.length };
-      return { utmSource: x.utm_source, utmCampaign: x.utm_campaign, acquisitions: x.nulls ? null : x.acquisitions === null ? null : Number(x.acquisitions), visitors: x.nulls ? null : x.visitors === null ? null : Number(x.visitors), days: x.days, identity };
+      const known = (v: number | null) => (x.nulls || v === null || x.days === 0 ? null : Number(v));
+      return { utmSource: x.utm_source, utmCampaign: x.utm_campaign, acquisitions: known(x.acquisitions), visitors: known(x.visitors), days: x.days, firstDay: x.first_day, lastDay: x.last_day, excludedDays: Number(x.excluded_days), identity };
     }),
     basis: 'provider_reported_attribution',
-    note: 'Google attributes store listing acquisitions to the UTM campaign of the visit. This is attribution reported by Google, not proof that a post caused installs. Small values may be grouped as "Other".',
+    note: 'Google attributes store listing acquisitions to the UTM campaign of the visit. This is attribution reported by Google, not proof that a post caused installs. Only final, evidence-backed report days are counted. Small values may be grouped as "Other", so a campaign that is missing here is unknown, not zero.',
+  };
+}
+
+/**
+ * Final, evidence-backed daily store-listing acquisitions and visitors that Google attributes to
+ * the named UTM campaigns of one Android app, plus the newest final traffic-source day of that app
+ * (how far the report has been published). Days Google did not list are absent, not zero.
+ */
+export async function campaignReportDays(t: DbOrTx, appId: string, campaigns: string[], from: string, to: string) {
+  if (!campaigns.length) return { reportedThrough: null as string | null, days: [] as { campaign: string; day: string; acquisitions: number | null; visitors: number | null }[] };
+  const final = sql`p.status = 'complete' and e.status = 'admitted'`;
+  const base = sql`from store_metric_observations o
+      join store_report_partitions p on p.id = o.partition_id
+      join store_report_files f on f.id = p.report_file_id
+      join evidence_records e on e.id = f.evidence_id
+      where o.platform = 'android' and o.app_id = ${appId} and o.family = 'play.store_performance' and o.dimension = 'traffic_source' and ${final}`;
+  const [through] = (await t.execute<{ day: string | null }>(sql`select max(o.observation_date)::text as day ${base}`)).rows;
+  const r = await t.execute<{ campaign: string; day: string; acquisitions: number | null; visitors: number | null; nulls: boolean }>(sql`
+    select o.dims ->> 'utm_campaign' as campaign, o.observation_date::text as day,
+      sum(o.value) filter (where o.metric_key = 'play.store_listing_acquisitions') as acquisitions,
+      sum(o.value) filter (where o.metric_key = 'play.store_listing_visitors') as visitors,
+      bool_or(o.value is null and o.metric_key in ('play.store_listing_acquisitions', 'play.store_listing_visitors')) as nulls
+    ${base} and o.dims ->> 'utm_campaign' in (${sql.join(
+      campaigns.map((c) => sql`${c}`),
+      sql`, `,
+    )}) and o.observation_date between ${from}::date and ${to}::date
+    group by 1, 2 order by 2`);
+  return {
+    reportedThrough: through?.day ?? null,
+    days: r.rows.map((x) => ({ campaign: x.campaign, day: x.day, acquisitions: x.nulls || x.acquisitions === null ? null : Number(x.acquisitions), visitors: x.nulls || x.visitors === null ? null : Number(x.visitors) })),
   };
 }
 

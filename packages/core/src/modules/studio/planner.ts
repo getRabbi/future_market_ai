@@ -25,6 +25,11 @@ export interface HistoryItem {
   status: string;
   /** Observed engagement (reactions + 2·comments + 3·shares) of the published post; null if unread. */
   engagement: number | null;
+  /**
+   * Google-reported store listing acquisitions of the post's own campaign over its settled
+   * attribution window; null when not reported, absent when the post has no per-post campaign.
+   */
+  storeAcquisitions?: number | null;
 }
 
 export interface PlannedItem {
@@ -118,6 +123,17 @@ export function learnFrom(history: HistoryItem[]): Learning {
       measured.filter((h) => h.hookId).map((h) => ({ arm: h.hookId!, value: h.engagement })),
     ),
   ];
+  // Reported only, never drives the calendar: Google lists a campaign only when it has visits (small
+  // ones may be grouped as "Other"), so the observed posts are a censored sample, and lesson types follow the weekday.
+  const storeObserved = history.filter((h) => h.status === 'published' && h.storeAcquisitions !== undefined);
+  if (storeObserved.length) {
+    others.push(
+      compareArms(
+        'store listing acquisitions by lesson type (Google-reported)',
+        storeObserved.map((h) => ({ arm: h.kind, value: h.storeAcquisitions ?? null })),
+      ),
+    );
+  }
   const byKind = kind.arms.map((a) => ({ kind: a.arm, posts: a.posts, mean: a.mean, lift: a.posts >= MIN_POSTS_PER_ARM && overall > 0 ? Math.round(((a.mean - overall) / overall) * 100) / 100 : null, low: a.low, high: a.high, pBest: a.pBest }));
   const phase = kind.verdict === 'clear_difference' ? 'adapting' : 'exploring';
   const name = (k: string) => KIND_NAME[k as PlanKind] ?? k;
