@@ -15,6 +15,10 @@ export const PLAN_ITEM_STATUSES = ['planned', 'drafted', 'submitted', 'published
 export const COMMUNITY_PERMISSIONS = ['unknown', 'members_may_post', 'admin_approval', 'admin_only', 'owned'] as const;
 export const COMMUNITY_STATUSES = ['candidate', 'member', 'approved', 'declined', 'archived'] as const;
 export const SHARE_STATUSES = ['prepared', 'shared', 'declined', 'expired'] as const;
+/** P3-01: curriculum programs (EPS lesson banks) and general programs for any business. */
+export const STUDIO_PROGRAM_KINDS = ['curriculum', 'general'] as const;
+/** P3-01 pipeline: research → idea → brief → create → validate → approve → schedule → publish → verify → measure → learn. */
+export const CONTENT_ITEM_STAGES = ['idea', 'brief', 'draft', 'validated', 'approved', 'scheduled', 'published', 'verified', 'measured', 'learned', 'rejected', 'failed'] as const;
 
 /** A Facebook Page that publishes from a curriculum pack (one program per connection). */
 export const studioPrograms = pgTable(
@@ -26,6 +30,11 @@ export const studioPrograms = pgTable(
       .notNull()
       .references(() => connections.id, { onDelete: 'cascade' }),
     pack: text('pack').notNull(),
+    /** curriculum (a lesson pack) or general (any business, P3-01); existing programs are curriculum. */
+    kind: text('kind').notNull().default('curriculum'),
+    name: text('name'),
+    /** General programs: pillars, platforms, cadence, language, objective, audience. */
+    plan: json<Record<string, unknown>>('plan').notNull().default({}),
     /** The brand this program publishes for (D-041); null for programs created before brands existed. */
     brandId: uuid('brand_id').references(() => brands.id, { onDelete: 'set null' }),
     status: text('status').notNull().default('active'),
@@ -36,7 +45,12 @@ export const studioPrograms = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex('studio_programs_conn_uq').on(t.tenantId, t.connectionId), oneOf('studio_programs_status_chk', t.status, STUDIO_PROGRAM_STATUSES)],
+  (t) => [
+    uniqueIndex('studio_programs_conn_uq').on(t.tenantId, t.connectionId),
+    oneOf('studio_programs_status_chk', t.status, STUDIO_PROGRAM_STATUSES),
+    oneOf('studio_programs_kind_chk', t.kind, STUDIO_PROGRAM_KINDS),
+    rawCheck('studio_programs_general_brand_chk', sql`${t.kind} <> 'general' or ${t.brandId} is not null`),
+  ],
 );
 
 /** One planned post: what it teaches, for whom, why, how it looks, and what it achieved. */
@@ -135,4 +149,51 @@ export const communityShares = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [index('community_shares_group_idx').on(t.tenantId, t.groupId, t.createdAt), oneOf('community_shares_status_chk', t.status, SHARE_STATUSES), oneOf('community_shares_kind_chk', t.kind, ['lesson', 'permission_request'])],
+);
+
+/**
+ * One piece of content moving through the Universal Studio pipeline (P3-01). Every stage change is
+ * audited; publishing happens only through M16/M23 (post_id), and verification, measurement and
+ * learning are read from the post's verified state and its results, never assumed.
+ */
+export const studioContentItems = pgTable(
+  'studio_content_items',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => studioPrograms.id, { onDelete: 'cascade' }),
+    brandId: uuid('brand_id')
+      .notNull()
+      .references(() => brands.id, { onDelete: 'cascade' }),
+    stage: text('stage').notNull().default('idea'),
+    pillar: text('pillar').notNull(),
+    platform: text('platform').notNull(),
+    connectionId: uuid('connection_id')
+      .notNull()
+      .references(() => connections.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    origin: text('origin').notNull(),
+    idea: json<Record<string, unknown>>('idea').notNull().default({}),
+    brief: json<Record<string, unknown>>('brief').notNull().default({}),
+    draft: json<Record<string, unknown>>('draft').notNull().default({}),
+    validation: json<Record<string, unknown>>('validation').notNull().default({}),
+    /** The utm_campaign this item's links carry (per-post or the program's shared campaign). */
+    campaign: text('campaign'),
+    postId: uuid('post_id').references(() => socialPosts.id, { onDelete: 'set null' }),
+    scheduledAt: ts('scheduled_at'),
+    metrics: json<Record<string, unknown>>('metrics').notNull().default({}),
+    /** Model run, prompt and evidence the idea or draft came from. */
+    provenance: json<Record<string, unknown>>('provenance').notNull().default({}),
+    statusReason: text('status_reason'),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    approvedBy: text('approved_by'),
+    approvedAt: ts('approved_at'),
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('studio_content_items_program_idx').on(t.tenantId, t.programId, t.stage), uniqueIndex('studio_content_items_post_uq').on(t.tenantId, t.postId), oneOf('studio_content_items_stage_chk', t.stage, CONTENT_ITEM_STAGES), oneOf('studio_content_items_origin_chk', t.origin, ['ai', 'manual'])],
 );

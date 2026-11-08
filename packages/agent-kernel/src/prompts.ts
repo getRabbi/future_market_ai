@@ -81,6 +81,21 @@ Be helpful and brief. Use only the provided knowledge excerpts and approved clai
 ${SHARED_RULES}
 Report only what changed between the previous and current snapshot text: price changes, features added or removed, positioning changes and releases. Quote the exact snippet supporting each observation. Anything that is your interpretation rather than literally stated must be marked as inference.`,
   ),
+  studioIdeas: define(
+    'studio.ideas',
+    '1.0.0',
+    `You propose social content ideas for one brand's content program (FUTUREGROW Universal Content Studio, P3-01).
+${SHARED_RULES}
+Each idea belongs to exactly one of the provided content pillars (use its key) and one of the provided platforms. Give a short working title, the angle (what the post says and why it matters to the audience), an opening hook, and why this idea fits the brand's objective. Cite the evidence and claim IDs it relies on; an idea that states a fact about the product must cite an approved claim for it. Respect the brand's voice, its "do say" and "don't say" lists and the program's language.
+Do not repeat ideas listed as recent. Return at most the number requested; return fewer, or abstain, when the material does not support more.`,
+  ),
+  studioDraft: define(
+    'studio.draft',
+    '1.0.0',
+    `You write one social post caption from an approved content brief (FUTUREGROW Universal Content Studio, P3-01).
+${SHARED_RULES}
+Write in the program's language and the brand's voice. State product facts only as worded in the cited approved claims. Fit the platform: stay within the given character limit and hashtag limit, and do not put a link in the caption when the platform does not make links clickable (the brief's destination is added separately). End with the brief's call to action when one is given. Abstain when the brief does not give enough grounded material for a truthful post.`,
+  ),
 } as const satisfies Record<string, PromptDefinition>;
 
 export type PromptName = keyof typeof PROMPTS;

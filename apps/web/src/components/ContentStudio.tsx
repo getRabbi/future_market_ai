@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type Me } from '../lib/api.js';
 import { readableText, relativeTime } from '../lib/format.js';
+import { UniversalStudio } from './UniversalStudio.js';
 import { Badge, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
 
 /** Every API call this screen makes (checked against the API's routes in catalog.test.ts). */
@@ -32,6 +33,7 @@ export interface Program {
   id: string;
   connectionId: string;
   pack: string;
+  kind?: 'curriculum' | 'general';
   status: 'active' | 'paused';
   settings: { appCtaPerWeek?: number; linkPerWeek?: number; campaign?: string; campaignIdentity?: 'shared' | 'per_post' };
 }
@@ -97,12 +99,37 @@ export const KIND: Record<string, string> = { vocab: 'Word', hangul: 'Hangul', g
 export const OBJECTIVE: Record<string, string> = { EDUCATE: 'Teach', ENGAGE: 'Ask for answers', DISCOVER: 'Mention the app', VISIT_APP: 'Store link', INSTALL_APP: 'Install', RETAIN: 'Return' };
 const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-/** Content studio (D-040): the Page's daily lesson posts, their cards and results, and the community workspace. */
+/**
+ * Content studio: brand programs for any business (Universal Studio, P3-01) and the Page's daily
+ * lesson posts (D-040), their cards and results, and the community workspace.
+ */
 export function ContentStudioView({ me }: { me: Me }) {
-  const programs = useApi<Program[]>('/v1/content/programs');
+  const all = useApi<Program[]>('/v1/content/programs');
+  const [chosen, setMode] = useState<'brand' | 'lessons' | null>(null);
+  // The lesson studio stays the default (EPS behaviour); an organization with only brand programs opens on those.
+  const kinds = new Set((all.data ?? []).map((p) => p.kind ?? 'curriculum'));
+  const mode = chosen ?? (kinds.has('general') && !kinds.has('curriculum') ? 'brand' : 'lessons');
+  return (
+    <div className="stack">
+      <div className="seg" role="tablist" aria-label="Studio">
+        <button type="button" role="tab" aria-selected={mode === 'lessons'} className="seg-btn" onClick={() => setMode('lessons')}>
+          Daily lessons
+        </button>
+        <button type="button" role="tab" aria-selected={mode === 'brand'} className="seg-btn" onClick={() => setMode('brand')}>
+          Brand programs
+        </button>
+      </div>
+      {mode === 'brand' ? <UniversalStudio me={me} /> : <LessonStudio me={me} />}
+    </div>
+  );
+}
+
+function LessonStudio({ me }: { me: Me }) {
+  const all = useApi<Program[]>('/v1/content/programs');
   const [sel, setSel] = useState<string | null>(null);
-  if (programs.error) return <ErrorNotice error={programs.error} />;
-  if (!programs.data) return <LoadingRows label="Loading the content studio…" />;
+  if (all.error) return <ErrorNotice error={all.error} />;
+  if (!all.data) return <LoadingRows label="Loading the content studio…" />;
+  const programs = { ...all, data: all.data.filter((p) => (p.kind ?? 'curriculum') === 'curriculum') };
   const program = programs.data.find((p) => p.id === sel) ?? programs.data[0];
   return (
     <div className="stack">

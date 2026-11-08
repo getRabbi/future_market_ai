@@ -48,6 +48,21 @@ registerTasks((deps) => ({
     );
   },
 
+  /** Universal Studio (P3-01): scheduled items advance only from their post's real state (verified, failed, measured, learned). */
+  studio_items_sync: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      const programs = await withTenant(deps.db, { tenantId, actor: 'system:universal-studio' }, (tx) => contentStudio.universal.listGeneralPrograms(tx));
+      for (const p of programs) {
+        try {
+          const r = await contentStudio.universal.syncProgramItems(deps, tenantId, p.id);
+          if (r.verified || r.failed || r.measured || r.learned) deps.logger.info({ tenantId, programId: p.id, ...r }, 'studio items advanced');
+        } catch (err) {
+          deps.logger.warn({ tenantId, programId: p.id, err: err instanceof Error ? err.message : String(err) }, 'studio items sync failed');
+        }
+      }
+    });
+  },
+
   /** Autopilot (D-033): queue goals with due work; runs without any browser session. */
   autopilot_tick: async () => {
     const r = await autopilot.autopilotTick(deps);
@@ -102,4 +117,4 @@ registerEventHandlers((bus, deps) => {
   });
 });
 
-export const MODULE_CRONTAB = ['* * * * * autopilot_tick', '13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '19 * * * * studio_drafts_sweep', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];
+export const MODULE_CRONTAB = ['* * * * * autopilot_tick', '13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '19 * * * * studio_drafts_sweep', '*/15 * * * * studio_items_sync', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];

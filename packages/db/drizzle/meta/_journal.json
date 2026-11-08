@@ -127,6 +127,13 @@
       "when": 1794124038939,
       "tag": "0017_p2_providers",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794124358412,
+      "tag": "0018_universal_studio",
+      "breakpoints": true
     }
   ]
 }

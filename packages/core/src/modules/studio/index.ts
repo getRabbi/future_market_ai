@@ -1,8 +1,8 @@
-import { assetRights, assets, brandChannels, campaignLinks, claims, connections, contentPlanItems, type DbOrTx, evidenceRecords, socialPosts, studioPrograms, type Tx, withTenant } from '@futuregrow/db';
+import { assetRights, assets, brandChannels, brands, campaignLinks, claims, connections, contentPlanItems, type DbOrTx, evidenceRecords, socialPosts, studioPrograms, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound, sha256Hex } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
 import { type CardSpec, FONT_SOURCES, hammingDistance, PALETTE_IDS, type PaletteId, renderCard } from '@futuregrow/visuals';
-import { and, desc, eq, gte, inArray, isNotNull, like, lt, ne, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, isNull, like, lt, ne, notInArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, clipText, requireRole } from '../../util.js';
@@ -12,15 +12,18 @@ import { lintCopy } from '../m03-knowledge/index.js';
 import { recomputeEligibility } from '../m14-assets/index.js';
 import { pageBrandScope, postResults } from '../m16-social/index.js';
 import { campaignReportDays } from '../m19-app-growth/store/query.js';
+import { campaignBase, resolveProgramCampaign } from './campaigns.js';
 import { type ClaimRef, type Composition, compose, type Objective } from './compose.js';
 import { type CurriculumRef, PACKS, packVersion, unitById, verifyCurriculumText } from './curriculum.js';
 import { engagementScore, learningScore, measurePost } from './measurement.js';
 import { dayOffset, type HistoryItem, learnFrom, localDay, type PlanKind, planDays } from './planner.js';
 
+export { campaignBase, resolveProgramCampaign, uniqueCampaign } from './campaigns.js';
 export * from './community.js';
 export { type ClaimRef, compose, FEATURE_MATCHERS, HOOKS, OBJECTIVES, taggedListingUrl } from './compose.js';
 export { type CurriculumRef, PACKS, packUnits, packVersion, unitById, verifyCurriculumText } from './curriculum.js';
 export { learnFrom, localDay, nextPostingSlot, POST_WINDOW, planDays, postingWindow } from './planner.js';
+export * as universal from './universal.js';
 
 /**
  * Content studio (D-040): turns a Facebook Page's curriculum program into a seven-day plan and,
@@ -90,8 +93,12 @@ export async function listPrograms(t: DbOrTx) {
   return t.select().from(studioPrograms).orderBy(desc(studioPrograms.createdAt));
 }
 
+/** The curriculum program of a Page (the Autopilot's daily lesson drafting); general programs use the Universal Studio pipeline. */
 export async function programForConnection(t: DbOrTx, connectionId: string): Promise<Program | null> {
-  const [p] = await t.select().from(studioPrograms).where(eq(studioPrograms.connectionId, connectionId));
+  const [p] = await t
+    .select()
+    .from(studioPrograms)
+    .where(and(eq(studioPrograms.connectionId, connectionId), eq(studioPrograms.kind, 'curriculum')));
   return p ?? null;
 }
 
@@ -102,17 +109,18 @@ export async function upsertProgram(t: Tx, tenantId: string, actor: Actor, raw: 
   const [conn] = await t.select().from(connections).where(eq(connections.id, input.connectionId));
   if (!conn || conn.provider !== 'meta') throw invalid('the content studio needs a Facebook Page connection');
   const [current] = await t.select().from(studioPrograms).where(eq(studioPrograms.connectionId, input.connectionId));
+  if (current && current.kind !== 'curriculum') throw conflict('this Page already runs a general Universal Studio program; edit it there');
   // An omitted identity keeps the existing program's choice; a new program gets report-compatible per-post campaigns.
-  const rawIdentity = (raw as { settings?: { campaignIdentity?: unknown } } | null)?.settings?.campaignIdentity;
-  if (rawIdentity === undefined) input.settings = { ...input.settings, campaignIdentity: current ? ProgramSettingsSchema.parse(current.settings ?? {}).campaignIdentity : 'per_post' };
-  // Store-link identities are (app, campaign, content): two programs sharing a campaign name could collide.
-  if (!current || (current.settings as { campaign?: string }).campaign !== input.settings.campaign) {
-    const [clash] = await t
-      .select({ id: studioPrograms.id })
-      .from(studioPrograms)
-      .where(and(ne(studioPrograms.connectionId, input.connectionId), sql`${studioPrograms.settings}->>'campaign' = ${input.settings.campaign}`));
-    if (clash) throw conflict(`campaign "${input.settings.campaign}" is already used by another program; choose a distinct campaign name`);
-  }
+  const rawSettings = (raw as { settings?: { campaignIdentity?: unknown; campaign?: unknown } } | null)?.settings;
+  if (rawSettings?.campaignIdentity === undefined) input.settings = { ...input.settings, campaignIdentity: current ? ProgramSettingsSchema.parse(current.settings ?? {}).campaignIdentity : 'per_post' };
+  // Store-link identities are (app, campaign, content): two programs sharing a campaign name would mix their links and reports (P3-01).
+  const brandSlug = input.brandId ? ((await t.select({ slug: brands.slug }).from(brands).where(eq(brands.id, input.brandId)))[0]?.slug ?? null) : null;
+  input.settings.campaign = await resolveProgramCampaign(t, {
+    requested: typeof rawSettings?.campaign === 'string' ? rawSettings.campaign : undefined,
+    current: current ? ((current.settings as { campaign?: string }).campaign ?? 'eps_daily') : null,
+    connectionId: input.connectionId,
+    base: campaignBase(brandSlug ?? input.pack, 'daily'),
+  });
   if (input.brandId) {
     const [channel] = await t.select().from(brandChannels).where(eq(brandChannels.connectionId, input.connectionId));
     if (!channel || channel.brandId !== input.brandId) throw conflict("link the program's Facebook Page to this brand first");
