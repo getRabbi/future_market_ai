@@ -90,6 +90,7 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.get('/v1/app/installs/stats', { schema: { tags: ['app'] } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.installStats(tx)));
   r.get('/v1/app/applications', { schema: { tags: ['app'] } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.listApplications(tx)));
   r.get('/v1/app/campaigns', { schema: { tags: ['app'], querystring: appGrowth.CampaignQuerySchema } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.campaignConversions(tx, req.query, deps.clock.now())));
+  r.get('/v1/app/attribution', { schema: { tags: ['app'], querystring: appGrowth.attribution.AttributionQuerySchema } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.attribution.attributionReport(tx, req.query, deps.clock.now())));
   r.get('/v1/app/cohorts', { schema: { tags: ['app'], querystring: z.object({ from: z.string().datetime({ offset: true }), to: z.string().datetime({ offset: true }), activationEvent: z.string().min(1).max(200) }) } }, async (req) =>
     tenantTx(ctx, req, (tx) => appGrowth.acquisitionCohorts(tx, { from: new Date(req.query.from), to: new Date(req.query.to), activationEvent: req.query.activationEvent })),
   );

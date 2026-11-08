@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from . import __version__, experiments, forecasting, mmm, propensity, topics, trends
+from . import __version__, experiments, forecasting, meridian_backend, mmm, propensity, topics, trends
 from .db import Store, dumps, emit, jsonb
 from .pgtls import secure_dsn
 
@@ -119,7 +119,16 @@ def handle_mmm(store: Store, req: dict) -> tuple[str, dict]:
     seed = int(p.get("seed", 20261019))
     spend = np.column_stack([data[c] for c in channels]).tolist() if channels else []
     ctrl = np.column_stack([data[c] for c in controls]).tolist() if controls else None
-    out = mmm.fit_mmm(data[kpi], spend, names, controls=ctrl, experiment_priors=exp_priors, gates=policy.get("mmmGates"), seed=seed, total_budget=p.get("totalBudgetPerPeriod"))
+    backend = p.get("backend", "native")
+    if backend == "meridian":
+        # P3-10: Meridian only in an approved compute environment; otherwise an explicit requires_compute run, no estimates.
+        out = meridian_backend.fit_meridian(data[kpi], spend, names, controls=ctrl, seed=seed)
+        out["diagnostics"] = {**out.get("diagnostics", {}), "backend": "meridian", "status": out["status"], "reason": out.get("reason"), "validation": out["validation"], "availability": out["availability"]}
+    else:
+        out = mmm.fit_mmm(data[kpi], spend, names, controls=ctrl, experiment_priors=exp_priors, gates=policy.get("mmmGates"), seed=seed, total_budget=p.get("totalBudgetPerPeriod"))
+        if backend == "compare":
+            mer = meridian_backend.fit_meridian(data[kpi], spend, names, controls=ctrl, seed=seed)
+            out["diagnostics"] = {**(out.get("diagnostics") or {"status": out.get("status"), "reason": out.get("reason")}), "backend": "native", "meridian": {"status": mer["status"], "reason": mer.get("reason"), "availability": mer["availability"]}, "comparison": meridian_backend.compare(out, mer)}
     with store.tenant(req["tenant_id"]) as cur:
         cur.execute(
             """insert into mmm_runs (tenant_id, request_id, kpi_series_id, channel_series_ids, control_series_ids, priors, diagnostics, converged,
@@ -132,7 +141,7 @@ def handle_mmm(store: Store, req: dict) -> tuple[str, dict]:
             ),
         )
         run_id = cur.fetchone()["id"]
-    return str(run_id), {"status": out.get("status"), "converged": out.get("converged", False), "periods": len(order), "sourceEvidenceIds": [str(meta[c]["source_evidence_id"]) for c in [kpi, *channels]]}
+    return str(run_id), {"status": out.get("status"), "backend": backend, "converged": out.get("converged", False), "periods": len(order), "sourceEvidenceIds": [str(meta[c]["source_evidence_id"]) for c in [kpi, *channels]]}
 
 
 def handle_experiment(store: Store, req: dict) -> tuple[str, dict]:

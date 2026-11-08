@@ -1,0 +1,15 @@
+[
+  { "appId": "com.example.lessons", "platform": "android", "installId": "6f1c2a8e-4b3d-4e5f-9a7b-1c2d3e4f5a6b", "eventId": "first_open_6f1c2a8e-4b3d-4e5f-9a7b-1c2d3e4f5a6b", "event": "first_open", "occurredAt": "2026-10-20T09:16:00.000Z", "appVersion": "2.2.0+7", "consent": { "analytics": true } },
+  { "appId": "com.example.lessons", "platform": "android", "installId": "6f1c2a8e-4b3d-4e5f-9a7b-1c2d3e4f5a6b", "eventId": "activation_6f1c2a8e-4b3d-4e5f-9a7b-1c2d3e4f5a6b", "event": "activation", "occurredAt": "2026-10-20T09:30:00.000Z", "appVersion": "2.2.0+7", "consent": { "analytics": true } },
+  {
+    "appId": "com.example.lessons",
+    "platform": "android",
+    "installId": "6f1c2a8e-4b3d-4e5f-9a7b-1c2d3e4f5a6b",
+    "eventId": "3a1b2c3d-0000-4000-8000-00000000c0de",
+    "event": "conversion",
+    "occurredAt": "2026-10-21T10:00:00.000Z",
+    "appVersion": "2.2.0+7",
+    "consent": { "analytics": true },
+    "conversion": { "name": "subscription_started", "valueMicros": 4990000, "currency": "USD" }
+  }
+]

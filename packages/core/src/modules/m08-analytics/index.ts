@@ -94,6 +94,8 @@ const ParamsByKind: Record<AnalyticsKind, z.ZodType> = {
     experimentPriors: z.array(z.object({ channelSeriesId: z.string().uuid(), liftPerPeriod: z.number(), se: z.number().positive(), experimentId: z.string().uuid() })).default([]),
     totalBudgetPerPeriod: z.number().positive().optional(),
     seed: z.number().int().optional(),
+    /** P3-10: native Bayesian MMM (default), Google Meridian (approved compute only; otherwise requires_compute), or both side by side. */
+    backend: z.enum(['native', 'meridian', 'compare']).default('native'),
   }),
   experiment_analysis: z.object({ experimentId: z.string().uuid(), seed: z.number().int().optional() }),
   trend_detection: z.object({ seriesIds: z.array(z.string().uuid()).min(1).max(100), alpha: z.number().gt(0).lt(0.5).optional() }),

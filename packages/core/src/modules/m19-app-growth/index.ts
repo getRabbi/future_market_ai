@@ -139,17 +139,33 @@ export async function recordInstall(deps: CoreDeps, tenantId: string, source: st
   });
 }
 
-export const AppEventSchema = z
+/** The event object without cross-field rules (other schemas derive from it with omit/pick). */
+export const AppEventBaseSchema = z
   .object({
     appId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{1,199}$/),
     platform: z.enum(['ios', 'android']),
     installId: z.string().min(8).max(200),
     eventId: z.string().min(8).max(200),
-    event: z.enum(['first_open', 'activation', 'session']),
+    event: z.enum(['first_open', 'activation', 'session', 'conversion']),
     occurredAt: z.string().datetime({ offset: true }),
     consent: z.object({ analytics: z.boolean() }),
+    /** P3-07: the app version that reported the event (e.g. 2.2.0+7). */
+    appVersion: z
+      .string()
+      .regex(/^[0-9A-Za-z.+_-]{1,40}$/)
+      .optional(),
+    /** P3-07: an optional in-app conversion (event = conversion only); no free-text or personal data. */
+    conversion: z
+      .object({ name: z.string().regex(/^[a-z0-9_]{2,40}$/), valueMicros: z.number().int().nonnegative().optional(), currency: z.string().length(3).optional() })
+      .strict()
+      .optional(),
   })
   .strict();
+
+export const AppEventSchema = AppEventBaseSchema.refine((e) => (e.event === 'conversion') === Boolean(e.conversion), 'a conversion event needs conversion details, other events must not carry them').refine((e) => !e.conversion?.valueMicros || Boolean(e.conversion.currency), 'a conversion value needs its currency');
+
+/** Events older than this are refused: a late batch is fine, a replayed archive is not (P3-07). */
+export const MAX_APP_EVENT_AGE_DAYS = 30;
 
 /** Server-authenticated telemetry; a first open is never inferred from an installation. */
 export async function recordAppEvent(deps: CoreDeps, tenantId: string, source: string, raw: unknown) {
@@ -158,6 +174,7 @@ export async function recordAppEvent(deps: CoreDeps, tenantId: string, source: s
   const now = deps.clock.now();
   const occurredAt = new Date(input.occurredAt);
   if (occurredAt.getTime() > now.getTime() + 300_000) throw invalid('event timestamp is in the future');
+  if (now.getTime() - occurredAt.getTime() > MAX_APP_EVENT_AGE_DAYS * 86_400_000) throw invalid(`event is older than ${MAX_APP_EVENT_AGE_DAYS} days; it is refused as a possible replay`);
   const installHash = sha256Hex(`${tenantId}:${input.platform}:${input.appId}:${input.installId}`);
   const messageId = `app-event:${installHash}:${sha256Hex(input.eventId)}`;
   const eventName = `app_${input.event}`;
@@ -198,7 +215,8 @@ export async function recordAppEvent(deps: CoreDeps, tenantId: string, source: s
         event: eventName,
         timestamp: input.occurredAt,
         deviceId: `app:${installHash}`,
-        properties: { appId: input.appId, platform: input.platform, installHash, evidenceId: evidence.evidenceId },
+        properties: { appId: input.appId, platform: input.platform, installHash, evidenceId: evidence.evidenceId, ...(input.appVersion ? { appVersion: input.appVersion } : {}), ...(input.conversion ? { conversion: input.conversion.name } : {}) },
+        ...(input.conversion?.valueMicros !== undefined ? { revenue: input.conversion.valueMicros / 1_000_000, currency: input.conversion.currency } : {}),
         context: { consent: { analytics: true } },
       },
     ]);
@@ -217,7 +235,9 @@ export async function recordAppEvent(deps: CoreDeps, tenantId: string, source: s
   });
 }
 
-export const AppCoverageSchema = AppEventSchema.omit({ eventId: true, occurredAt: true }).extend({
+export const AppCoverageSchema = AppEventBaseSchema.omit({ eventId: true, occurredAt: true, appVersion: true, conversion: true }).extend({
+  /** Completeness is declared for the funnel events only (not conversions). */
+  event: z.enum(['first_open', 'activation', 'session']),
   /** Exclusive end of a complete interval starting at installation. */
   through: z.string().datetime({ offset: true }),
   eventCount: z.number().int().min(0).max(10_000),
@@ -600,3 +620,5 @@ export async function syncDownloadsSeries(tx: Tx, tenantId: string): Promise<{ s
   await appendPoints(tx, tenantId, series.id, pts);
   return { seriesId: series.id, points: pts.length };
 }
+
+export * as attribution from './attribution.js';
