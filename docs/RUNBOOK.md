@@ -35,7 +35,9 @@ An action in `ESCALATED` means the provider call may or may not have been applie
 
 ## 4. Connector re-authorisation
 
-`connector.reauth_required` means credentials expired or were rejected. Queued actions are preserved (rescheduled hourly). Rotate credentials: Connections → *Rotate credentials* (MFA admin). Health check afterwards. Revoked app access at the provider → set the connection to `revoked`.
+`connector.reauth_required` means credentials expired or were rejected. Queued actions are preserved (rescheduled hourly). Rotate credentials: Connections → *Rotate credentials* (MFA admin). Health check afterwards. Revoked app access at the provider → set the connection to `revoked`. Since D-049 the hourly health check raises this alert as **critical** (it also reaches the operator webhook).
+
+`connector.token_expiring` warns before it happens: 30 days before a token's expiry or data-access lapse (warning), and 7 days before (critical, operator webhook too; the connection then reads `degraded`, which does not block posting). Each alert is raised once per date and severity. The EPS Page and ads tokens lose data access on **2027-01-25 06:29 UTC**: warning due 2026-12-26, critical 2027-01-18. Renewal: test the new token with *Test credentials* first, then rotate; never overwrite a working token with an untested one. Full steps and the Meta App Review checklist: [META_READINESS.md](META_READINESS.md).
 
 ## 5. Spend discrepancies (M17/M24)
 

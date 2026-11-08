@@ -141,7 +141,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Content studio (D-040): verified EPS-TOPIK lesson bank (eps-topik-bn), seven-day adaptive calendar (migration 0011), branded HarfBuzz/resvg cards with automated QA and near-duplicate checks, card assets with provenance and rights, Facebook photo posts through M23 (exact-byte upload, photo read-back), policy fg-policy-1.4.0 (curriculum-verified lessons, own-listing links), learning from read-back counters, owner-assisted community workspace, Content studio tab. No model call per post.
 - [ ] A real goal in a real organization producing measured results (needs live KPI data, policy, forecast gates and approved actions; see BLOCKERS / DEPLOYMENT §10).
 
-### Growth studio: brands, platforms, learning, media (2026-11-04/05) — ◐ (implemented and tested; release in progress)
+### Growth studio: brands, platforms, learning, media (2026-11-04/05) — ☑ (released as `46a19ba` on 2026-11-04; Facebook live-verified, other platforms fixture-tested)
 - [x] Stage 1 integration: PR #14 (P0 reliability) and PR #15 (conversion evidence, migrations 0012/0013) merged on top of PR #16 and live at `00ffb0d` (api, worker, Pages); emoji-safe text clipping fix for jsonb task writes.
 - [x] D-041 brands, explicit channel/app/program mappings, campaign identity registry (migration 0014), brand-scoped M19 campaign reports.
 - [x] D-042 platform readiness for 7 platforms, per-platform caption rules, LinkedIn and X connectors (X disabled, B-019), Reddit owner-assisted, comment spam/duplicate screen (migration 0015).
@@ -157,7 +157,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] UX audit fixes (D-047, branch `fix/ux-audit`, 2026-11-07). Past-day Studio drafts are expired or superseded through the existing draft → cancelled transition, with audit; a verified daily post is no longer shown as a blocked cycle because the forecast lacks Page insights; the optional Play Reporting API problem is a specific non-blocking warning; App intelligence defaults to a complete reporting window and explains open totals; readable timestamps, actor labels and copy fixes. No migration.
 - [x] Final completion pass (D-046, branch `fix/final-completion`, 2026-11-07). KPI points come only from final, evidence-backed values of the metric's own report. All-apps days require every confirmed app. Unsupported points are invalidated and audited. Freshness is judged per metric. App-scoped install goals, a stale-series forecast guard, 80% baseline coverage and store-trend context for the Idea Lab and Brain are added. Play keys are replaced in place after a bucket test, Play errors are classified specifically and media adapter status is truthful. No migration.
 
-### Unified product experience (2026-11-07) — ◐ (implemented and tested locally; PR open, not deployed)
+### Unified product experience (2026-11-07) — ☑ (released as `4cf2979` + polish `f612bfe`, Pages `4590d4df`; live check on the EPS organization desktop + 390 px)
 - [x] D-048 one shell for every page (header, search, quick actions, notifications, help, account; grouped sidebar; breadcrumbs); Autopilot views and all module sections in it; legacy links redirect.
 - [x] Home dashboard per the approved reference (journey stepper, at a glance, next best action, performance chart, blockers, system health, growth summary, activity, completions); Journey, Setup, Goals (filters, details, execution timeline, decisions, KPI chart), Autopilot control center, Content Calendar, Results, Insights, Incidents & Alerts, Activity log, All tools.
 - [x] Accessible chart component with honest gaps, partial periods and table alternative; global Ctrl+K search; read-only `GET /v1/system/status`.
@@ -170,7 +170,25 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 - [x] Backups: 18 daily encrypted archives, newest 21 h old; key-less integrity check of the newest (archive + 140 member hashes, AES-GCM envelope, manifests) passed; 35-day R2 expiry confirmed. Restore drill now refuses the source database and has a post-restore checker (`scripts/restore-drill-check.ts`: audit chains, RLS separation, nothing queued), CI-tested; runbook commands rehearsed locally. Production drill passed on the newest archive: 140 tables / 51,479 rows restored with matching counts in 15.8 s, audit chains valid for both tenants, RLS separation holds, nothing queued (B-025 resolved).
 - [x] Security, read-only on live (smoke org): private routes 401 without a session (proxy and API origin), other tenant 403, platform routes 403 for a tenant admin, TOTP required at sign-in, audit chain valid (573), no engaged kill switches, no open incidents or unacknowledged critical alerts, no escalated actions. Model registry: only Groq `gpt-oss-120b` approved; OpenRouter Opus not approved (revocation of 2026-10-27 holds).
 
-**Capability status (2026-11-07):**
+### P1 EPS growth intelligence (2026-11-08) — ◐ (implemented and tested on branch `feat/p1-eps-growth`; PR open, not merged or deployed)
+- [x] Read-only production audit of the org that holds the real EPS Page, Play account, brand and goal (`FG Smoke Test 20261021`; the owner account now requires two-factor, so checks ran as that org's TOTP admin). Play account `ok`, Reporting API still `SERVICE_DISABLED` (B-023); EPS installs 75 (Oct 4–31) vs 12 (28 days before), stated as an observed increase only; Page token without `read_insights`, data access until 2027-01-25 (B-005); EPS goal `fe9be4e0` active, cycle 7 completed with a verified post, forecast correctly unavailable.
+- [x] D-049 Growth Brain context for organic Page goals from the Page's brand apps only (EPS app, never all apps), with the existing abstention rules.
+- [x] D-049 per-post store attribution: final-only campaign sums with excluded days; Studio per-post results over a settled 14-day window (`awaiting_reports` / `reported` / `not_listed`); report-only learning comparison; Content studio switch to one campaign per post (owner action; future posts only).
+- [x] D-049 credential lifecycle: alerts 30 and 7 days before token expiry or data-access lapse, critical alert on re-authorization; RUNBOOK §4 and docs/META_READINESS.md (App Review checklist, renewal steps).
+- [x] Honesty fixes: the bootstrap lesson names the missing `read_insights`; Home no longer calls unmeasured goals "not a problem".
+- [ ] Owner: enable the Reporting API (B-023); re-authorize the Page with `read_insights` before 2027-01-25; App Review and Live mode; switch the EPS program to one campaign per post.
+
+**Capability status (2026-11-08):**
+
+| Status | Capabilities |
+|---|---|
+| Production-verified | Facebook Page photo/text posts through M23 with read-back verification (EPS-topik-Bangla; Development-mode app); daily Page post counters; Studio calendar, branded cards, evening window, rolling 24 h limit; stale-draft expiry; Google Play bulk-report import (EPS app discovered, brand-linked, installs and acquisitions imported, daily sync healthy); App intelligence, Home and all unified pages render on the EPS organization at desktop and 390 px without errors; operator alerts and backups (P0). |
+| Implemented, fixture-tested only | D-049 brand-scoped store context, per-post store attribution and token lifecycle alerts (await merge and deployment); Page insights → `kpi.facebook.*` (waits for `read_insights`); Instagram, TikTok, YouTube, LinkedIn and X executors; learning comparisons; media registry; spam screen. |
+| Configured, awaiting credentials or permission | Play Developer Reporting API app names and vitals (B-023); Page insights and App Review / Live mode (B-005); App Store Connect (B-022); Google Ads, Shopify, Resend, PostHog, Chatwoot; stock media vendor. |
+| Awaiting owner configuration | EPS program switch to per-post campaigns (then Google must report traffic for those campaigns before any per-post result shows). |
+| Deferred scope (not a coding failure) | Stock/AI media adapters (B-011); video production; new networks, paid-ad creation, Ecoms BD work. |
+
+**Capability status (2026-11-07, superseded by the 2026-11-08 table above):**
 
 | Status | Capabilities |
 |---|---|
