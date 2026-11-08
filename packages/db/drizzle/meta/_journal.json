@@ -141,6 +141,13 @@
       "when": 1794125686347,
       "tag": "0019_media_creation",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794127112730,
+      "tag": "0020_channels_paid",
+      "breakpoints": true
     }
   ]
 }

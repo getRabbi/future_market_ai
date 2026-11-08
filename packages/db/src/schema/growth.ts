@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, index, integer, pgTable, primaryKey, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, date, index, integer, pgTable, primaryKey, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, dbl, json, micros, oneOf, pk, rawCheck, tenantId, textArray, ts, updatedAt, uuidArray } from './_common.js';
 
 /* ------------------------------------------------------------------ */
@@ -906,4 +906,94 @@ export const fraudFlags = pgTable(
     createdAt: createdAt(),
   },
   (t) => [oneOf('fraud_flags_kind_chk', t.kind, ['click_velocity', 'self_referral', 'refund_rate', 'duplicate_customer', 'incentivized_review']), oneOf('fraud_flags_status_chk', t.status, ['open', 'dismissed', 'confirmed'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* P3-05 Multi-platform analytics                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One provider-reported value of one platform metric for an account or a post, per observation
+ * day. Values are never summed across platforms; a metric the provider did not return is stored
+ * as not_returned with a null value (unknown, never zero). A re-read on the same day revises it.
+ */
+export const socialMetricObservations = pgTable(
+  'social_metric_observations',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    connectionId: uuid('connection_id').notNull(),
+    platform: text('platform').notNull(),
+    scope: text('scope').notNull(),
+    objectRef: text('object_ref').notNull(),
+    postId: uuid('post_id'),
+    metricKey: text('metric_key').notNull(),
+    value: dbl('value'),
+    status: text('status').notNull(),
+    observedOn: date('observed_on', { mode: 'string' }).notNull(),
+    observedAt: ts('observed_at').notNull(),
+    revision: integer('revision').notNull().default(1),
+    source: json<Record<string, unknown>>('source').notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('social_metric_obs_uq').on(t.tenantId, t.platform, t.scope, t.objectRef, t.metricKey, t.observedOn),
+    index('social_metric_obs_conn_idx').on(t.tenantId, t.connectionId, t.observedOn),
+    oneOf('social_metric_obs_scope_chk', t.scope, ['account', 'post']),
+    oneOf('social_metric_obs_status_chk', t.status, ['reported', 'not_returned']),
+    oneOf('social_metric_obs_platform_chk', t.platform, ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin', 'x']),
+  ],
+);
+
+/** Each analytics import: what was asked, what came back, and why it failed (freshness and diagnostics). */
+export const socialAnalyticsRuns = pgTable(
+  'social_analytics_runs',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    connectionId: uuid('connection_id').notNull(),
+    platform: text('platform').notNull(),
+    status: text('status').notNull(),
+    counts: json<Record<string, unknown>>('counts').notNull().default({}),
+    error: text('error'),
+    startedAt: ts('started_at').notNull().defaultNow(),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [index('social_analytics_runs_idx').on(t.tenantId, t.connectionId, t.startedAt), oneOf('social_analytics_runs_status_chk', t.status, ['running', 'succeeded', 'partial', 'failed'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* P3-06 Paid campaign creation (M17)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A paid campaign being prepared: brief → objective → targeting → budget → creative → review →
+ * approval (M23, finance + two-factor) → create (PAUSED) → verify → monitor. The spec is the
+ * exact action payload that M23 hashes and the approver signs.
+ */
+export const paidCampaignDrafts = pgTable(
+  'paid_campaign_drafts',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    brandId: uuid('brand_id'),
+    platform: text('platform').notNull(),
+    connectionId: uuid('connection_id').notNull(),
+    name: text('name').notNull(),
+    status: text('status').notNull().default('draft'),
+    statusReason: text('status_reason'),
+    brief: json<Record<string, unknown>>('brief').notNull().default({}),
+    spec: json<Record<string, unknown>>('spec').notNull(),
+    geographies: textArray('geographies').notNull().default(sql`'{}'::text[]`),
+    evidenceIds: uuidArray('evidence_ids').notNull().default(sql`'{}'::uuid[]`),
+    problems: json<string[]>('problems').notNull().default([]),
+    actionId: uuid('action_id'),
+    externalCampaignId: text('external_campaign_id'),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('paid_campaign_drafts_idx').on(t.tenantId, t.updatedAt), oneOf('paid_campaign_drafts_platform_chk', t.platform, ['meta', 'google_ads']), oneOf('paid_campaign_drafts_status_chk', t.status, ['draft', 'submitted', 'created', 'failed', 'cancelled'])],
 );

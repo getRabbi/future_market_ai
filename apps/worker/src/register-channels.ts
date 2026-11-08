@@ -34,6 +34,25 @@ registerTasks((deps) => ({
   },
 
   /** M16: daily organic Page insights into the Facebook KPI series (Meta closes a day at Pacific midnight), then the daily post-counter snapshot (D-035). */
+  /** Instagram, TikTok, YouTube and LinkedIn account and post metrics (P3-05); each failure is recorded on its run. */
+  social_analytics_sync: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      for (const r of await social.analytics.syncAllSocialAnalytics(deps, tenantId)) {
+        if (r.status !== 'succeeded') deps.logger.warn({ tenantId, platform: r.platform, status: r.status, error: r.error, notes: r.notes.slice(0, 3) }, 'social analytics import incomplete');
+      }
+    });
+  },
+
+  /** Paid campaign drafts follow their M23 action (created and verified, refused, failed). */
+  campaign_drafts_sync: async () => {
+    await forEachTenant(deps, (tenantId) =>
+      withTenant(deps.db, { tenantId, actor: 'system:paid-media' }, async (tx) => {
+        const n = await paidMedia.campaignCreation.syncCampaignDrafts(tx, tenantId);
+        if (n) deps.logger.info({ tenantId, drafts: n }, 'campaign drafts advanced');
+      }),
+    );
+  },
+
   page_insights_sync: async () => {
     await forEachTenant(deps, async (tenantId) => {
       for (const c of await activeConnections(deps, tenantId, ['meta'])) {
@@ -140,4 +159,16 @@ registerTasks((deps) => ({
   },
 }));
 
-export const CHANNEL_CRONTAB = ['* * * * * social_dispatch', '* * * * * journey_tick', '25 11 * * * page_insights_sync', '37 */6 * * * ads_sync', '15 7 * * * spend_reconcile', '45 5 * * * search_console_sync', '5 9 * * * app_store_sales_sync', '*/10 * * * * store_reporting_tick', '47 4 * * * store_report_retention'];
+export const CHANNEL_CRONTAB = [
+  '* * * * * social_dispatch',
+  '* * * * * journey_tick',
+  '25 11 * * * page_insights_sync',
+  '55 11 * * * social_analytics_sync',
+  '*/10 * * * * campaign_drafts_sync',
+  '37 */6 * * * ads_sync',
+  '15 7 * * * spend_reconcile',
+  '45 5 * * * search_console_sync',
+  '5 9 * * * app_store_sales_sync',
+  '*/10 * * * * store_reporting_tick',
+  '47 4 * * * store_report_retention',
+];

@@ -1,9 +1,9 @@
 import type { Provider } from '@futuregrow/contracts';
 import { appStoreRead, appStoreUpdateLocalization } from './providers/apple.js';
-import { googleAdsRead, googleSetCampaignStatus, googleUpdateCampaignBudget } from './providers/google.js';
+import { googleAdsRead, googleCreateCampaign, googleSetCampaignStatus, googleUpdateCampaignBudget } from './providers/google.js';
 import { googlePlayRead } from './providers/google-play.js';
 import { linkedinPublishPost, linkedinRead } from './providers/linkedin.js';
-import { facebookPublishPost, facebookReplyComment, instagramPublishMedia, metaRead, metaSetCampaignStatus, metaUpdateCampaignBudget } from './providers/meta.js';
+import { facebookPublishPost, facebookReplyComment, instagramPublishMedia, metaCreateCampaign, metaRead, metaSetCampaignStatus, metaUpdateCampaignBudget } from './providers/meta.js';
 import { chatwootRead, posthogRead, searchConsoleRead } from './providers/misc.js';
 import { pexelsRead } from './providers/pexels.js';
 import { resendRead, resendSendEmail } from './providers/resend.js';
@@ -32,14 +32,15 @@ export {
   type ReportSegment,
   readLocalization,
 } from './providers/apple.js';
-export { clearGoogleTokenCache, gaqlSearch, googleAccessToken } from './providers/google.js';
+export { clearGoogleTokenCache, createCampaignOperations, gaqlSearch, googleAccessToken, googleFgName } from './providers/google.js';
 export * from './providers/google-play.js';
 export { fromLittle, toLittle } from './providers/linkedin.js';
-export { fetchPageInsights, fetchPagePosts, fetchPageProfile, PAGE_INSIGHT_METRICS, PAGE_POST_METRICS, type PageInsightMetricResult, type PagePostCounter, type PagePostMetric, type PagePostObservation, type PageProfile } from './providers/meta.js';
+export { fetchPageInsights, fetchPagePosts, fetchPageProfile, fgTag, PAGE_INSIGHT_METRICS, PAGE_POST_METRICS, type PageInsightMetricResult, type PagePostCounter, type PagePostMetric, type PagePostObservation, type PageProfile } from './providers/meta.js';
 export { type ChatwootInbox, chatwootCreateHandoff, chatwootListInboxes, chatwootPostMessage, type PosthogEvent, posthogCaptureBatch, searchConsoleQuery } from './providers/misc.js';
 export * from './providers/money.js';
 export { bestVideoFile, PEXELS_LICENSE, pexelsDownload, pexelsGet, pexelsSearch, photoDownloadUrl, type StockCandidate, type StockSearchQuery, type StockSearchResult } from './providers/pexels.js';
 export type { ResolvedEmail } from './providers/resend.js';
+export * from './providers/social-analytics.js';
 export * from './robots.js';
 export * from './ssrf.js';
 export * from './types.js';
@@ -47,9 +48,24 @@ export * from './webhooks.js';
 
 /** Registry of external executors. Internal action types are executed by @futuregrow/core. */
 export const EXECUTORS: Record<string, ActionExecutor<never>> = Object.fromEntries(
-  [facebookPublishPost, facebookReplyComment, instagramPublishMedia, metaUpdateCampaignBudget, metaSetCampaignStatus, googleUpdateCampaignBudget, googleSetCampaignStatus, tiktokPublishVideo, youtubeUploadVideo, linkedinPublishPost, xPublishPost, shopifyCreateDiscount, appStoreUpdateLocalization, resendSendEmail].map(
-    (e) => [e.actionType, e as unknown as ActionExecutor<never>],
-  ),
+  [
+    facebookPublishPost,
+    facebookReplyComment,
+    instagramPublishMedia,
+    metaUpdateCampaignBudget,
+    metaSetCampaignStatus,
+    metaCreateCampaign,
+    googleUpdateCampaignBudget,
+    googleSetCampaignStatus,
+    googleCreateCampaign,
+    tiktokPublishVideo,
+    youtubeUploadVideo,
+    linkedinPublishPost,
+    xPublishPost,
+    shopifyCreateDiscount,
+    appStoreUpdateLocalization,
+    resendSendEmail,
+  ].map((e) => [e.actionType, e as unknown as ActionExecutor<never>]),
 );
 
 export const READ_CONNECTORS: Partial<Record<Provider, ReadConnector>> = {

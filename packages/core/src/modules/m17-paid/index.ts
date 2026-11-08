@@ -429,4 +429,5 @@ export function requireOperator(actor: Actor): void {
   requireRole(actor, ['owner', 'admin', 'growth_operator', 'finance_approver'], 'paid media operations');
 }
 
+export * as campaignCreation from './create.js';
 export type { SpendRow };

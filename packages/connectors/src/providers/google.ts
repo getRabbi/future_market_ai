@@ -269,3 +269,133 @@ export const googleAdsRead: ReadConnector = {
     }));
   },
 };
+
+/* --------------------------- Paid campaign creation (P3-06) --------------------------- */
+
+export interface GoogleCreateCampaignParams {
+  customerId: string;
+  draftId: string;
+  name: string;
+  dailyBudget: AdsMoney;
+  /** Customer time zone, yyyy-MM-dd (Campaign.start_date_time / end_date_time since v23). */
+  startDate: string;
+  endDate: string;
+  geoTargetConstants: number[];
+  languageConstants: number[];
+  bidding: { strategy: 'MAXIMIZE_CLICKS' | 'MANUAL_CPC'; cpcBidCeiling: AdsMoney | null };
+  adGroup: { name: string; cpcBid: AdsMoney | null };
+  ad: { finalUrl: string; finalUrlSuffix: string | null; headlines: string[]; descriptions: string[]; path1: string | null; path2: string | null };
+  keywords: { text: string; matchType: 'BROAD' | 'PHRASE' | 'EXACT' }[];
+}
+
+export const googleFgName = (p: Pick<GoogleCreateCampaignParams, 'name' | 'draftId'>) => `${p.name} [fg:${p.draftId.slice(0, 8)}]`;
+
+const gaqlString = (s: string) => `'${s.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
+
+async function findCampaignByName(ctx: ConnectorContext, customerId: string, name: string) {
+  const rows = await gaqlSearch<{ campaign: { resourceName: string; status: string } }>(ctx, customerId, `SELECT campaign.resource_name, campaign.status FROM campaign WHERE campaign.name = ${gaqlString(name)} AND campaign.status != 'REMOVED'`);
+  return rows[0]?.campaign ?? null;
+}
+
+/** All operations of one campaign in a single atomic GoogleAdsService.Mutate (temporary ids -1…). */
+export function createCampaignOperations(p: GoogleCreateCampaignParams) {
+  const c = `customers/${p.customerId}`;
+  const budget = `${c}/campaignBudgets/-1`;
+  const campaign = `${c}/campaigns/-2`;
+  const adGroup = `${c}/adGroups/-3`;
+  const bidding = p.bidding.strategy === 'MAXIMIZE_CLICKS' ? { targetSpend: p.bidding.cpcBidCeiling ? { cpcBidCeilingMicros: String(p.bidding.cpcBidCeiling.amountMicros) } : {} } : { manualCpc: {} };
+  return [
+    { campaignBudgetOperation: { create: { resourceName: budget, name: `${googleFgName(p)} budget`, amountMicros: String(p.dailyBudget.amountMicros), deliveryMethod: 'STANDARD', explicitlyShared: false } } },
+    {
+      campaignOperation: {
+        create: {
+          resourceName: campaign,
+          name: googleFgName(p),
+          status: 'PAUSED',
+          advertisingChannelType: 'SEARCH',
+          campaignBudget: budget,
+          networkSettings: { targetGoogleSearch: true, targetSearchNetwork: false, targetContentNetwork: false, targetPartnerSearchNetwork: false },
+          startDateTime: `${p.startDate} 00:00:00`,
+          endDateTime: `${p.endDate} 23:59:59`,
+          containsEuPoliticalAdvertising: 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',
+          ...(p.ad.finalUrlSuffix ? { finalUrlSuffix: p.ad.finalUrlSuffix } : {}),
+          ...bidding,
+        },
+      },
+    },
+    ...p.geoTargetConstants.map((g) => ({ campaignCriterionOperation: { create: { campaign, location: { geoTargetConstant: `geoTargetConstants/${g}` } } } })),
+    ...p.languageConstants.map((l) => ({ campaignCriterionOperation: { create: { campaign, language: { languageConstant: `languageConstants/${l}` } } } })),
+    { adGroupOperation: { create: { resourceName: adGroup, campaign, name: p.adGroup.name, status: 'ENABLED', type: 'SEARCH_STANDARD', ...(p.adGroup.cpcBid ? { cpcBidMicros: String(p.adGroup.cpcBid.amountMicros) } : {}) } } },
+    ...p.keywords.map((k) => ({ adGroupCriterionOperation: { create: { adGroup, status: 'ENABLED', keyword: { text: k.text, matchType: k.matchType } } } })),
+    {
+      adGroupAdOperation: {
+        create: {
+          adGroup,
+          status: 'ENABLED',
+          ad: { finalUrls: [p.ad.finalUrl], responsiveSearchAd: { headlines: p.ad.headlines.map((text) => ({ text })), descriptions: p.ad.descriptions.map((text) => ({ text })), ...(p.ad.path1 ? { path1: p.ad.path1 } : {}), ...(p.ad.path2 ? { path2: p.ad.path2 } : {}) } },
+        },
+      },
+    },
+  ];
+}
+
+/**
+ * Creates a Search campaign PAUSED (with its budget, targeting, ad group, keywords and responsive
+ * search ad) in one atomic mutate after a validate-only pass, so either everything exists or
+ * nothing does. Activation is a separate approved status change. A retry after an ambiguous
+ * failure finds the tagged campaign instead of creating a second one.
+ */
+export const googleCreateCampaign: ActionExecutor<GoogleCreateCampaignParams> = {
+  actionType: 'ads.google.create_campaign',
+  provider: 'google_ads',
+  async execute(ctx, p) {
+    await preWrite(() => assertCurrency(ctx, p.customerId, p.dailyBudget.currency));
+    const existing = await preWrite(() => findCampaignByName(ctx, p.customerId, googleFgName(p)));
+    if (existing) {
+      return { receipt: { providerRequestId: null, providerObjectId: existing.resourceName, httpStatus: 200, responseSha256: '', observedAt: ctx.now().toISOString(), details: { replayed: true } }, beforeState: null, rawResponse: { existing } };
+    }
+    const headers = await adsHeaders(ctx);
+    const body = (validateOnly: boolean) => ({ mutateOperations: createCampaignOperations(p), partialFailure: false, validateOnly });
+    await preWrite(() => ctx.http.request({ method: 'POST', url: adsUrl(ctx, `customers/${p.customerId}/googleAds:mutate`), headers, json: body(true), idempotent: true }));
+    const res = await ctx.http.request<{ mutateOperationResponses?: Record<string, { resourceName?: string }>[] }>({ method: 'POST', url: adsUrl(ctx, `customers/${p.customerId}/googleAds:mutate`), headers, json: body(false), idempotent: false });
+    const results = res.data.mutateOperationResponses ?? [];
+    const pick = (key: string) => results.map((r) => r[key]?.resourceName).filter((x): x is string => Boolean(x));
+    const campaign = pick('campaignResult')[0];
+    if (!campaign) throw new ProviderHttpError('google ads returned no campaign resource name', { status: res.status, phase: 'ambiguous', body: res.data });
+    return {
+      receipt: {
+        providerRequestId: res.requestId,
+        providerObjectId: campaign,
+        httpStatus: res.status,
+        responseSha256: res.sha256,
+        observedAt: ctx.now().toISOString(),
+        details: { budget: pick('campaignBudgetResult')[0] ?? null, adGroup: pick('adGroupResult')[0] ?? null, ads: pick('adGroupAdResult'), keywords: pick('adGroupCriterionResult').length, criteria: pick('campaignCriterionResult').length },
+      },
+      beforeState: null,
+      rawResponse: res.data,
+    };
+  },
+  async verify(ctx, p, receipt) {
+    const rows = await gaqlSearch<{ campaign: { name: string; status: string; advertisingChannelType: string }; campaignBudget: { amountMicros: string } }>(
+      ctx,
+      p.customerId,
+      `SELECT campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros FROM campaign WHERE campaign.resource_name = ${gaqlString(receipt.providerObjectId!)}`,
+    );
+    const ads = await gaqlSearch<{ adGroupAd: { status: string } }>(ctx, p.customerId, `SELECT ad_group_ad.status FROM ad_group_ad WHERE campaign.resource_name = ${gaqlString(receipt.providerObjectId!)}`);
+    const r = rows[0];
+    return compareProof(
+      'read_after_write',
+      { name: googleFgName(p), status: 'PAUSED', channel: 'SEARCH', budgetMicros: String(p.dailyBudget.amountMicros), ads: 1 },
+      { name: r?.campaign.name ?? null, status: r?.campaign.status ?? null, channel: r?.campaign.advertisingChannelType ?? null, budgetMicros: r?.campaignBudget.amountMicros ?? null, ads: ads.length },
+      ctx.now(),
+    );
+  },
+  async rollback(ctx, p, receipt) {
+    const res = await mutate(ctx, p.customerId, 'campaigns', { remove: receipt.providerObjectId }, false);
+    return { receipt: { providerRequestId: res.requestId, providerObjectId: receipt.providerObjectId, httpStatus: res.status, responseSha256: res.sha256, observedAt: ctx.now().toISOString(), details: {} }, beforeState: null, rawResponse: res.data };
+  },
+  async verifyRollback(ctx, p, receipt) {
+    const rows = await gaqlSearch<{ campaign: { status: string } }>(ctx, p.customerId, `SELECT campaign.status FROM campaign WHERE campaign.resource_name = ${gaqlString(receipt.providerObjectId!)}`);
+    return compareProof('read_after_write', { status: 'REMOVED' }, { status: rows[0]?.campaign.status ?? 'REMOVED' }, ctx.now());
+  },
+};

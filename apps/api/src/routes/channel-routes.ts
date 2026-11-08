@@ -22,6 +22,8 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.post('/v1/social/caption-check', { schema: { tags: ['social'], body: z.object({ platform: z.enum(social.PLATFORMS), caption: z.string().min(1).max(70_000), link: z.string().url().nullable().optional(), images: z.number().int().min(0).max(20).optional() }).strict() } }, async (req) =>
     social.checkCaption(req.body.platform, req.body.caption, { link: req.body.link ?? null, images: req.body.images ?? 0 }),
   );
+  r.get('/v1/social/analytics', { schema: { tags: ['social'], querystring: z.object({ brandId: z.string().uuid().optional() }) } }, async (req) => tenantTx(ctx, req, (tx) => social.analytics.socialAnalyticsReport(tx, deps.clock.now(), req.query.brandId ? { brandId: req.query.brandId } : {})));
+  r.post('/v1/social/connections/:id/analytics/sync', { schema: { tags: ['social'], params: Id } }, async (req) => social.analytics.syncSocialAnalytics(deps, tenantOf(req), req.params.id, { actor: actorOf(req) }));
   r.get('/v1/social/interactions', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.listInteractions(tx)));
   r.post('/v1/social/connections/:id/insights/sync', { schema: { tags: ['social'], params: Id } }, async (req) => social.syncPageInsights(deps, tenantOf(req), req.params.id, { actor: actorOf(req) }));
   r.post('/v1/social/connections/:id/posts/snapshot', { schema: { tags: ['social'], params: Id } }, async (req) => social.collectPagePostSnapshot(deps, tenantOf(req), req.params.id, { actor: actorOf(req) }));
@@ -45,6 +47,14 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
     paidMedia.requireOperator(actorOf(req));
     return paidMedia.reconcileSpend(deps, tenantOf(req), req.params.id, { start: req.body.start, end: req.body.end }, req.body.tolerance);
   });
+  /* Paid campaign creation (P3-06): drafts → M23 (finance approval + two-factor) → created PAUSED → verified. */
+  const C = paidMedia.campaignCreation;
+  r.get('/v1/ads/drafts', { schema: { tags: ['ads'] } }, async (req) => tenantTx(ctx, req, (tx) => C.listCampaignDrafts(tx, tenantOf(req))));
+  r.get('/v1/ads/creation-status', { schema: { tags: ['ads'] } }, async (req) => tenantTx(ctx, req, async (tx) => ({ meta: await C.creationEnabled(tx, 'meta'), google_ads: await C.creationEnabled(tx, 'google_ads') })));
+  r.post('/v1/ads/drafts', { schema: { tags: ['ads'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => C.saveCampaignDraft(tx, deps, tenantOf(req), actorOf(req), req.body))));
+  r.put('/v1/ads/drafts/:id', { schema: { tags: ['ads'], params: Id, body: Body } }, async (req) => tenantTx(ctx, req, (tx) => C.saveCampaignDraft(tx, deps, tenantOf(req), actorOf(req), req.body, req.params.id)));
+  r.post('/v1/ads/drafts/:id/submit', { schema: { tags: ['ads'], params: Id } }, async (req, reply) => reply.status(201).send(await C.submitCampaignDraft(deps, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/ads/drafts/:id/cancel', { schema: { tags: ['ads'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => C.cancelCampaignDraft(tx, tenantOf(req), actorOf(req), req.params.id)));
   r.get('/v1/ads/reconciliations', { schema: { tags: ['ads'] } }, async (req) => tenantTx(ctx, req, (tx) => paidMedia.listReconciliations(tx)));
   r.post('/v1/ads/campaigns/:id/budget', { schema: { tags: ['ads'], params: Id, body: Body } }, async (req, reply) => reply.status(201).send(await paidMedia.proposeBudgetChange(deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
   r.post('/v1/ads/campaigns/:id/status', { schema: { tags: ['ads'], params: Id, body: z.object({ status: z.enum(['PAUSED', 'ACTIVE']), geographies: Geos, evidenceIds: z.array(z.string().uuid()).default([]), rationale: z.string().min(10).max(2000) }) } }, async (req, reply) =>

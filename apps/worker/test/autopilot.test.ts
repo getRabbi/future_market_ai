@@ -1093,7 +1093,7 @@ describe('Autopilot: an ordinary organic Bangla Page post for BD needs no jurisd
     expect(old).toMatchObject({ status: 'CANCELLED', statusReason: expect.stringMatching(/superseded: policy fg-policy-1\.4\.0/) });
     await expect(execution.decideApproval(h.deps, org, h.users.approver, actionId, { decision: 'approved', expectedActionHash: waiting.actionHash })).rejects.toThrow(/CANCELLED/);
     const [a] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, replacementId)));
-    expect(a).toMatchObject({ status: 'VERIFIED', actionHash: waiting.actionHash, proposedByType: 'agent', proposedById: 'autopilot', policyVersion: 'fg-policy-1.4.0' });
+    expect(a).toMatchObject({ status: 'VERIFIED', actionHash: waiting.actionHash, proposedByType: 'agent', proposedById: 'autopilot', policyVersion: 'fg-policy-1.5.0' });
     expect((a!.policyDecision as { outcome: string; reasons: { code: string }[] }).reasons.map((r) => r.code)).toEqual(['ORGANIC_EDUCATIONAL_POST']);
     expect(
       await otx((t) =>
@@ -1430,7 +1430,7 @@ describe('Autopilot: a content studio Page publishes one verified visual lesson 
     const params = action!.params as { media: { assetId: string; sha256: string }[]; curriculum?: { pack: string } };
     expect(params.media).toEqual([{ assetId: card!.id, sha256: card!.sha256 }]);
     expect(params.curriculum?.pack).toBe('eps-topik-bn');
-    expect(action).toMatchObject({ status: 'VERIFIED', proposedById: 'autopilot', policyVersion: 'fg-policy-1.4.0' });
+    expect(action).toMatchObject({ status: 'VERIFIED', proposedById: 'autopilot', policyVersion: 'fg-policy-1.5.0' });
     // A submit step interrupted after M23 accepted its post must recover that action even
     // though it already consumes the daily limit. It must reach tracking, never submit twice.
     const [cycle] = await otx((t) => t.select().from(goalCycles).where(eq(goalCycles.id, k.submit!.cycleId)));

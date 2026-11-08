@@ -8,6 +8,7 @@ import { AppIntelligenceView } from './AppIntelligence.js';
 import { Approvals } from './Approvals.js';
 import { ApprovalsInbox, AutopilotCenter, AutopilotOffer, type AutopilotStatus, GoalsView } from './Autopilot.js';
 import { BrandStudioView } from './BrandStudio.js';
+import { CampaignDrafts, SocialAnalytics } from './ChannelGrowth.js';
 import { Connections, IntegrationStatus } from './Connections.js';
 import { ContentStudioView } from './ContentStudio.js';
 import { Governance } from './Governance.js';
@@ -162,7 +163,12 @@ function PageContent({ slug, onBoot }: { slug: string; onBoot: () => void }) {
     case 'apps':
       return <AppIntelligenceView me={me} initialApp={params.get('app')} initialTab={params.get('tab') === 'accounts' ? 'accounts' : 'apps'} />;
     case 'results':
-      return <ResultsPage />;
+      return (
+        <>
+          <ResultsPage />
+          <SocialAnalytics me={me} />
+        </>
+      );
     case 'insights':
       return <InsightsPage />;
     case 'incidents':
@@ -209,6 +215,7 @@ function SectionContent({ slug, onBoot, onTenant }: { slug: string; onBoot: () =
         </>
       ) : null}
       {s.slug === 'app' ? <AppConversions /> : null}
+      {s.slug === 'ads' ? <CampaignDrafts me={me} /> : null}
       {s.custom === 'knowledge' ? <GroundTruth /> : s.resources.map((r) => <ResourcePanel key={r.title} resource={r} />)}
     </div>
   );

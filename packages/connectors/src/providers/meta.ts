@@ -681,3 +681,131 @@ export async function fetchPageProfile(ctx: ConnectorContext): Promise<PageProfi
 }
 
 export type { ExecuteResult };
+
+/* --------------------------- Paid campaign creation (P3-06) --------------------------- */
+
+export interface MetaCreateCampaignParams {
+  adAccountId: string;
+  draftId: string;
+  name: string;
+  objective: string;
+  dailyBudget: MetaMoney;
+  startTime: string;
+  endTime: string;
+  targeting: { countries: string[]; ageMin: number; ageMax: number; publisherPlatforms: string[] | null };
+  optimizationGoal: string;
+  billingEvent: string;
+  creative: { pageId: string; message: string; link: string; headline: string; callToAction: string; image: { assetId: string; sha256: string } };
+  urlTags: string;
+}
+
+interface MetaNamed {
+  id: string;
+  name: string;
+  status?: string;
+}
+
+/** Every object FUTUREGROW creates carries the draft id, so a retry finds (never duplicates) what an earlier attempt created. */
+export const fgTag = (draftId: string) => `[fg:${draftId.slice(0, 8)}]`;
+
+async function findByName(ctx: ConnectorContext, edge: string, name: string): Promise<MetaNamed | null> {
+  const res = await graph<{ data: MetaNamed[] }>(ctx, 'GET', `${adAccountPath(ctx)}/${edge}`, { as: 'ads', query: { fields: 'id,name,status', filtering: JSON.stringify([{ field: 'name', operator: 'EQUAL', value: name }]), limit: '5' } });
+  return res.data.data.find((x) => x.name === name && x.status !== 'DELETED') ?? null;
+}
+
+async function createOrReuse(ctx: ConnectorContext, edge: string, name: string, form: Record<string, string>): Promise<{ id: string; reused: boolean }> {
+  const existing = await findByName(ctx, edge, name);
+  if (existing) return { id: existing.id, reused: true };
+  const res = await graph<{ id?: string }>(ctx, 'POST', `${adAccountPath(ctx)}/${edge}`, { as: 'ads', form: { ...form, name } });
+  if (!res.data.id) throw new ProviderHttpError(`meta returned no id for ${edge}`, { status: res.status, phase: 'ambiguous', body: res.data });
+  return { id: res.data.id, reused: false };
+}
+
+const createdNames = (p: MetaCreateCampaignParams) => {
+  const tag = fgTag(p.draftId);
+  return { campaign: `${p.name} ${tag}`, adSet: `${p.name} — ad set ${tag}`, creative: `${p.name} — creative ${tag}`, ad: `${p.name} — ad ${tag}` };
+};
+
+/**
+ * Creates a complete campaign (campaign → ad set → image → creative → ad), every level PAUSED, so
+ * nothing can spend until a separate status change is approved through M23. The ad account's
+ * currency and status are checked first; the uploaded image must be the exact approved bytes.
+ */
+export const metaCreateCampaign: ActionExecutor<MetaCreateCampaignParams> = {
+  actionType: 'ads.meta.create_campaign',
+  provider: 'meta',
+  async execute(ctx, p) {
+    const names = createdNames(p);
+    const offset = metaMinorUnitOffset(p.dailyBudget.currency);
+    const account = await preWrite(async () => {
+      const a = (await graph<{ id: string; currency: string; account_status: number; amount_spent?: string; spend_cap?: string }>(ctx, 'GET', adAccountPath(ctx), { as: 'ads', query: { fields: 'id,currency,account_status,amount_spent,spend_cap' } })).data;
+      if (a.currency !== p.dailyBudget.currency) throw new ProviderHttpError(`ad account currency is ${a.currency}, the draft budget is in ${p.dailyBudget.currency}`, { status: null, phase: 'rejected' });
+      if (a.account_status !== 1) throw new ProviderHttpError(`ad account is not active (account_status ${a.account_status})`, { status: null, phase: 'rejected' });
+      const asset = await ctx.loadAsset(p.creative.image.assetId);
+      if (asset.sha256 !== p.creative.image.sha256) throw new ProviderHttpError('creative image bytes differ from the approved hash', { status: null, phase: 'before_send' });
+      return { account: a, asset };
+    });
+    const campaign = await createOrReuse(ctx, 'campaigns', names.campaign, { objective: p.objective, status: 'PAUSED', special_ad_categories: '[]', buying_type: 'AUCTION' });
+    const targeting: Record<string, unknown> = { geo_locations: { countries: p.targeting.countries }, age_min: p.targeting.ageMin, age_max: p.targeting.ageMax };
+    if (p.targeting.publisherPlatforms) targeting.publisher_platforms = p.targeting.publisherPlatforms;
+    const adSet = await createOrReuse(ctx, 'adsets', names.adSet, {
+      campaign_id: campaign.id,
+      daily_budget: String(microsToMinor(p.dailyBudget.amountMicros, offset)),
+      billing_event: p.billingEvent,
+      optimization_goal: p.optimizationGoal,
+      bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+      targeting: JSON.stringify(targeting),
+      start_time: p.startTime,
+      end_time: p.endTime,
+      status: 'PAUSED',
+    });
+    const upload = multipart({}, { name: `fg-${p.creative.image.sha256.slice(0, 16)}.png`, mime: account.asset.mime, bytes: account.asset.bytes });
+    const img = await ctx.http.request<{ images?: Record<string, { hash: string }> }>({
+      method: 'POST',
+      url: graphUrl(ctx, `${adAccountPath(ctx)}/adimages`, {}, tokenFor(ctx, 'ads')),
+      headers: { authorization: `Bearer ${tokenFor(ctx, 'ads')}`, 'content-type': upload.contentType },
+      body: upload.body,
+      idempotent: true,
+    });
+    const imageHash = Object.values(img.data.images ?? {})[0]?.hash;
+    if (!imageHash) throw new ProviderHttpError('meta returned no image hash', { status: img.status, phase: 'ambiguous', body: img.data });
+    const creative = await createOrReuse(ctx, 'adcreatives', names.creative, {
+      object_story_spec: JSON.stringify({ page_id: p.creative.pageId, link_data: { message: p.creative.message, link: p.creative.link, name: p.creative.headline, image_hash: imageHash, call_to_action: { type: p.creative.callToAction, value: { link: p.creative.link } } } }),
+      url_tags: p.urlTags,
+    });
+    const ad = await createOrReuse(ctx, 'ads', names.ad, { adset_id: adSet.id, creative: JSON.stringify({ creative_id: creative.id }), status: 'PAUSED' });
+    const res = await graph<MetaCampaign>(ctx, 'GET', campaign.id, { as: 'ads', query: { fields: 'id,name,status' } });
+    return {
+      receipt: receiptOf(ctx, res, campaign.id, { adSetId: adSet.id, creativeId: creative.id, adId: ad.id, imageHash, reused: [campaign, adSet, creative, ad].filter((x) => x.reused).length }),
+      beforeState: { accountCurrency: account.account.currency, amountSpent: account.account.amount_spent ?? null },
+      rawResponse: { campaign, adSet, creative, ad, imageHash },
+    };
+  },
+  async verify(ctx, p, receipt) {
+    const offset = metaMinorUnitOffset(p.dailyBudget.currency);
+    const d = receipt.details as { adSetId: string; adId: string; creativeId: string };
+    const c = (await graph<{ name: string; status: string; objective: string }>(ctx, 'GET', receipt.providerObjectId!, { as: 'ads', query: { fields: 'name,status,objective' } })).data;
+    const s = (await graph<{ daily_budget: string; status: string; end_time: string; campaign_id: string }>(ctx, 'GET', d.adSetId, { as: 'ads', query: { fields: 'daily_budget,status,end_time,campaign_id' } })).data;
+    const a = (await graph<{ status: string; adset_id: string; creative: { id: string } }>(ctx, 'GET', d.adId, { as: 'ads', query: { fields: 'status,adset_id,creative{id}' } })).data;
+    return compareProof(
+      'read_after_write',
+      { campaignName: createdNames(p).campaign, campaignStatus: 'PAUSED', objective: p.objective, dailyBudget: String(microsToMinor(p.dailyBudget.amountMicros, offset)), adSetStatus: 'PAUSED', adSetCampaign: receipt.providerObjectId, adStatus: 'PAUSED', adCreative: d.creativeId },
+      { campaignName: c.name, campaignStatus: c.status, objective: c.objective, dailyBudget: s.daily_budget, adSetStatus: s.status, adSetCampaign: s.campaign_id, adStatus: a.status, adCreative: a.creative?.id ?? null, endTime: s.end_time },
+      ctx.now(),
+    );
+  },
+  async rollback(ctx, _p, receipt) {
+    // Deleting the campaign removes its ad sets and ads; the uploaded image stays in the ad account's library.
+    const res = await graph<{ success: boolean }>(ctx, 'POST', receipt.providerObjectId!, { as: 'ads', form: { status: 'DELETED' } });
+    return { receipt: receiptOf(ctx, res, receipt.providerObjectId), beforeState: null, rawResponse: res.data };
+  },
+  async verifyRollback(ctx, _p, receipt) {
+    const c = await graphOrNull<{ status: string }>(ctx, receipt.providerObjectId!, { fields: 'status' });
+    return compareProof('read_after_write', { status: 'DELETED' }, { status: c?.status ?? 'DELETED' }, ctx.now());
+  },
+};
+
+/** Read-only Graph GET for analytics fetchers (P3-05); Page token unless `as` says otherwise. */
+export async function metaGraphGet<T>(ctx: ConnectorContext, path: string, query: Record<string, string>, as: 'page' | 'ads' = 'page'): Promise<T> {
+  return (await graph<T>(ctx, 'GET', path, { query, as })).data;
+}

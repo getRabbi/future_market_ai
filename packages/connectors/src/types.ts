@@ -38,6 +38,8 @@ export interface ProviderEndpoints {
   tiktok: string;
   youtubeData: string;
   youtubeUpload: string;
+  /** YouTube Analytics API v2 (watch time; yt-analytics.readonly). */
+  youtubeAnalytics: string;
   linkedin: string;
   x: string;
   appStoreConnect: string;
@@ -63,6 +65,7 @@ export const DEFAULT_ENDPOINTS: ProviderEndpoints = {
   tiktok: 'https://open.tiktokapis.com',
   youtubeData: 'https://www.googleapis.com/youtube/v3',
   youtubeUpload: 'https://www.googleapis.com/upload/youtube/v3',
+  youtubeAnalytics: 'https://youtubeanalytics.googleapis.com/v2',
   linkedin: 'https://api.linkedin.com',
   x: 'https://api.x.com',
   appStoreConnect: 'https://api.appstoreconnect.apple.com',

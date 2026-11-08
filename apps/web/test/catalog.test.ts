@@ -8,6 +8,7 @@ import { APP_CONVERSION_CALLS } from '../src/components/AppConversions.js';
 import { APP_INTELLIGENCE_CALLS } from '../src/components/AppIntelligence.js';
 import { AUTOPILOT_CALLS } from '../src/components/Autopilot.js';
 import { BRAND_CALLS } from '../src/components/BrandStudio.js';
+import { CHANNEL_GROWTH_CALLS } from '../src/components/ChannelGrowth.js';
 import { CONNECTION_CALLS } from '../src/components/Connections.js';
 import { CONTENT_CALLS } from '../src/components/ContentStudio.js';
 import { REGISTRIES } from '../src/components/Governance.js';
@@ -81,6 +82,7 @@ function calls() {
   for (const c of UNIFIED_CALLS) out.push({ where: 'unified shell / home', method: c.method, path: c.path });
   for (const c of UNIVERSAL_CALLS) out.push({ where: 'universal studio screen', method: c.method, path: c.path });
   for (const c of MEDIA_CALLS) out.push({ where: 'media studio screen', method: c.method, path: c.path });
+  for (const c of CHANNEL_GROWTH_CALLS) out.push({ where: 'channel growth screens', method: c.method, path: c.path });
   return out;
 }
 

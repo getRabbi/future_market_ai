@@ -19,6 +19,7 @@ import { type ActionRow, registerHooks, registerResolver } from '../m23-executio
 import { registerWebhookHandler } from '../webhooks.js';
 import { checkCaption } from './platforms.js';
 
+export * as analytics from './analytics.js';
 export * from './platforms.js';
 
 const PLATFORM_PROVIDER = { facebook: 'meta', instagram: 'meta', tiktok: 'tiktok', youtube: 'youtube', linkedin: 'linkedin', x: 'x' } as const;

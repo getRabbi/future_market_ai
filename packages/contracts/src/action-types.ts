@@ -25,6 +25,8 @@ export interface ActionTypeDefinition {
   rollback: 'supported' | 'manual' | 'impossible';
   supported: boolean;
   blockerRef?: string;
+  /** Never pre-authorized, whatever the tenant autonomy policy says: a person approves every instance (e.g. creating paid campaigns, P3-06). */
+  alwaysRequiresApproval?: boolean;
   paramsSchema: z.ZodType;
 }
 
@@ -296,6 +298,104 @@ export const ACTION_TYPES = [
     }),
   },
   {
+    type: 'ads.meta.create_campaign',
+    provider: 'meta',
+    capability: 'meta_ads_campaign_create',
+    category: 'SPEND',
+    alwaysRequiresApproval: true,
+    description: 'Create a complete Meta campaign (campaign, ad set, creative, ad), every level PAUSED; activation is a separate approved status change (P3-06).',
+    affectsSpend: true,
+    publicFacing: false,
+    contactsPeople: false,
+    verification: 'read_after_write',
+    rollback: 'supported',
+    supported: true,
+    paramsSchema: z
+      .object({
+        adAccountId: z.string().regex(/^act_\d+$/),
+        draftId: z.string().uuid(),
+        name: z.string().min(1).max(150),
+        objective: z.enum(['OUTCOME_AWARENESS', 'OUTCOME_TRAFFIC', 'OUTCOME_ENGAGEMENT', 'OUTCOME_LEADS', 'OUTCOME_APP_PROMOTION', 'OUTCOME_SALES']),
+        dailyBudget: money,
+        startTime: z.string().datetime({ offset: true }),
+        endTime: z.string().datetime({ offset: true }),
+        targeting: z.object({
+          countries: z
+            .array(z.string().regex(/^[A-Z]{2}$/))
+            .min(1)
+            .max(25),
+          ageMin: z.number().int().min(18).max(65),
+          ageMax: z.number().int().min(18).max(65),
+          publisherPlatforms: z
+            .array(z.enum(['facebook', 'instagram', 'audience_network', 'messenger']))
+            .min(1)
+            .nullable(),
+        }),
+        optimizationGoal: z.enum(['LINK_CLICKS', 'LANDING_PAGE_VIEWS', 'REACH', 'IMPRESSIONS', 'POST_ENGAGEMENT']),
+        billingEvent: z.literal('IMPRESSIONS'),
+        creative: z.object({
+          pageId: z.string().regex(/^\d+$/),
+          message: z.string().min(1).max(2000),
+          link: z.string().url().startsWith('https://'),
+          headline: z.string().min(1).max(255),
+          callToAction: z.enum(['LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'DOWNLOAD', 'INSTALL_MOBILE_APP', 'CONTACT_US', 'SUBSCRIBE']),
+          image: z.object({ assetId: z.string().uuid(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }),
+        }),
+        urlTags: z.string().max(500),
+        /** The most the campaign can spend between start and end (daily budget x days); reserved against the spend envelope. */
+        lifetimeCap: money,
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => p.targeting.ageMin <= p.targeting.ageMax, 'ageMin must not exceed ageMax')
+      .refine((p) => Date.parse(p.endTime) > Date.parse(p.startTime), 'the campaign must end after it starts')
+      .refine((p) => p.lifetimeCap.currency === p.dailyBudget.currency, 'cap and budget currencies differ'),
+  },
+  {
+    type: 'ads.google.create_campaign',
+    provider: 'google_ads',
+    capability: 'google_ads_campaign_create',
+    category: 'SPEND',
+    alwaysRequiresApproval: true,
+    description: 'Create a Google Ads Search campaign PAUSED with budget, targeting, ad group, keywords and a responsive search ad in one atomic mutate (P3-06).',
+    affectsSpend: true,
+    publicFacing: false,
+    contactsPeople: false,
+    verification: 'read_after_write',
+    rollback: 'supported',
+    supported: true,
+    paramsSchema: z
+      .object({
+        customerId: z.string().regex(/^\d{10}$/),
+        draftId: z.string().uuid(),
+        name: z.string().min(1).max(200),
+        dailyBudget: money,
+        startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        geoTargetConstants: z.array(z.number().int().positive()).min(1).max(25),
+        languageConstants: z.array(z.number().int().positive()).max(10).default([]),
+        bidding: z.object({ strategy: z.enum(['MAXIMIZE_CLICKS', 'MANUAL_CPC']), cpcBidCeiling: money.nullable() }),
+        adGroup: z.object({ name: z.string().min(1).max(255), cpcBid: money.nullable() }),
+        ad: z.object({
+          finalUrl: z.string().url().startsWith('https://'),
+          finalUrlSuffix: z.string().max(500).nullable(),
+          headlines: z.array(z.string().min(1).max(30)).min(3).max(15),
+          descriptions: z.array(z.string().min(1).max(90)).min(2).max(4),
+          path1: z.string().max(15).nullable(),
+          path2: z.string().max(15).nullable(),
+        }),
+        keywords: z
+          .array(z.object({ text: z.string().min(1).max(80), matchType: z.enum(['BROAD', 'PHRASE', 'EXACT']) }))
+          .min(1)
+          .max(50),
+        lifetimeCap: money,
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => p.endDate >= p.startDate, 'the campaign must end on or after its start date')
+      .refine((p) => p.lifetimeCap.currency === p.dailyBudget.currency, 'cap and budget currencies differ'),
+  },
+  {
     type: 'email.send',
     provider: 'resend',
     capability: 'email_send',
@@ -461,7 +561,7 @@ export function listActionTypes(): readonly ActionTypeDefinition[] {
 export const JURISDICTION_DOMAINS = {
   organic_social: ['social.facebook.publish_post', 'social.instagram.publish_media', 'social.tiktok.publish_video', 'social.youtube.upload_video', 'social.linkedin.publish_post', 'social.x.publish_post'],
   social_engagement: ['social.facebook.reply_comment'],
-  advertising: ['ads.google.update_campaign_budget', 'ads.google.set_campaign_status', 'ads.meta.update_campaign_budget', 'ads.meta.set_campaign_status'],
+  advertising: ['ads.google.update_campaign_budget', 'ads.google.set_campaign_status', 'ads.meta.update_campaign_budget', 'ads.meta.set_campaign_status', 'ads.meta.create_campaign', 'ads.google.create_campaign'],
   messaging: ['email.send', 'sms.send', 'whatsapp.send'],
   pricing_promotions: ['commerce.shopify.create_discount'],
   store_listing: ['store.app_store.update_localization'],
