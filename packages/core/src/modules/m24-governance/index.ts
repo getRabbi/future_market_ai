@@ -565,4 +565,5 @@ export async function verifyTenantAudit(tx: DbOrTx, tenantId: string) {
   return verifyAuditChain(tx, tenantId);
 }
 
+export * as compliance from './compliance.js';
 export { conflict, FgError };

@@ -14,6 +14,7 @@ import { CONTENT_CALLS } from '../src/components/ContentStudio.js';
 import { REGISTRIES } from '../src/components/Governance.js';
 import { GROUND_TRUTH_CALLS } from '../src/components/GroundTruth.js';
 import { MEDIA_CALLS } from '../src/components/MediaStudio.js';
+import { READINESS_CALLS } from '../src/components/Readiness.js';
 import { UNIFIED_CALLS } from '../src/components/Shell.js';
 import { UNIVERSAL_CALLS } from '../src/components/UniversalStudio.js';
 import { allForms, SECTIONS } from '../src/lib/catalog.js';
@@ -83,6 +84,7 @@ function calls() {
   for (const c of UNIVERSAL_CALLS) out.push({ where: 'universal studio screen', method: c.method, path: c.path });
   for (const c of MEDIA_CALLS) out.push({ where: 'media studio screen', method: c.method, path: c.path });
   for (const c of CHANNEL_GROWTH_CALLS) out.push({ where: 'channel growth screens', method: c.method, path: c.path });
+  for (const c of READINESS_CALLS) out.push({ where: 'readiness screens', method: c.method, path: c.path });
   return out;
 }
 

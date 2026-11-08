@@ -21,7 +21,7 @@ const byKey = async (hh: CoreHarness) => Object.fromEntries((await tx(hh, (t) =>
 describe('integration status catalog (P2)', () => {
   it('covers the 14 P2 integrations (P2-15 legal readiness is its own checklist) and starts with nothing reported as working', async () => {
     const all = await tx(h, (t) => integrationCatalog(t, h.clock.now()));
-    expect(all.map((i) => i.workstream)).toEqual(Array.from({ length: 14 }, (_, i) => `P2-${String(i + 1).padStart(2, '0')}`));
+    expect(all.map((i) => i.workstream)).toEqual(Array.from({ length: 15 }, (_, i) => `P2-${String(i + 1).padStart(2, '0')}`));
     for (const i of all) expect(INTEGRATION_STATUSES).toContain(i.status);
     const s = Object.fromEntries(all.map((i) => [i.key, i.status]));
     expect(s).toMatchObject({
@@ -32,6 +32,7 @@ describe('integration status catalog (P2)', () => {
       google_ads: 'requires_connection',
       posthog: 'requires_connection',
       payouts: 'requires_owner_authorization',
+      legal_readiness: 'requires_legal_review',
     });
     expect(all.some((i) => i.status === 'live_verified' || i.status === 'connected')).toBe(false);
     const x = all.find((i) => i.key === 'x')!;

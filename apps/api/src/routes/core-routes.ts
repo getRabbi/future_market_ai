@@ -163,6 +163,11 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
       return { url: `${deps.config.apiBaseUrl.replace(/\/$/, '')}/webhooks/chatwoot/${c.id}/${conversationsModule.chatwootWebhookToken(deps.config.identifierPepper, c.id)}`, events: ['message_created', 'conversation_status_changed'] };
     }),
   );
+  /* Legal, policy and licensing readiness (P2-15). */
+  r.get('/v1/governance/compliance', { schema: { tags: ['governance'] } }, async (req) => tenantTx(ctx, req, (tx) => governance.compliance.complianceChecklist(tx, deps.clock.now())));
+  r.put('/v1/governance/compliance/:key', { schema: { tags: ['governance'], params: z.object({ key: z.string().regex(/^[a-z_]{3,40}$/) }), body: z.record(z.string(), z.unknown()) } }, async (req) =>
+    tenantTx(ctx, req, (tx) => governance.compliance.recordComplianceReview(tx, tenantOf(req), actorOf(req), req.params.key, req.body, deps.clock.now())),
+  );
   /* PostHog forwarding (P2-11): off until enabled; consented events only. */
   r.get('/v1/customers/forwarding', { schema: { tags: ['customers'] } }, async (req) => tenantTx(ctx, req, (tx) => eventForwarding.forwardingStatus(tx)));
   r.put('/v1/customers/forwarding/:id', { schema: { tags: ['customers'], params: Id, body: z.object({ enabled: z.boolean() }).strict() } }, async (req) => tenantTx(ctx, req, (tx) => eventForwarding.setForwarding(tx, tenantOf(req), actorOf(req), req.params.id, req.body.enabled)));

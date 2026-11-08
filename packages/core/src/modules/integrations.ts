@@ -2,6 +2,7 @@ import { CAPABILITY_SEEDS } from '@futuregrow/connectors';
 import { getActionType } from '@futuregrow/contracts';
 import { connections, type DbOrTx, platformCapabilities, storeAccounts } from '@futuregrow/db';
 import { platformReadiness } from './m16-social/platforms.js';
+import { complianceChecklist } from './m24-governance/compliance.js';
 
 /**
  * Integration status (P2, Milestone A): one honest answer per external integration to "can
@@ -216,7 +217,7 @@ function writesOf(spec: Spec) {
 }
 
 export async function integrationCatalog(t: DbOrTx, now: Date): Promise<IntegrationView[]> {
-  const [conns, caps, readiness, stores] = await Promise.all([t.select().from(connections), t.select().from(platformCapabilities), platformReadiness(t, now), t.select().from(storeAccounts)]);
+  const [conns, caps, readiness, stores, legal] = await Promise.all([t.select().from(connections), t.select().from(platformCapabilities), platformReadiness(t, now), t.select().from(storeAccounts), complianceChecklist(t, now)]);
   const capsFor = (provider: string | null) => {
     if (!provider) return [];
     const platform = provider === 'paypal' ? 'paypal' : provider;
@@ -224,7 +225,7 @@ export async function integrationCatalog(t: DbOrTx, now: Date): Promise<Integrat
     const seeds = CAPABILITY_SEEDS.filter((c) => c.platform === platform && !rows.some((r) => r.capability === c.capability));
     return [...rows, ...seeds].map((c) => ({ capability: c.capability, supported: c.supported }));
   };
-  return SPECS.map((spec): IntegrationView => {
+  const out = SPECS.map((spec): IntegrationView => {
     const mine = spec.provider ? conns.filter((c) => c.provider === spec.provider) : [];
     const view = mine.map((c) => ({ id: c.id, displayName: c.displayName, status: c.status, healthStatus: c.healthStatus, lastHealthCheckAt: c.lastHealthCheckAt?.toISOString() ?? null }));
     const base = { key: spec.key, workstream: spec.workstream, name: spec.name, modules: spec.modules, provider: spec.provider, setup: spec.setup, docsUrl: spec.docsUrl, connections: view, capabilities: capsFor(spec.provider), writes: writesOf(spec) };
@@ -278,4 +279,22 @@ export async function integrationCatalog(t: DbOrTx, now: Date): Promise<Integrat
     if (!healthy.length) return { ...base, status: 'connection_unhealthy', summary: 'Connected, but the last health check reported a problem (see the connection’s details).', reasons: [] };
     return { ...base, status: 'connected', summary: `Connected and healthy (${healthy.length} connection${healthy.length === 1 ? '' : 's'}). Live use is verified only by a successful sync or a verified action.`, reasons: [] };
   });
+  // P2-15: legal, policy and licensing readiness (a review registry, not a connection).
+  const open = legal.items.filter((i) => i.status !== 'approved');
+  out.push({
+    key: 'legal_readiness',
+    workstream: 'P2-15',
+    name: 'Legal, policy and licensing approvals',
+    modules: ['M24'],
+    provider: null,
+    status: open.length ? 'requires_legal_review' : 'connected',
+    summary: `${legal.approved} of ${legal.total} reviews approved by counsel or the owner.`,
+    reasons: open.map((i) => `${i.title}: ${i.status.replaceAll('_', ' ')}; gates ${i.gates.join(', ')}`),
+    setup: ['Governance › Legal & licensing: record each review with the reviewer, the document and its evidence.', 'Approvals expire (12 months, research 6 months) and must be renewed.', legal.note],
+    docsUrl: null,
+    connections: [],
+    capabilities: [],
+    writes: [],
+  });
+  return out;
 }

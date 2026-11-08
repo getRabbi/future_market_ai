@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps } from '../../deps.js';
 import { audit, clipText, requireMfa, requireRole } from '../../util.js';
 import { proposeAction } from '../m23-execution/gateway.js';
+import { isComplianceApproved } from '../m24-governance/compliance.js';
 import { creatorBalance } from './index.js';
 
 /**
@@ -56,13 +57,6 @@ export interface PayoutReadiness {
   checks: { key: string; ok: boolean; detail: string }[];
 }
 
-/** Legal approval of creator payouts (P2-15 compliance registry); false until a counsel-approved record exists. */
-export type LegalApprovalCheck = (t: DbOrTx) => Promise<boolean>;
-let legalApproval: LegalApprovalCheck = async () => false;
-export function setPayoutLegalApprovalCheck(fn: LegalApprovalCheck) {
-  legalApproval = fn;
-}
-
 export async function payoutReadiness(t: DbOrTx, creatorId: string, now: Date): Promise<PayoutReadiness> {
   const [c] = await t.select().from(creators).where(eq(creators.id, creatorId));
   if (!c) throw notFound('creator');
@@ -80,7 +74,8 @@ export async function payoutReadiness(t: DbOrTx, creatorId: string, now: Date): 
     .where(and(eq(connections.provider, 'paypal'), eq(connections.status, 'active')))
     .limit(1);
   const action = getActionType('creator.payout');
-  const legal = await legalApproval(t);
+  // P2-15: counsel's approved, unexpired review of creator payouts.
+  const legal = await isComplianceApproved(t, 'creator_payouts', now);
   const checks = [
     { key: 'payable_balance', ok: payable.length > 0, detail: payable.length ? payable.map((p) => `${p.amountMicros / 1e6} ${p.currency}`).join(', ') : 'nothing payable yet (refund window or clawbacks)' },
     { key: 'creator_active', ok: c.status === 'active', detail: `creator is ${c.status}` },

@@ -17,6 +17,7 @@ import { Home } from './Home.js';
 import { JourneyProvider } from './Journey.js';
 import { MediaStudio } from './MediaStudio.js';
 import { ActivityPage, CalendarPage, IncidentsPage, InsightsPage, JourneyPage, ResultsPage, SetupPage, ToolsPage } from './Pages.js';
+import { ComplianceChecklist, ResearchSandbox } from './Readiness.js';
 import { ResourcePanel } from './ResourcePanel.js';
 import { AppShell, isAdmin, type Org, useWorkspace, WorkspaceProvider } from './Shell.js';
 import { ErrorNotice, Logo } from './ui.js';
@@ -199,7 +200,13 @@ function SectionContent({ slug, onBoot, onTenant }: { slug: string; onBoot: () =
   if (!s) return <ErrorNotice error={new Error('This page does not exist. Use search (Ctrl+K) or All tools to find what you need.')} />;
   return (
     <div className="content">
-      {s.custom === 'governance' ? <Governance /> : null}
+      {s.custom === 'governance' ? (
+        <>
+          <Governance />
+          <ComplianceChecklist me={me} />
+        </>
+      ) : null}
+      {s.slug === 'market' ? <ResearchSandbox me={me} /> : null}
       {s.custom === 'audit' ? <Audit /> : null}
       {s.custom === 'settings' ? <Settings me={me} onTenant={onTenant} onChanged={onBoot} /> : null}
       {s.custom === 'assets' ? (
