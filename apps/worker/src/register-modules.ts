@@ -1,4 +1,4 @@
-import { autopilot, brain, competitorsModule, contentStudio, customers, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
+import { autopilot, brain, competitorsModule, contentStudio, customers, governance, knowledge, media, registerEventHandlers, systemActor } from '@futuregrow/core';
 import { competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
 import { loadEnv, triggerNorthflankJob } from '@futuregrow/runtime';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
@@ -44,6 +44,35 @@ registerTasks((deps) => ({
       withTenant(deps.db, { tenantId, actor: 'system:autopilot' }, async (tx) => {
         const r = await contentStudio.expireStaleDrafts(tx, tenantId, deps.clock.now());
         if (r.expired || r.superseded) deps.logger.info({ tenantId, ...r }, 'stale studio drafts closed');
+      }),
+    );
+  },
+
+  /** Stock imports and AI images (P3-02/P3-03): up to five queued media jobs per tick, each leased and crash-safe. */
+  media_jobs_tick: async () => {
+    for (let i = 0; i < 5; i++) {
+      const r = await media.sources.processNextMediaJob(deps);
+      if (r.kind === 'none') break;
+      deps.logger.info({ job: r.jobId, outcome: r.kind, ...('reason' in r ? { reason: r.reason } : {}) }, 'media job processed');
+    }
+  },
+
+  /** Video Studio: rendering projects advance only from their render job's real outcome (ready, QA failed, failed). */
+  video_projects_sync: async () => {
+    await forEachTenant(deps, (tenantId) =>
+      withTenant(deps.db, { tenantId, actor: 'system:video-studio' }, async (tx) => {
+        const n = await media.video.syncVideoProjects(tx, tenantId);
+        if (n) deps.logger.info({ tenantId, projects: n }, 'video projects advanced');
+      }),
+    );
+  },
+
+  /** Stock assets whose licence record was withdrawn stop being publish-eligible. */
+  stock_licence_sweep: async () => {
+    await forEachTenant(deps, (tenantId) =>
+      withTenant(deps.db, { tenantId, actor: 'system:media-sources' }, async (tx) => {
+        const n = await media.sources.recheckStockLicences(tx, deps, tenantId);
+        if (n) deps.logger.warn({ tenantId, assets: n }, 'stock assets lost their licence');
       }),
     );
   },
@@ -117,4 +146,15 @@ registerEventHandlers((bus, deps) => {
   });
 });
 
-export const MODULE_CRONTAB = ['* * * * * autopilot_tick', '13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '19 * * * * studio_drafts_sweep', '*/15 * * * * studio_items_sync', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];
+export const MODULE_CRONTAB = [
+  '* * * * * autopilot_tick',
+  '13 * * * * competitor_crawl',
+  '41 2 * * * claims_sweep',
+  '19 * * * * studio_drafts_sweep',
+  '*/15 * * * * studio_items_sync',
+  '* * * * * media_jobs_tick',
+  '*/2 * * * * video_projects_sync',
+  '33 4 * * * stock_licence_sweep',
+  '53 3 * * * retention_sweep',
+  '27 6 * * * brain_cycle',
+];

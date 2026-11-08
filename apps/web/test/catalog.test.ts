@@ -12,6 +12,7 @@ import { CONNECTION_CALLS } from '../src/components/Connections.js';
 import { CONTENT_CALLS } from '../src/components/ContentStudio.js';
 import { REGISTRIES } from '../src/components/Governance.js';
 import { GROUND_TRUTH_CALLS } from '../src/components/GroundTruth.js';
+import { MEDIA_CALLS } from '../src/components/MediaStudio.js';
 import { UNIFIED_CALLS } from '../src/components/Shell.js';
 import { UNIVERSAL_CALLS } from '../src/components/UniversalStudio.js';
 import { allForms, SECTIONS } from '../src/lib/catalog.js';
@@ -79,6 +80,7 @@ function calls() {
   for (const c of APP_INTELLIGENCE_CALLS) out.push({ where: 'app intelligence screen', method: c.method, path: c.path });
   for (const c of UNIFIED_CALLS) out.push({ where: 'unified shell / home', method: c.method, path: c.path });
   for (const c of UNIVERSAL_CALLS) out.push({ where: 'universal studio screen', method: c.method, path: c.path });
+  for (const c of MEDIA_CALLS) out.push({ where: 'media studio screen', method: c.method, path: c.path });
   return out;
 }
 

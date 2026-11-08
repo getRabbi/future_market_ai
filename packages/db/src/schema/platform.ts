@@ -196,6 +196,8 @@ export const modelRegistry = pgTable(
     approvedAt: ts('approved_at'),
     inputUsdPerMtok: dbl('input_usd_per_mtok'),
     outputUsdPerMtok: dbl('output_usd_per_mtok'),
+    /** Image models (P3-02): price of one generated image at the default quality. */
+    usdPerImage: dbl('usd_per_image'),
     status: text('status').notNull().default('active'),
     eolAt: ts('eol_at'),
     createdAt: createdAt(),
@@ -557,7 +559,7 @@ export const costLedger = pgTable(
     metadata: json<Record<string, unknown>>('metadata').notNull().default({}),
     occurredAt: ts('occurred_at').notNull().defaultNow(),
   },
-  (t) => [oneOf('cost_ledger_category_chk', t.category, ['llm', 'embedding', 'media_render', 'api', 'analytics', 'storage']), index('cost_ledger_tenant_time_idx').on(t.tenantId, t.occurredAt)],
+  (t) => [oneOf('cost_ledger_category_chk', t.category, ['llm', 'embedding', 'image_generation', 'media_render', 'api', 'analytics', 'storage']), index('cost_ledger_tenant_time_idx').on(t.tenantId, t.occurredAt)],
 );
 
 /**

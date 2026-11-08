@@ -1,7 +1,11 @@
-import { artifactLicenses, assets, type DbOrTx, modelRegistry } from '@futuregrow/db';
+import { assets, connections, type DbOrTx } from '@futuregrow/db';
 import { sha256Hex } from '@futuregrow/observability';
 import { and, eq } from 'drizzle-orm';
 import type { CoreDeps } from '../../deps.js';
+import { imageModelReadiness, stockLicence } from './sources.js';
+
+export * as sources from './sources.js';
+export * as video from './video.js';
 
 /**
  * Provider-neutral creative media (D-044). The studio asks for an image of a format; a provider
@@ -10,13 +14,9 @@ import type { CoreDeps } from '../../deps.js';
  * studio. A provider is enabled only when its credentials AND its rights record exist.
  */
 
-export const MEDIA_FORMATS = {
-  portrait_4x5: { width: 1080, height: 1350 },
-  square_1x1: { width: 1080, height: 1080 },
-  landscape_191x1: { width: 1200, height: 628 },
-  story_9x16: { width: 1080, height: 1920 },
-} as const;
-export type MediaFormat = keyof typeof MEDIA_FORMATS;
+export { MEDIA_FORMATS, type MediaFormat } from './formats.js';
+
+import { MEDIA_FORMATS, type MediaFormat } from './formats.js';
 
 export type MediaProviderKind = 'template_card' | 'verified_asset' | 'stock_image' | 'ai_image';
 
@@ -52,12 +52,6 @@ export interface MediaProviderStatus {
   /** Credentials and rights records exist (independent of the adapter). */
   prerequisitesMet: boolean;
 }
-
-/**
- * Stock and AI images have readiness checks but no execution adapter yet (deferred scope, D-044):
- * meeting their prerequisites never makes them usable on its own.
- */
-const NO_ADAPTER = 'no FUTUREGROW adapter fetches or generates these images yet (deferred), so the branded templates are used';
 
 export interface MediaContext {
   t: DbOrTx;
@@ -130,43 +124,33 @@ export const verifiedAssets: MediaProvider = {
   },
 };
 
-/** A licensed stock library. Needs the vendor key and a production-approved stock_media licence record. */
+/** A licensed stock library (Pexels, P3-03): a connected API key and an approved stock_media licence record for the Pexels License. */
 export const stockImages: MediaProvider = {
   id: 'stock-library',
   kind: 'stock_image',
   async status(ctx) {
-    const vendor = ctx.deps.config.media?.stockProvider ?? null;
-    const [licence] = await ctx.t
-      .select({ id: artifactLicenses.id, name: artifactLicenses.exactName })
-      .from(artifactLicenses)
-      .where(and(eq(artifactLicenses.artifactType, 'stock_media'), eq(artifactLicenses.commercialUse, 'allowed'), eq(artifactLicenses.approvedForProduction, true)))
+    const [conn] = await ctx.t
+      .select({ id: connections.id, healthStatus: connections.healthStatus })
+      .from(connections)
+      .where(and(eq(connections.provider, 'pexels'), eq(connections.status, 'active')))
       .limit(1);
-    const missing = [...(vendor ? [] : ['a configured stock vendor and API key']), ...(licence ? [] : ['an approved stock_media licence record with commercial use allowed'])];
-    const requires = [...missing, 'a stock-library adapter (not built yet)'];
+    const licence = await stockLicence(ctx.t);
+    const missing = [...(conn ? [] : ['a connected Pexels API key (Connections)']), ...(licence ? [] : ['an approved stock_media licence record for the Pexels License (Governance › licences)'])];
     return missing.length
-      ? { id: this.id, kind: this.kind, enabled: false, reason: 'No licensed stock library is configured; the branded templates are used instead.', requires, adapter: 'not_built', prerequisitesMet: false }
-      : { id: this.id, kind: this.kind, enabled: false, reason: `${vendor} under licence "${licence!.name}" is configured, but ${NO_ADAPTER}.`, requires, adapter: 'not_built', prerequisitesMet: true };
+      ? { id: this.id, kind: this.kind, enabled: false, reason: 'No licensed stock library is ready; the branded templates are used instead.', requires: missing, adapter: 'available', prerequisitesMet: false }
+      : { id: this.id, kind: this.kind, enabled: true, reason: `Pexels under licence record "${licence!.exactName}": search and import photos and videos; every import records its author, attribution and licence.`, requires: [], adapter: 'available', prerequisitesMet: true };
   },
 };
 
-/** An image-generation model. Needs a production-approved registry entry for image generation with commercial use allowed. */
+/** An image-generation model (P3-02): registry-approved for image_generation, priced, configured on this server, with an approved licence record. */
 export const aiImages: MediaProvider = {
   id: 'ai-image-model',
   kind: 'ai_image',
   async status(ctx) {
-    const models = await ctx.t.select().from(modelRegistry).where(eq(modelRegistry.approvedForProduction, true));
-    const usable = models.find((m) => m.purposes.includes('image_generation') && m.commercialUse === 'allowed' && m.trainingOnCustomerData === 'no');
-    return usable
-      ? { id: this.id, kind: this.kind, enabled: false, reason: `${usable.provider}/${usable.modelId} is approved for image generation, but ${NO_ADAPTER}.`, requires: ['an image-generation adapter (not built yet)'], adapter: 'not_built', prerequisitesMet: true }
-      : {
-          id: this.id,
-          kind: this.kind,
-          enabled: false,
-          reason: 'No image-generation model is approved for production (B-011); illustrations come from the branded templates.',
-          requires: ['an image model approved for image_generation', 'commercial use allowed', 'no training on customer data', 'an image-generation adapter (not built yet)'],
-          adapter: 'not_built',
-          prerequisitesMet: false,
-        };
+    const r = await imageModelReadiness(ctx.t, ctx.deps);
+    return r.missing.length
+      ? { id: this.id, kind: this.kind, enabled: false, reason: 'No image-generation model is ready for production (B-011); illustrations come from the branded templates.', requires: r.missing, adapter: 'available', prerequisitesMet: false }
+      : { id: this.id, kind: this.kind, enabled: true, reason: `${r.model!.provider}/${r.model!.modelId} is approved at about $${r.model!.usdPerImage} per image; every image is labelled AI-generated and counts toward the AI spending limit.`, requires: [], adapter: 'available', prerequisitesMet: true };
   },
 };
 

@@ -121,6 +121,8 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
           dataRetentionTerms: z.string().min(3),
           inputUsdPerMtok: z.number().nonnegative().nullable(),
           outputUsdPerMtok: z.number().nonnegative().nullable(),
+          /** Image models: price of one image; image models without a price are never used. */
+          usdPerImage: z.number().positive().max(5).nullable().optional(),
         }),
       },
     },

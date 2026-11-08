@@ -1,4 +1,4 @@
-import type { ModelGateway } from '@futuregrow/agent-kernel';
+import type { ImageModelProvider, ModelGateway } from '@futuregrow/agent-kernel';
 import type { ApiVersions, HttpClient, ProviderEndpoints } from '@futuregrow/connectors';
 import type { Db } from '@futuregrow/db';
 import type { Logger } from '@futuregrow/observability';
@@ -60,6 +60,8 @@ export interface CoreDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Registry-gated model gateway; absent when no provider is configured (B-003). */
   models?: ModelGateway;
+  /** Image-generation providers by registry provider name (P3-02); used only for approved image models. */
+  images?: Record<string, ImageModelProvider>;
   /** Operator alerts (ALERT_WEBHOOK_URL); absent = log only. */
   notifier?: Notifier;
 }

@@ -133,7 +133,7 @@ export const assets = pgTable(
     createdBy: text('created_by').notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex('assets_sha_uq').on(t.tenantId, t.sha256), oneOf('assets_kind_chk', t.kind, ['image', 'video', 'audio', 'font', 'caption']), oneOf('assets_origin_chk', t.origin, ['upload', 'render', 'generated'])],
+  (t) => [uniqueIndex('assets_sha_uq').on(t.tenantId, t.sha256), oneOf('assets_kind_chk', t.kind, ['image', 'video', 'audio', 'font', 'caption']), oneOf('assets_origin_chk', t.origin, ['upload', 'render', 'generated', 'stock'])],
 );
 
 /** Rights of each component that went into an asset (source media, music, voice, likeness...). */
@@ -179,7 +179,96 @@ export const renderJobs = pgTable(
     startedAt: ts('started_at'),
     finishedAt: ts('finished_at'),
   },
-  (t) => [index('render_jobs_queue_idx').on(t.status, t.requestedAt), oneOf('render_jobs_composition_chk', t.composition, ['product_showcase', 'ugc_captioned', 'persona_story']), oneOf('render_jobs_status_chk', t.status, ['queued', 'rendering', 'completed', 'failed', 'blocked_license'])],
+  (t) => [index('render_jobs_queue_idx').on(t.status, t.requestedAt), oneOf('render_jobs_composition_chk', t.composition, ['product_showcase', 'ugc_captioned', 'persona_story', 'scene_story']), oneOf('render_jobs_status_chk', t.status, ['queued', 'rendering', 'completed', 'failed', 'blocked_license'])],
+);
+
+/**
+ * Asynchronous media acquisition (P3-02 AI images, P3-03 stock imports): a job is queued, leased by
+ * one worker, and succeeds only with a stored, hashed asset carrying its provenance and rights.
+ */
+export const mediaJobs = pgTable(
+  'media_jobs',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    kind: text('kind').notNull(),
+    provider: text('provider').notNull(),
+    modelId: text('model_id'),
+    connectionId: uuid('connection_id'),
+    status: text('status').notNull().default('queued'),
+    statusReason: text('status_reason'),
+    /** Prompt, format, stock item id and media type: everything the job needs, hashed below. */
+    request: json<Record<string, unknown>>('request').notNull(),
+    requestSha256: text('request_sha256').notNull(),
+    assetId: uuid('asset_id'),
+    costUsd: dbl('cost_usd'),
+    provenance: json<Record<string, unknown>>('provenance').notNull().default({}),
+    attempts: integer('attempts').notNull().default(0),
+    leaseOwner: text('lease_owner'),
+    leaseUntil: ts('lease_until'),
+    nextAttemptAt: ts('next_attempt_at'),
+    requestedBy: text('requested_by').notNull(),
+    requestedAt: ts('requested_at').notNull().defaultNow(),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [index('media_jobs_queue_idx').on(t.status, t.nextAttemptAt), index('media_jobs_tenant_idx').on(t.tenantId, t.requestedAt), oneOf('media_jobs_kind_chk', t.kind, ['ai_image', 'stock_import']), oneOf('media_jobs_status_chk', t.status, ['queued', 'running', 'succeeded', 'failed', 'blocked', 'refused'])],
+);
+
+/** Source tracking for licensed stock media: one row per imported provider item and format (dedupe, licence, revocation). */
+export const stockAssets = pgTable(
+  'stock_assets',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    provider: text('provider').notNull(),
+    externalId: text('external_id').notNull(),
+    mediaType: text('media_type').notNull(),
+    format: text('format').notNull(),
+    assetId: uuid('asset_id')
+      .notNull()
+      .references(() => assets.id, { onDelete: 'cascade' }),
+    pageUrl: text('page_url').notNull(),
+    author: text('author').notNull(),
+    authorUrl: text('author_url'),
+    attribution: text('attribution').notNull(),
+    license: json<Record<string, unknown>>('license').notNull(),
+    artifactLicenseId: uuid('artifact_license_id').notNull(),
+    importedBy: text('imported_by').notNull(),
+    importedAt: ts('imported_at').notNull().defaultNow(),
+    revokedAt: ts('revoked_at'),
+    revokedReason: text('revoked_reason'),
+  },
+  (t) => [uniqueIndex('stock_assets_item_uq').on(t.tenantId, t.provider, t.externalId, t.mediaType, t.format), oneOf('stock_assets_media_chk', t.mediaType, ['photo', 'video'])],
+);
+
+/**
+ * Video Studio (P3-04): idea → script → storyboard → scenes → assets → render → QA → preview →
+ * export → publish. The storyboard (scenes with text, duration, media and transitions) is the
+ * render's input; the render job and its MP4, thumbnail and subtitle assets are linked here.
+ */
+export const videoProjects = pgTable(
+  'video_projects',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    brandId: uuid('brand_id'),
+    title: text('title').notNull(),
+    status: text('status').notNull().default('storyboard'),
+    statusReason: text('status_reason'),
+    preset: text('preset').notNull(),
+    storyboard: json<Record<string, unknown>>('storyboard').notNull(),
+    renderJobId: uuid('render_job_id'),
+    outputAssetId: uuid('output_asset_id'),
+    thumbnailAssetId: uuid('thumbnail_asset_id'),
+    subtitlesAssetId: uuid('subtitles_asset_id'),
+    qa: json<Record<string, unknown>>('qa').notNull().default({}),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('video_projects_tenant_idx').on(t.tenantId, t.updatedAt), oneOf('video_projects_status_chk', t.status, ['storyboard', 'rendering', 'qa_failed', 'ready', 'failed'])],
 );
 
 export const syntheticPersonas = pgTable(

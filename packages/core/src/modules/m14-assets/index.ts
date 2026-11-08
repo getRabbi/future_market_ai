@@ -124,6 +124,7 @@ export async function recomputeEligibility(tx: Tx, deps: CoreDeps, tenantId: str
   if (!has('source_media')) reasons.push('missing source-media rights');
   if (a.origin === 'render' && !has('template')) reasons.push('missing template rights for rendered asset');
   if (a.origin === 'generated' && !has('model')) reasons.push('missing model/weights licence for generated asset');
+  if (a.origin === 'stock' && !rights.some((r) => r.component === 'source_media' && r.artifactLicenseId)) reasons.push('stock media must reference its approved stock licence record');
   if (manifest.contains?.music && !has('music')) reasons.push('contains music without music rights');
   if (manifest.contains?.voice && !has('voice')) reasons.push('contains voice without voice consent/licence');
   if ((manifest.contains?.likeness || a.personaId) && !has('likeness')) reasons.push('contains a likeness without likeness rights');

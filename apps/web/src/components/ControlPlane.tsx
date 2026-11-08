@@ -14,6 +14,7 @@ import { Governance } from './Governance.js';
 import { GroundTruth } from './GroundTruth.js';
 import { Home } from './Home.js';
 import { JourneyProvider } from './Journey.js';
+import { MediaStudio } from './MediaStudio.js';
 import { ActivityPage, CalendarPage, IncidentsPage, InsightsPage, JourneyPage, ResultsPage, SetupPage, ToolsPage } from './Pages.js';
 import { ResourcePanel } from './ResourcePanel.js';
 import { AppShell, isAdmin, type Org, useWorkspace, WorkspaceProvider } from './Shell.js';
@@ -195,7 +196,12 @@ function SectionContent({ slug, onBoot, onTenant }: { slug: string; onBoot: () =
       {s.custom === 'governance' ? <Governance /> : null}
       {s.custom === 'audit' ? <Audit /> : null}
       {s.custom === 'settings' ? <Settings me={me} onTenant={onTenant} onChanged={onBoot} /> : null}
-      {s.custom === 'assets' ? <AssetUpload /> : null}
+      {s.custom === 'assets' ? (
+        <>
+          <AssetUpload />
+          <MediaStudio />
+        </>
+      ) : null}
       {s.custom === 'connections' ? (
         <>
           <IntegrationStatus />
