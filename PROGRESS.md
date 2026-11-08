@@ -210,3 +210,15 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 ## Completion summary
 
 All 24 modules are implemented and tested against real PostgreSQL with provider APIs exercised through fixture servers. Every P0 gate (FG-P0-001…008) and P1 item (FG-P1-001…006) is implemented and verified. FG-P2-001 (failover, AI spend limits, deprecation monitoring) is implemented and tested; the controlled beta is live. What remains is external: live credentials and app reviews, legal rule packs, vendor reviews and the payout provider — each listed with its unblock step in BLOCKERS.md. Deployment steps: DEPLOYMENT.md; operations: docs/RUNBOOK.md.
+
+### P1 + P2 + P3 combined release (2026-11-09) — ◐ (implemented and tested on branch `feat/p1-p2-p3-complete`; one combined PR, not merged or deployed)
+- [x] P1 preserved unchanged (commits `9fc8b06`, `2a8f58b`).
+- [x] Milestone A: integration status catalog for all 15 P2 workstreams; Chatwoot, Search Console, PostHog health checks; Resend SPF/DKIM readiness; connection forms for LinkedIn, X, PostHog, Chatwoot, Search Console, Pexels, PayPal (migration 0017).
+- [x] Milestone B: Universal Content Studio (general programs, persistent pipeline, grounded AI ideas/drafts, four-eyes approval, publish through M23 and read-back) and collision-free campaign identities (0018); Pexels stock imports, OpenAI image generation, Video Studio with a real MP4 render (0019).
+- [x] Milestone C: Instagram/TikTok/YouTube/LinkedIn analytics, per-platform report; Meta and Google campaign creation PAUSED through M23, drafts with business checks, `fg-policy-1.5.0` (0020).
+- [x] Milestone D: PostHog consent-only forwarding, Chatwoot two-way handoff, payout readiness + PayPal adapter (execution disabled), Shopify catalog facts, grounded Search Console ideas (0021).
+- [x] Milestone E: app telemetry contract (conversions, app version, replay window) and Flutter client example, cross-source attribution, optional Meridian backend.
+- [x] Milestone F: legal and licensing readiness registry; authorized research sandbox orchestration (execution refused without microVM isolation) (0022).
+- [ ] Owner: authorize the single rollout (docs/P1_P2_P3_FINAL_RELEASE.md §7) and the activation steps (§8).
+
+**Capability status (2026-11-09):** everything new is IMPLEMENTED — TESTED against fixtures (real render for video); nothing new is live-verified. Paid or consequential capabilities (X, paid campaign creation, payouts, AI images, research execution, Meridian) ship disabled with their blockers (B-019, B-026, B-015, B-011, B-012, B-010). Not implemented: Instagram carousels, voice/TTS and generative video, CSV export of social analytics, an attribution table in the web app (API only), automated optimisation of newly created campaigns.

@@ -179,7 +179,10 @@ function StockSearch({ onImported }: { onImported: () => void }) {
           <ul className="grid-3">
             {result.items.map((c) => (
               <li key={c.externalId} className="card">
-                <img src={c.previewUrl} alt={c.attribution} loading="lazy" style={{ width: '100%', borderRadius: 8 }} />
+                {/* The app's CSP allows images only from FUTUREGROW itself, so previews open on Pexels instead of being hotlinked. */}
+                <a className="small" href={c.pageUrl} target="_blank" rel="noreferrer noopener">
+                  Preview on Pexels
+                </a>
                 <p className="small">
                   {c.attribution} · {c.width}×{c.height}
                   {c.durationSeconds ? ` · ${c.durationSeconds}s` : ''}
@@ -393,8 +396,10 @@ function VideoStudio() {
                 </div>
               </div>
               {preview?.id === v.id ? (
-                // biome-ignore lint/a11y/useMediaCaption: subtitles are exported as an SRT asset; the preview is the raw render
-                <video src={preview.url} controls style={{ width: '100%', maxWidth: 420, borderRadius: 8 }} />
+                // A signed object-storage link (15 minutes); opened in a new tab because the app's CSP does not embed media from storage.
+                <a className="small" href={preview.url} target="_blank" rel="noreferrer noopener">
+                  Open the MP4 (link valid for 15 minutes)
+                </a>
               ) : null}
             </li>
           ))}

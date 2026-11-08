@@ -83,3 +83,8 @@ Google posts Play statistics 3 to 7 days late, so a period ending yesterday is n
 * **Pending (B-023):** the optional Play Developer Reporting API is still `SERVICE_DISABLED` in the service account's Cloud project (`futureai-513908`), so app names and crash/ANR rates are unavailable. Bulk reports are unaffected; the account and All apps show it as a non-blocking warning with the fix (D-047).
 * **Not connected:** App Store Connect (no iOS app reported yet).
 * **Per-post outcomes (D-049):** implemented and fixture-tested. They start for EPS only after the owner switches the program to one campaign per post and Google reports traffic for those campaigns; until then Studio learns from Facebook engagement only, and no post is credited with installs.
+
+## Layer 2 telemetry and attribution (D-050)
+
+* App events now accept `appVersion` and `conversion` events (name, optional value with currency); events older than 30 days are refused as possible replays. A reusable Flutter client that relays through the app's backend is in `examples/flutter/futuregrow_telemetry` (its payload fixtures are checked by the server schemas). The EPS TOPIK Bangla app is not changed.
+* `GET /v1/app/attribution` shows, per campaign, Google Play store-reported acquisitions (final, admitted days only), consented telemetry (installs, first opens, activations) and the posts or paid drafts behind the campaign, side by side and never added. iOS campaign data is stated as unavailable (Apple Standard reports carry no campaign). Incrementality appears only for completed experiments; otherwise the report says it is descriptive.

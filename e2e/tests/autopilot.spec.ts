@@ -78,16 +78,14 @@ async function seedStoreReports() {
       ).rows[0]!.id;
       for (const ago of [5, 4, 3]) {
         const part = (
-          await db.query<{ id: string }>(`insert into store_report_partitions (tenant_id, store_app_id, family, dimension, observation_date, report_file_id, source_rank, rows, digest, status) values ($1, $2, 'play.installs', 'country', current_date - $3::int, $4, 1, 1, 'e2e', 'provisional') returning id`, [
-            org,
-            app,
-            ago,
-            file,
-          ])
+          await db.query<{ id: string }>(
+            `insert into store_report_partitions (tenant_id, store_app_id, family, dimension, observation_date, report_file_id, source_rank, rows, digest, status) values ($1, $2, 'play.installs', 'country', (now() at time zone 'UTC')::date - $3::int, $4, 1, 1, 'e2e', 'provisional') returning id`,
+            [org, app, ago, file],
+          )
         ).rows[0]!.id;
         await db.query(
           `insert into store_metric_observations (tenant_id, partition_id, store_app_id, store_account_id, platform, app_id, provider, family, dimension, metric_key, source_metric, observation_date, dims, dims_key, value, report_file_id)
-           values ($1, $2, $3, $4, 'android', $5, 'google_play', 'play.installs', 'country', 'play.daily_user_installs', 'Daily User Installs', current_date - $6::int, '{"country":"BD"}', '[["country","BD"]]', $7, $8)`,
+           values ($1, $2, $3, $4, 'android', $5, 'google_play', 'play.installs', 'country', 'play.daily_user_installs', 'Daily User Installs', (now() at time zone 'UTC')::date - $6::int, '{"country":"BD"}', '[["country","BD"]]', $7, $8)`,
           [org, part, app, acct, pkg, ago, base + ago, file],
         );
       }

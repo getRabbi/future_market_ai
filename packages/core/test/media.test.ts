@@ -41,8 +41,9 @@ describe('provider-neutral media (D-044)', () => {
     let s = await status();
     expect(Object.fromEntries(s.map((p) => [p.kind, p.enabled]))).toEqual({ template_card: true, verified_asset: false, stock_image: false, ai_image: false });
     expect(s.find((p) => p.kind === 'ai_image')!.reason).toMatch(/B-011/);
-    expect(s.find((p) => p.kind === 'stock_image')!.requires).toHaveLength(3);
-    expect(s.find((p) => p.kind === 'stock_image')).toMatchObject({ adapter: 'not_built', prerequisitesMet: false });
+    // P3-03: the Pexels adapter exists; without a connected key and an approved licence record it stays disabled.
+    expect(s.find((p) => p.kind === 'stock_image')!.requires).toEqual([expect.stringMatching(/Pexels API key/), expect.stringMatching(/stock_media licence/)]);
+    expect(s.find((p) => p.kind === 'stock_image')).toMatchObject({ adapter: 'available', prerequisitesMet: false, enabled: false });
     // An approved chat model is not an image model; an approved image model with commercial rights is.
     await withSystem(h.deps.db, 'test', (t) =>
       t.insert(modelRegistry).values({ provider: 'openai_compatible', modelId: 'chat-1', displayName: 'Chat', purposes: ['generation'], licenseOrTerms: 'reviewed', commercialUse: 'allowed', trainingOnCustomerData: 'no', approvedForProduction: true, approvedBy: 'user:owner', inputUsdPerMtok: 0, outputUsdPerMtok: 0 }),
@@ -54,8 +55,11 @@ describe('provider-neutral media (D-044)', () => {
         .values({ provider: 'openai_compatible', modelId: 'image-1', displayName: 'Image', purposes: ['image_generation'], licenseOrTerms: 'reviewed', commercialUse: 'allowed', trainingOnCustomerData: 'no', approvedForProduction: true, approvedBy: 'user:owner', inputUsdPerMtok: 0, outputUsdPerMtok: 0 }),
     );
     s = await status();
-    // An approved image model meets the prerequisites, but no adapter generates images yet: never claimed usable.
-    expect(s.find((p) => p.kind === 'ai_image')).toMatchObject({ enabled: false, prerequisitesMet: true, adapter: 'not_built', reason: expect.stringMatching(/image-1.*no FUTUREGROW adapter/) });
+    // P3-02: an approved image model alone is not enough: no provider is configured for it, it has no per-image price
+    // and no approved licence record, so it is never claimed usable.
+    const ai = s.find((p) => p.kind === 'ai_image')!;
+    expect(ai).toMatchObject({ enabled: false, prerequisitesMet: false, adapter: 'available' });
+    expect(ai.requires).toEqual(expect.arrayContaining([expect.stringMatching(/openai_compatible image provider is not configured/), expect.stringMatching(/licence record named "openai_compatible\/image-1"/), expect.stringMatching(/per-image price/)]));
     expect(s.find((p) => p.kind === 'template_card')).toMatchObject({ enabled: true, adapter: 'available' });
   });
 });

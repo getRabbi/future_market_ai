@@ -110,3 +110,7 @@ targets on phones, light and dark tokens.
 
 Not automated: the real EPS Page and Google Play account (production credentials; covered with
 fixtures of the same shape).
+
+## P2/P3 additions (D-050)
+
+No new dashboard or settings area: Connections gains **Integration status** (with PostHog forwarding and the Chatwoot webhook URL); Content gains **Brand programs** beside Daily lessons (lessons stay the default for curriculum organizations); Asset studio gains **Media sources**, licensed stock, AI image, media jobs and the **Video Studio**; Results gains **per-platform social results**; Campaigns & paid media gains **New paid campaigns**; Governance gains **Legal & licensing readiness**; Market & Competitors gains the **Authorized research sandbox**. Every screen lists its API calls (checked against the routes by `apps/web/test/catalog.test.ts`).

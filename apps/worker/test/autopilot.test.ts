@@ -1090,7 +1090,7 @@ describe('Autopilot: an ordinary organic Bangla Page post for BD needs no jurisd
     expect(k.track).toMatchObject({ status: 'completed', refs: { supersededActionId: actionId }, output: { actionId: replacementId, status: 'VERIFIED' } });
     expect(k.track!.detail).toMatch(/independently verified/);
     const [old] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, actionId)));
-    expect(old).toMatchObject({ status: 'CANCELLED', statusReason: expect.stringMatching(/superseded: policy fg-policy-1\.4\.0/) });
+    expect(old).toMatchObject({ status: 'CANCELLED', statusReason: expect.stringMatching(/superseded: policy fg-policy-1\.5\.0/) });
     await expect(execution.decideApproval(h.deps, org, h.users.approver, actionId, { decision: 'approved', expectedActionHash: waiting.actionHash })).rejects.toThrow(/CANCELLED/);
     const [a] = await otx((t) => t.select().from(actionRequests).where(eq(actionRequests.id, replacementId)));
     expect(a).toMatchObject({ status: 'VERIFIED', actionHash: waiting.actionHash, proposedByType: 'agent', proposedById: 'autopilot', policyVersion: 'fg-policy-1.5.0' });

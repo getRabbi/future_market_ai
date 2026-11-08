@@ -162,3 +162,7 @@ Then in the control plane: Audit trail → **Verify chain now** (valid), Evidenc
 2. Deploy Pages from the merged tree (as in §11): every signed-in page now uses the unified shell; `/app/advanced` and `/app/?view=…` redirect in the browser. Note the previous deployment id as the rollback target.
 3. Read-only checks, signed in: Home shows the journey, at-a-glance goals, next best action, performance (store reports), blockers, system health and activity; Ctrl+K finds a page and a goal; the bell lists waiting approvals; a 390 px phone shows no sideways scroll; the EPS goal keeps its schedule (the release changes no business rule).
 4. Rollback: redeploy the previous Pages deployment (web only), and revert the merge commit on `main` for the api route if needed; nothing in the database changes.
+
+## 14. P1 + P2 + P3 combined release (D-049, D-050)
+
+One merge, one coordinated deploy, authorized by the owner. The exact manifest (baseline, merge, migrations 0017–0022 on api start, media-job rebuild for the `scene-story` composition, Pages deploy, health and smoke checks, EPS checks, monitoring and rollback) is in docs/P1_P2_P3_FINAL_RELEASE.md §7. No new required environment variable or secret; optional `FG_MERIDIAN_COMPUTE=approved` only on a separately approved Meridian host. All new paid or consequential capabilities stay disabled after deploy until the activation steps in §8 of that document.

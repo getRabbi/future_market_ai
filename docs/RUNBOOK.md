@@ -142,3 +142,15 @@ Alerts go to one webhook (`ALERT_WEBHOOK_URL`; DEPLOYMENT §9). Component proble
 - **Caption limits:** `POST /v1/social/caption-check` explains why copy does not fit a platform; scheduling refuses such copy (it is never truncated).
 - **Media sources:** `GET /v1/media/providers`. Do not enable a stock or AI source by registry edits alone: the licence (`artifact_licenses`, `stock_media`, commercial use) or model approval (`image_generation`, commercial use, no training on customer data) must be recorded by an authorized person first.
 - **Rollback:** migrations 0014 (new tables + nullable column) and 0015 (widened check constraints) are additive; the previous image runs against them unchanged. Do not drop the tables during a rollback.
+
+## 16. P2/P3 operations (D-050)
+
+* **Integration status** (Connections): the first place to look when a channel or vendor "does not work"; every row says what is missing.
+* **Media jobs** (`media_jobs`): a stuck job is re-leased after 10 minutes; retryable provider errors back off up to three attempts; `refused`/`blocked` are terminal by design. Withdrawing a stock licence record makes its assets ineligible at the next `stock_licence_sweep` (04:33 UTC); revoke one asset at once with `POST /v1/media/stock/assets/:id/revoke`.
+* **Video renders**: blocked until the Remotion licence is recorded (Governance); a `qa_failed` project shows the render's technical problems.
+* **Social analytics**: `social_analytics_runs` holds each import's status and error; a failed run never overwrites earlier values. A revoked token shows as a failed run and the connection's health check moves it to `reauth_required`.
+* **Paid campaign creation**: disabled until B-026 is resolved; to enable, set `supported=true` for `meta_ads_campaign_create` / `google_ads_campaign_create` in the capability registry (platform admin). Every creation still needs finance approval with two-factor; campaigns start PAUSED.
+* **PostHog forwarding**: turn off in Connections › Integration status; a failed batch leaves the cursor in place and is retried in 5 minutes (events carry a uuid, so a resend is deduplicated).
+* **Chatwoot**: the webhook URL (Integration status › Show webhook URL) contains a keyed-hash token; rotating `FG_IDENTIFIER_PEPPER` changes it, so update Chatwoot afterwards.
+* **Payouts and research**: both are refused by design until legal review and (for payouts) a provider agreement, (for research) a microVM runner exist; the stored request/job states why.
+* **Compliance**: approvals expire (12 months; research 6); an expired item gates again automatically.
