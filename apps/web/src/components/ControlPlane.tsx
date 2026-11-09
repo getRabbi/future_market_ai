@@ -6,19 +6,23 @@ import { legacyRedirect, pageBySlug } from '../lib/nav.js';
 import { AppConversions } from './AppConversions.js';
 import { AppIntelligenceView } from './AppIntelligence.js';
 import { Approvals } from './Approvals.js';
+import { AttributionReport } from './AttributionReport.js';
 import { ApprovalsInbox, AutopilotCenter, AutopilotOffer, type AutopilotStatus, GoalsView } from './Autopilot.js';
 import { BrandStudioView } from './BrandStudio.js';
 import { CampaignDrafts, SocialAnalytics } from './ChannelGrowth.js';
 import { Connections, IntegrationStatus } from './Connections.js';
 import { ContentStudioView } from './ContentStudio.js';
+import { CreatorPayouts } from './CreatorPayouts.js';
 import { Governance } from './Governance.js';
 import { GroundTruth } from './GroundTruth.js';
 import { Home } from './Home.js';
 import { JourneyProvider } from './Journey.js';
 import { MediaStudio } from './MediaStudio.js';
 import { ActivityPage, CalendarPage, IncidentsPage, InsightsPage, JourneyPage, ResultsPage, SetupPage, ToolsPage } from './Pages.js';
+import { ProductCatalog } from './ProductCatalog.js';
 import { ComplianceChecklist, ResearchSandbox } from './Readiness.js';
 import { ResourcePanel } from './ResourcePanel.js';
+import { SearchConsole } from './SearchConsole.js';
 import { AppShell, isAdmin, type Org, useWorkspace, WorkspaceProvider } from './Shell.js';
 import { ErrorNotice, Logo } from './ui.js';
 import { AssetUpload, Audit, Settings } from './Views.js';
@@ -172,6 +176,14 @@ function PageContent({ slug, onBoot }: { slug: string; onBoot: () => void }) {
       );
     case 'insights':
       return <InsightsPage />;
+    case 'catalog':
+      return <ProductCatalog me={me} />;
+    case 'payouts':
+      return <CreatorPayouts me={me} />;
+    case 'attribution':
+      return <AttributionReport />;
+    case 'search-console':
+      return <SearchConsole me={me} />;
     case 'incidents':
       return <IncidentsPage autopilot={autopilot} />;
     case 'activity':
@@ -221,7 +233,14 @@ function SectionContent({ slug, onBoot, onTenant }: { slug: string; onBoot: () =
           <Connections me={me} />
         </>
       ) : null}
-      {s.slug === 'app' ? <AppConversions /> : null}
+      {s.slug === 'app' ? (
+        <>
+          <p className="small">
+            Campaign-level store reports beside this telemetry: <a href="/app/attribution">open the Attribution report</a>.
+          </p>
+          <AppConversions />
+        </>
+      ) : null}
       {s.slug === 'ads' ? <CampaignDrafts me={me} /> : null}
       {s.custom === 'knowledge' ? <GroundTruth /> : s.resources.map((r) => <ResourcePanel key={r.title} resource={r} />)}
     </div>

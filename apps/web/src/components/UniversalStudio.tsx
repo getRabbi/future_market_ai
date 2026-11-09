@@ -22,6 +22,7 @@ export const UNIVERSAL_CALLS = [
   { method: 'POST', path: '/v1/studio/items/:id/schedule' },
   { method: 'GET', path: '/v1/brands' },
   { method: 'GET', path: '/v1/brands/:id' },
+  { method: 'GET', path: '/v1/assets' },
 ] as const;
 
 const PLATFORMS = ['facebook', 'instagram', 'linkedin', 'x', 'youtube', 'tiktok'] as const;
@@ -57,7 +58,7 @@ interface Item {
   origin: 'ai' | 'manual';
   idea: { angle?: string; hook?: string };
   brief: { keyMessage?: string; destination?: string | null; claims?: { id: string; text: string }[] };
-  draft: { text?: string; origin?: string };
+  draft: { text?: string; origin?: string; assetIds?: string[] };
   validation: { passed?: boolean; problems?: string[]; warnings?: string[] };
   campaign: string | null;
   scheduledAt: string | null;
@@ -465,6 +466,7 @@ function ManualIdea({ program, onDone }: { program: GeneralProgram; onDone: () =
 function ItemCard({ item, canEdit, busy, run }: { item: Item; canEdit: boolean; busy: string | null; run: (key: string, fn: () => Promise<unknown>, done?: (r: unknown) => string | null) => Promise<void> }) {
   const [caption, setCaption] = useState('');
   const [writing, setWriting] = useState(false);
+  const [media, setMedia] = useState<string[]>(item.draft.assetIds ?? []);
   const [when, setWhen] = useState('');
   const [reason, setReason] = useState('');
   const k = (a: string) => `${a}:${item.id}`;
@@ -488,6 +490,11 @@ function ItemCard({ item, canEdit, busy, run }: { item: Item; canEdit: boolean; 
         </p>
       ) : null}
       {item.draft.text ? <pre className="studio-caption small">{item.draft.text}</pre> : null}
+      {item.draft.assetIds?.length ? (
+        <p className="small muted">
+          {item.draft.assetIds.length} media file{item.draft.assetIds.length === 1 ? '' : 's'} attached{item.platform === 'instagram' && item.draft.assetIds.length > 1 ? ' (published as one carousel)' : ''}
+        </p>
+      ) : null}
       {item.validation.problems?.length ? (
         <ul className="small findings">
           {item.validation.problems.map((p) => (
@@ -510,11 +517,11 @@ function ItemCard({ item, canEdit, busy, run }: { item: Item; canEdit: boolean; 
           ) : null}
           {['brief', 'draft', 'validated', 'approved'].includes(item.stage) ? (
             <>
-              <button type="button" className="small-btn" disabled={disabled} onClick={() => void run(k('ai'), () => api('POST', `/v1/studio/items/${item.id}/draft`, {}))}>
+              <button type="button" className="small-btn" disabled={disabled} onClick={() => void run(k('ai'), () => api('POST', `/v1/studio/items/${item.id}/draft`, { assetIds: item.draft.assetIds ?? [] }))}>
                 Draft with AI
               </button>
               <button type="button" className="small-btn" onClick={() => setWriting(!writing)}>
-                Write caption
+                {item.draft.text ? 'Edit caption & media' : 'Write caption'}
               </button>
             </>
           ) : null}
@@ -549,13 +556,14 @@ function ItemCard({ item, canEdit, busy, run }: { item: Item; canEdit: boolean; 
       {writing ? (
         <div className="stack-xs">
           <textarea aria-label="Caption" rows={4} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="The call to action, link and hashtags are added from the brief." />
+          <MediaPicker platform={item.platform} value={media} onChange={setMedia} />
           <button
             type="button"
             className="small-btn"
             disabled={disabled || !caption.trim()}
             onClick={() =>
               void run(k('write'), async () => {
-                await api('POST', `/v1/studio/items/${item.id}/draft`, { caption, expectedVersion: item.version });
+                await api('POST', `/v1/studio/items/${item.id}/draft`, { caption, assetIds: media, expectedVersion: item.version });
                 setWriting(false);
               })
             }
@@ -565,5 +573,51 @@ function ItemCard({ item, canEdit, busy, run }: { item: Item; canEdit: boolean; 
         </div>
       ) : null}
     </li>
+  );
+}
+
+const MEDIA_HINT: Record<string, string> = {
+  facebook: 'Up to 10 images (a photo post cannot also carry a link preview).',
+  instagram: 'One image or video, or 2–10 for a carousel.',
+  tiktok: 'Exactly one video.',
+  youtube: 'Exactly one video.',
+  linkedin: 'Images are optional.',
+  x: 'Up to 4 images.',
+};
+
+/**
+ * Publish-eligible images and videos (rights recorded, not revoked) for a Studio draft, including
+ * licensed stock and rendered Video Studio files. Platform limits are checked again at validation.
+ */
+function MediaPicker({ platform, value, onChange }: { platform: string; value: string[]; onChange: (ids: string[]) => void }) {
+  const list = useApi<{ id: string; kind: string; title: string; publishEligible: boolean; origin?: string }[]>('/v1/assets');
+  const usable = (list.data ?? []).filter((a) => a.publishEligible && (a.kind === 'image' || a.kind === 'video'));
+  const toggle = (id: string, on: boolean) => onChange(on ? [...value, id].slice(0, 10) : value.filter((x) => x !== id));
+  return (
+    <fieldset className="stack-xs">
+      <legend className="small">
+        Media ({value.length} selected) — {MEDIA_HINT[platform] ?? 'Optional.'}
+      </legend>
+      {list.error ? <ErrorNotice error={list.error} /> : null}
+      {!list.data ? (
+        <LoadingRows label="Loading media…" />
+      ) : usable.length ? (
+        <div className="pick-list">
+          {usable.map((a) => (
+            <label key={a.id} className="small">
+              <input type="checkbox" checked={value.includes(a.id)} disabled={!value.includes(a.id) && value.length >= 10} onChange={(e) => toggle(a.id, e.target.checked)} /> {a.title}{' '}
+              <span className="muted">
+                ({a.kind}
+                {a.origin && a.origin !== 'upload' ? `, ${a.origin}` : ''})
+              </span>
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="small muted">
+          No publish-eligible media yet. Upload or render media with rights recorded in <a href="/app/assets">Asset studio</a>.
+        </p>
+      )}
+    </fieldset>
   );
 }

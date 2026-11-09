@@ -6,15 +6,19 @@ import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.
 import { buildApp } from '../../api/src/app.js';
 import { APP_CONVERSION_CALLS } from '../src/components/AppConversions.js';
 import { APP_INTELLIGENCE_CALLS } from '../src/components/AppIntelligence.js';
+import { ATTRIBUTION_CALLS } from '../src/components/AttributionReport.js';
 import { AUTOPILOT_CALLS } from '../src/components/Autopilot.js';
 import { BRAND_CALLS } from '../src/components/BrandStudio.js';
 import { CHANNEL_GROWTH_CALLS } from '../src/components/ChannelGrowth.js';
 import { CONNECTION_CALLS } from '../src/components/Connections.js';
 import { CONTENT_CALLS } from '../src/components/ContentStudio.js';
+import { PAYOUT_CALLS } from '../src/components/CreatorPayouts.js';
 import { REGISTRIES } from '../src/components/Governance.js';
 import { GROUND_TRUTH_CALLS } from '../src/components/GroundTruth.js';
 import { MEDIA_CALLS } from '../src/components/MediaStudio.js';
+import { CATALOG_CALLS } from '../src/components/ProductCatalog.js';
 import { READINESS_CALLS } from '../src/components/Readiness.js';
+import { SEARCH_CONSOLE_CALLS } from '../src/components/SearchConsole.js';
 import { UNIFIED_CALLS } from '../src/components/Shell.js';
 import { UNIVERSAL_CALLS } from '../src/components/UniversalStudio.js';
 import { allForms, SECTIONS } from '../src/lib/catalog.js';
@@ -85,6 +89,10 @@ function calls() {
   for (const c of MEDIA_CALLS) out.push({ where: 'media studio screen', method: c.method, path: c.path });
   for (const c of CHANNEL_GROWTH_CALLS) out.push({ where: 'channel growth screens', method: c.method, path: c.path });
   for (const c of READINESS_CALLS) out.push({ where: 'readiness screens', method: c.method, path: c.path });
+  for (const c of CATALOG_CALLS) out.push({ where: 'product catalog screen', method: c.method, path: c.path });
+  for (const c of PAYOUT_CALLS) out.push({ where: 'creator payouts screen', method: c.method, path: c.path });
+  for (const c of ATTRIBUTION_CALLS) out.push({ where: 'attribution report screen', method: c.method, path: c.path });
+  for (const c of SEARCH_CONSOLE_CALLS) out.push({ where: 'search console screen', method: c.method, path: c.path });
   return out;
 }
 

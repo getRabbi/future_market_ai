@@ -12,6 +12,8 @@ export const MEDIA_CALLS = [
   { method: 'GET', path: '/v1/media/stock/assets' },
   { method: 'POST', path: '/v1/media/stock/assets/:id/revoke' },
   { method: 'POST', path: '/v1/media/images/generate' },
+  { method: 'GET', path: '/v1/media/voice' },
+  { method: 'POST', path: '/v1/media/voiceovers' },
   { method: 'GET', path: '/v1/media/jobs' },
   { method: 'GET', path: '/v1/media/videos' },
   { method: 'POST', path: '/v1/media/videos' },
@@ -62,7 +64,7 @@ interface Job {
   assetId: string | null;
   costUsd: number | null;
   requestedAt: string;
-  request: { prompt?: string; externalId?: string; format?: string };
+  request: { prompt?: string; externalId?: string; format?: string; text?: string; voice?: string };
 }
 
 /**
@@ -75,6 +77,7 @@ export function MediaStudio() {
   const jobs = useApi<Job[]>('/v1/media/jobs');
   const stock = providers.data?.find((p) => p.id === 'stock-library');
   const ai = providers.data?.find((p) => p.id === 'ai-image-model');
+  const voice = providers.data?.find((p) => p.id === 'ai-voice-model');
   return (
     <div className="stack">
       <section className="card">
@@ -103,6 +106,7 @@ export function MediaStudio() {
       </section>
       {stock?.enabled ? <StockSearch onImported={() => void jobs.reload()} /> : null}
       {ai?.enabled ? <ImageRequest onQueued={() => void jobs.reload()} /> : null}
+      {voice?.enabled ? <VoiceoverRequest onQueued={() => void jobs.reload()} /> : null}
       <JobList jobs={jobs.data} onReload={() => void jobs.reload()} />
       <VideoStudio />
     </div>
@@ -247,6 +251,74 @@ function ImageRequest({ onQueued }: { onQueued: () => void }) {
   );
 }
 
+/**
+ * AI voiceover (P3-04): a script read by one of the approved model's synthetic stock voices. The
+ * result is an audio asset labelled AI-generated, usable as a Video Studio soundtrack.
+ */
+function VoiceoverRequest({ onQueued }: { onQueued: () => void }) {
+  const ready = useApi<{ model: { provider: string; modelId: string; usdPerMillionChars: number | null } | null; voices: string[]; maxCharacters: number | null }>('/v1/media/voice');
+  const [text, setText] = useState('');
+  const [voice, setVoice] = useState('');
+  const [error, setError] = useState<unknown>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const r = ready.data;
+  const chosen = voice || r?.voices[0] || '';
+  const est = r?.model?.usdPerMillionChars ? (text.length / 1_000_000) * r.model.usdPerMillionChars : null;
+  const go = async () => {
+    setError(null);
+    try {
+      await api('POST', '/v1/media/voiceovers', { text, voice: chosen });
+      setNote('Queued. The voiceover is labelled AI-generated; it appears under Media jobs and then as an audio asset for the Video Studio.');
+      setText('');
+      onQueued();
+    } catch (e) {
+      setError(e);
+    }
+  };
+  return (
+    <section className="card">
+      <header className="card-head">
+        <h2 className="card-title">AI voiceover</h2>
+        {r?.model ? (
+          <span className="small muted">
+            {r.model.provider}/{r.model.modelId}
+          </span>
+        ) : null}
+      </header>
+      {ready.error ? <ErrorNotice error={ready.error} /> : null}
+      {!r ? (
+        <LoadingRows />
+      ) : (
+        <>
+          <div className="field">
+            <label htmlFor="vo-text">Script</label>
+            <textarea id="vo-text" rows={4} maxLength={r.maxCharacters ?? 4096} value={text} onChange={(e) => setText(e.target.value)} />
+            <span className="help">
+              {text.length} / {r.maxCharacters ?? 4096} characters{est !== null ? ` · about $${est.toFixed(4)}` : ''}
+            </span>
+          </div>
+          <div className="field">
+            <label htmlFor="vo-voice">Voice (synthetic)</label>
+            <select id="vo-voice" value={chosen} onChange={(e) => setVoice(e.target.value)}>
+              {r.voices.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="small muted">Only the provider’s synthetic stock voices are offered: no voice cloning and no imitation of a real person. Publish it with the “AI-generated voice” disclosure.</p>
+          <ErrorNotice error={error} />
+          {note ? <p className="small">{note}</p> : null}
+          <button type="button" className="btn primary" disabled={!text.trim() || !chosen} onClick={() => void go()}>
+            Generate voiceover
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+
 function JobList({ jobs, onReload }: { jobs: Job[] | null; onReload: () => void }) {
   if (!jobs?.length) return null;
   return (
@@ -262,7 +334,7 @@ function JobList({ jobs, onReload }: { jobs: Job[] | null; onReload: () => void 
           <li key={j.id} className="row-item">
             <div className="row">
               <div className="small">
-                {j.kind === 'ai_image' ? `AI image: ${j.request.prompt ?? ''}` : `Stock ${j.request.externalId} (${j.request.format})`} · {relativeTime(j.requestedAt)}
+                {j.kind === 'ai_image' ? `AI image: ${j.request.prompt ?? ''}` : j.kind === 'voiceover' ? `AI voiceover (${j.request.voice ?? ''}): ${(j.request.text ?? '').slice(0, 80)}` : `Stock ${j.request.externalId} (${j.request.format})`} · {relativeTime(j.requestedAt)}
                 {j.costUsd !== null ? ` · $${j.costUsd.toFixed(2)}` : ''}
                 {j.statusReason ? <div className="muted">{j.statusReason}</div> : null}
               </div>

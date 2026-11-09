@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { api, type Me } from '../lib/api.js';
+import { api, downloadFile, type Me } from '../lib/api.js';
 import { relativeTime } from '../lib/format.js';
 import { Badge, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
 
 /** Every API call these screens make (checked against the API's routes in catalog.test.ts). */
 export const CHANNEL_GROWTH_CALLS = [
   { method: 'GET', path: '/v1/social/analytics' },
+  { method: 'GET', path: '/v1/social/analytics/export.csv' },
   { method: 'POST', path: '/v1/social/connections/:id/analytics/sync' },
   { method: 'GET', path: '/v1/ads/drafts' },
   { method: 'GET', path: '/v1/ads/creation-status' },
@@ -13,6 +14,8 @@ export const CHANNEL_GROWTH_CALLS = [
   { method: 'PUT', path: '/v1/ads/drafts/:id' },
   { method: 'POST', path: '/v1/ads/drafts/:id/submit' },
   { method: 'POST', path: '/v1/ads/drafts/:id/cancel' },
+  { method: 'GET', path: '/v1/ads/drafts/:id/optimizations' },
+  { method: 'POST', path: '/v1/ads/drafts/:id/optimizations/:key/propose' },
   { method: 'GET', path: '/v1/connections' },
   { method: 'GET', path: '/v1/brands' },
   { method: 'GET', path: '/v1/assets' },
@@ -41,6 +44,17 @@ export function SocialAnalytics({ me }: { me: Me }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const canSync = me.roles.some((r) => ['owner', 'admin', 'growth_operator', 'analyst'].includes(r));
+  const [exported, setExported] = useState<string | null>(null);
+  const exportCsv = async () => {
+    setError(null);
+    setExported(null);
+    try {
+      const r = await downloadFile('/v1/social/analytics/export.csv?days=90', 'social-analytics.csv');
+      setExported(`Downloaded ${r.filename}.`);
+    } catch (e) {
+      setError(e);
+    }
+  };
   const sync = async (id: string) => {
     setError(null);
     setBusy(id);
@@ -58,7 +72,19 @@ export function SocialAnalytics({ me }: { me: Me }) {
   if (!report.data.length) return <EmptyState title="No Instagram, TikTok, YouTube or LinkedIn results yet">Connect an account in Connections; results are imported daily once posts are verified on the platform.</EmptyState>;
   return (
     <section className="stack" aria-label="Social platform results">
-      <p className="small muted">Each platform counts differently (a TikTok view is not a YouTube view), so results are shown per platform and never added together.</p>
+      <div className="row">
+        <p className="small muted">Each platform counts differently (a TikTok view is not a YouTube view), so results are shown per platform and never added together.</p>
+        {canSync ? (
+          <button type="button" className="small-btn" onClick={() => void exportCsv()}>
+            Download CSV (90 days)
+          </button>
+        ) : null}
+      </div>
+      {exported ? (
+        <p className="small" role="status">
+          {exported} One row per platform, metric and day in the platform’s own definitions; empty values were not returned by the platform.
+        </p>
+      ) : null}
       <ErrorNotice error={error} />
       {report.data.map((p) => (
         <article key={p.platform} className="card">
@@ -243,6 +269,7 @@ export function CampaignDrafts({ me }: { me: Me }) {
                   ) : null}
                 </div>
               </div>
+              {d.status === 'created' ? <Optimizations draftId={d.id} canPropose={canEdit || me.roles.includes('finance_approver')} /> : null}
             </li>
           ))}
         </ul>
@@ -462,6 +489,82 @@ function DraftForm({ draft, onSaved }: { draft: DraftRow | null; onSaved: () => 
       <button type="button" className="btn primary" disabled={!connectionId || !name || !start || !end} onClick={() => void save()}>
         Save draft and check it
       </button>
+    </div>
+  );
+}
+
+interface Suggestion {
+  key: string;
+  kind: 'status' | 'budget';
+  title: string;
+  rationale: string;
+  startsSpend: boolean;
+  proposal: { status?: string; newDailyBudgetMicros?: number };
+}
+
+/**
+ * Optimisation suggestions for a created campaign (P3-06): computed by the server from synced
+ * platform data; choosing one only proposes it through M23 (finance approval with two-factor).
+ */
+function Optimizations({ draftId, canPropose }: { draftId: string; canPropose: boolean }) {
+  const [open, setOpen] = useState(false);
+  const data = useApi<{ campaign: { status: string } | null; suggestions: Suggestion[]; note: string }>(open ? `/v1/ads/drafts/${draftId}/optimizations` : null);
+  const [error, setError] = useState<unknown>(null);
+  const [done, setDone] = useState<Record<string, string>>({});
+  const propose = async (s: Suggestion) => {
+    setError(null);
+    try {
+      const a = await api<{ id: string; status: string }>('POST', `/v1/ads/drafts/${draftId}/optimizations/${s.key}/propose`);
+      setDone((x) => ({ ...x, [s.key]: a.id }));
+    } catch (e) {
+      setError(e);
+    }
+  };
+  return (
+    <div className="stack-xs">
+      <button type="button" className="link-btn small" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Hide optimisation suggestions' : 'Optimisation suggestions'}
+      </button>
+      {open ? (
+        data.error ? (
+          <ErrorNotice error={data.error} />
+        ) : !data.data ? (
+          <LoadingRows />
+        ) : (
+          <>
+            {data.data.suggestions.length ? (
+              <ul className="row-list">
+                {data.data.suggestions.map((s) => (
+                  <li key={s.key} className="row-item">
+                    <div className="row">
+                      <div>
+                        <strong>{s.title}</strong>
+                        <div className="small muted">{s.rationale}</div>
+                        {s.startsSpend ? <div className="small">Turning it on starts spending; the approval reserves one day of budget.</div> : null}
+                      </div>
+                      <div className="row-actions">
+                        {done[s.key] ? (
+                          <a className="small-btn" href={`/app/approvals?id=${done[s.key]}`}>
+                            Waiting for approval
+                          </a>
+                        ) : canPropose ? (
+                          <button type="button" className="small-btn" onClick={() => void propose(s)}>
+                            Propose for approval
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="small muted">No suggestion right now.</p>
+            )}
+            <p className="small muted">{data.data.note}</p>
+            <ErrorNotice error={error} />
+          </>
+        )
+      ) : null}
     </div>
   );
 }

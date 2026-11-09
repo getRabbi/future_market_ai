@@ -228,7 +228,7 @@ test('an owner turns the Autopilot on and starts a goal from one sentence; the w
   await page.goto('/app/advanced');
   await expect(page).toHaveURL(/\/app\/tools$/);
   await expect(page.getByRole('heading', { level: 1, name: 'All tools' })).toBeVisible();
-  await expect(page.locator('.tool-card')).toHaveCount(37);
+  await expect(page.locator('.tool-card')).toHaveCount(41);
   await page.goto('/app/?view=goals');
   await expect(page).toHaveURL(/\/app\/goals$/);
   await page.goto('/app/brain');
