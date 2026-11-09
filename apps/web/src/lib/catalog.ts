@@ -372,6 +372,41 @@ export const SECTIONS: Section[] = [
     summary: 'Trends against their baselines, lawful competitor monitoring and a ranked backlog of growth ideas.',
     resources: [
       {
+        title: 'Competitor discovery',
+        list: '/v1/competitors/discovery',
+        rows: (r) => (Array.isArray((r as Row).settings) ? ((r as Row).settings as Row[]).map((s: Row) => ({ ...s, id: s.brandId })) : []),
+        columns: ['brandId', 'enabled', 'country', 'intervalHours', 'lastAttemptAt'],
+        empty: 'Discovery is off. An owner or legal approver with two-factor must approve App Store API metadata use. Google Play and web search have no approved adapter.',
+        create: {
+          label: 'Configure discovery (legal)',
+          path: '/v1/competitors/discovery',
+          method: 'PUT',
+          form: {
+            fields: [
+              { key: 'brandId', type: 'record', label: 'Brand', required: true, source: { list: '/v1/brands', label: (r) => String(r.name), empty: 'Create a brand first.', href: '/app/brands' } },
+              { key: 'enabled', type: 'toggle', label: 'Enable recurring discovery', initial: false },
+              { key: 'country', type: 'text', label: 'Store country (two uppercase letters)', required: true, initial: 'US' },
+              { key: 'intervalHours', type: 'number', label: 'Interval (hours, 24-720)', initial: 168 },
+              { key: 'lawfulBasisNote', type: 'textarea', label: 'Legal review of Apple Search API terms and metadata use', required: true, minLength: 20, maxLength: 2000 },
+            ],
+          },
+          success: () => ok('Discovery settings saved.', 'Monitoring pages still require separate source approval.'),
+        },
+        rowActions: [{ label: 'Queue discovery', path: '/v1/competitors/discovery/:id/run', done: 'Queued; approval and interval will be checked before searching.' }],
+      },
+      {
+        title: 'Discovery rankings and review',
+        list: '/v1/competitors/discovery',
+        rows: (r) => (Array.isArray((r as Row).candidates) ? ((r as Row).candidates as Row[]) : []),
+        columns: ['name', 'category', 'score', 'confidence', 'reasons', 'status', 'url', 'evidenceId'],
+        empty: 'No discovered candidates. Scores are relevance heuristics, not store rank or market share.',
+        rowActions: [
+          { label: 'Enroll', path: '/v1/competitors/candidates/:id/review', body: { decision: 'enroll' }, when: { field: 'status', values: ['review'] }, done: 'Enrolled; proposed sources await legal approval.' },
+          { label: 'Reject', path: '/v1/competitors/candidates/:id/review', body: { decision: 'reject' }, when: { field: 'status', values: ['review'] }, done: 'Candidate rejected.' },
+        ],
+      },
+      { title: 'Discovery history', list: '/v1/competitors/discovery', rows: (r) => (Array.isArray((r as Row).runs) ? ((r as Row).runs as Row[]) : []), columns: ['createdAt', 'query', 'provider', 'status', 'resultCount', 'note'], empty: 'No discovery runs yet.' },
+      {
         title: 'Ideas',
         list: '/v1/ideas',
         columns: ['title', 'status', 'evidenceStrength', 'score', 'createdAt'],
@@ -442,6 +477,7 @@ export const SECTIONS: Section[] = [
         ],
       },
       { title: 'Competitor observations', list: '/v1/competitors/observations', columns: ['kind', 'summary', 'isInference', 'observedAt'], empty: 'Nothing observed yet.' },
+      { title: 'Competitor comparison', list: '/v1/competitors/comparison', columns: ['competitor', 'observations', 'opportunities', 'monitoring', 'note'], empty: 'No monitored competitor evidence yet.' },
       { title: 'Feature gaps', list: '/v1/competitors/gaps', empty: 'No feature gaps found yet.' },
       { title: 'Trends', list: '/v1/market/trends', columns: ['direction', 'magnitude', 'pValue', 'detectedAt'], empty: 'No trends detected yet. They appear once metric series have enough history.' },
       { title: 'Topics', list: '/v1/market/topics', columns: ['label', 'size', 'terms', 'createdAt'], empty: 'No topics yet.' },

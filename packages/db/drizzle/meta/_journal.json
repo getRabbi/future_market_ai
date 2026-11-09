@@ -169,6 +169,13 @@
       "when": 1794170430040,
       "tag": "0023_voiceover",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794217787629,
+      "tag": "0024_competitor_discovery",
+      "breakpoints": true
     }
   ]
 }

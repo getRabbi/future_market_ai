@@ -9,11 +9,12 @@ import { runAgent } from '../../agents.js';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, normalizeText, record, requireMfa, requireRole } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
+import { raiseAlert } from '../m24-governance/index.js';
 
 const USER_AGENT = 'FUTUREGROW-Collector/0.1 (+https://futuregrow.invalid/bot)';
 const LEGAL_ROLES = ['owner', 'legal_approver'] as const;
 
-export type PublicFetcher = (url: string, opts: { maxBytes?: number; timeoutMs?: number; userAgent?: string }) => Promise<PublicFetchResult>;
+export type PublicFetcher = (url: string, opts: { maxBytes?: number; timeoutMs?: number; userAgent?: string; maxRedirects?: number }) => Promise<PublicFetchResult>;
 
 /* ------------------------------------------------------------------ */
 /* Competitors and the lawful-source allowlist (D-019)                 */
@@ -113,7 +114,7 @@ export async function crawlSource(deps: CoreDeps & { fetchPublic?: PublicFetcher
   const url = new URL(src.url);
   let robotsOk = true;
   try {
-    const robots = await fetcher(`${url.origin}/robots.txt`, { maxBytes: 512 * 1024, userAgent: USER_AGENT });
+    const robots = await fetcher(`${url.origin}/robots.txt`, { maxBytes: 512 * 1024, userAgent: USER_AGENT, maxRedirects: 0 });
     if (robots.status >= 200 && robots.status < 300) robotsOk = parseRobots(robots.body, USER_AGENT).isAllowed(`${url.pathname}${url.search}`);
     else if (robots.status >= 500) return { status: 'fetch_failed', detail: `robots.txt returned ${robots.status}; not crawling` };
     // 4xx => no robots policy => allowed (RFC 9309 §2.3.1.3)
@@ -126,7 +127,7 @@ export async function crawlSource(deps: CoreDeps & { fetchPublic?: PublicFetcher
   }
   let page: PublicFetchResult;
   try {
-    page = await fetcher(src.url, { userAgent: USER_AGENT });
+    page = await fetcher(src.url, { userAgent: USER_AGENT, maxRedirects: 0 });
   } catch (err) {
     return { status: 'fetch_failed', detail: err instanceof Error ? err.message : String(err) };
   }
@@ -134,6 +135,8 @@ export async function crawlSource(deps: CoreDeps & { fetchPublic?: PublicFetcher
   const extracted = extractPage(page.body);
 
   return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
+    const [approved] = await tx.select().from(competitorSources).where(eq(competitorSources.id, src.id)).for('update');
+    if (approved?.status !== 'approved') return { status: 'not_approved' as const };
     await tx.update(competitorSources).set({ lastRobotsAllowed: true, lastFetchedAt: now }).where(eq(competitorSources.id, src.id));
     const [prev] = await tx.select().from(competitorSnapshots).where(eq(competitorSnapshots.sourceId, src.id)).orderBy(desc(competitorSnapshots.fetchedAt)).limit(1);
     if (prev && prev.contentSha256 === page.sha256) return { status: 'unchanged' as const, snapshotId: prev.id };
@@ -156,7 +159,7 @@ export async function crawlSource(deps: CoreDeps & { fetchPublic?: PublicFetcher
       now,
     });
     const diff = prev ? diffLines(prev.textExcerpt, extracted.text.slice(0, 50_000)) : null;
-    const prevPrices = priceSet(((prev?.extracted as { prices?: string[] }) ?? {}).prices ?? []);
+    const prevPrices = priceSet((prev?.extracted as { prices?: string[] } | undefined)?.prices ?? []);
     const curPrices = priceSet(extracted.prices);
     const [snap] = await tx
       .insert(competitorSnapshots)
@@ -193,13 +196,13 @@ export async function crawlSource(deps: CoreDeps & { fetchPublic?: PublicFetcher
       }
       const prevHeads = new Set(((prev.extracted as { headings?: { text: string }[] }).headings ?? []).map((h) => h.text));
       const newHeads = extracted.headings.filter((h) => !prevHeads.has(h.text)).map((h) => h.text);
-      if (newHeads.length) {
+      if (newHeads.length || diff?.added.length || diff?.removed.length) {
         await tx.insert(competitorObservations).values({
           tenantId,
           competitorId: src.competitorId,
           kind: src.kind === 'changelog' ? 'release' : 'content_change',
-          summary: `New sections on ${url.pathname}: ${newHeads.slice(0, 5).join(' | ')}`,
-          details: { headings: newHeads, url: page.finalUrl },
+          summary: newHeads.length ? `New sections on ${url.pathname}: ${newHeads.slice(0, 5).join(' | ')}` : `${src.kind} text changed on ${url.pathname}; review the evidence before interpreting the change.`,
+          details: { headings: newHeads, url: page.finalUrl, sourceKind: src.kind },
           evidenceFlag: 'P',
           evidenceIds: [prev.evidenceId, ev.evidenceId],
           confidence: 1,
@@ -209,6 +212,7 @@ export async function crawlSource(deps: CoreDeps & { fetchPublic?: PublicFetcher
       }
     }
     await record(tx, tenantId, actor, 'competitor.snapshot.captured', { type: 'competitor_snapshot', id: snap!.id }, { sourceId: src.id, sha256: page.sha256, observations });
+    if (observations) await raiseAlert(tx, tenantId, { kind: 'competitor.changed', severity: 'info', message: `${observations} observed changes on ${src.url}`, refs: { competitorId: src.competitorId, snapshotId: snap!.id, evidenceId: ev.evidenceId }, dedupKey: `competitor-change:${src.id}:${page.sha256}` });
     return { status: 'captured' as const, snapshotId: snap!.id, observations };
   });
 }
@@ -358,4 +362,23 @@ export async function listCompetitors(tx: DbOrTx) {
   return cs.map((c) => ({ ...c, sources: sources.filter((s) => s.competitorId === c.id) }));
 }
 
+/** Side-by-side evidence, including snippet-verified AI inferences; unknowns stay unknown. */
+export async function comparison(tx: DbOrTx) {
+  const cs = await listCompetitors(tx);
+  const observations = await listObservations(tx);
+  const gaps = await featureGaps(tx);
+  return cs.slice(0, 50).map((c) => ({
+    id: c.id,
+    competitor: c.name,
+    observations: observations
+      .filter((o) => o.competitorId === c.id)
+      .slice(0, 20)
+      .map((o) => ({ kind: o.kind, summary: o.summary, flag: o.evidenceFlag, confidence: o.confidence, evidenceIds: o.evidenceIds, observedAt: o.observedAt })),
+    opportunities: gaps.filter((g) => g.competitorId === c.id),
+    monitoring: c.sources.map((s) => ({ url: s.url, status: s.status, lastFetchedAt: s.lastFetchedAt })),
+    note: 'Gaps and AI observations are hypotheses to verify. No market rank, install estimate or causal advantage is inferred.',
+  }));
+}
+
+export * as discovery from './discovery.js';
 export * as sandbox from './sandbox.js';
