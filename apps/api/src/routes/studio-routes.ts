@@ -26,6 +26,11 @@ export function registerStudioRoutes(app: FastifyInstance, ctx: ApiContext): voi
     reply.status(201).send(await offersModule.proposeShopifyDiscount(deps, tenantOf(req), actorOf(req), req.params.id, req.body)),
   );
   r.post('/v1/offers/connections/:id/catalog/sync', { schema: { tags: ['offers'], params: Id } }, async (req) => offersModule.catalog.syncShopifyCatalog(deps, tenantOf(req), req.params.id, { actor: actorOf(req) }));
+  r.get('/v1/offers/catalog', { schema: { tags: ['offers'] } }, async (req) => tenantTx(ctx, req, (tx) => offersModule.catalog.catalogOverview(tx, deps.clock.now())));
+  r.get('/v1/offers/catalog/products/:id', { schema: { tags: ['offers'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => offersModule.catalog.catalogProduct(tx, req.params.id, deps.clock.now())));
+  r.put('/v1/offers/catalog/products/:id/brand', { schema: { tags: ['offers'], params: Id, body: z.object({ brandId: z.string().uuid(), linked: z.boolean(), expectedVersion: z.number().int().min(1) }).strict() } }, async (req) =>
+    tenantTx(ctx, req, (tx) => offersModule.catalog.setProductBrand(tx, tenantOf(req), actorOf(req), req.params.id, req.body)),
+  );
   r.get('/v1/offers/cro', { schema: { tags: ['offers'] } }, async (req) => tenantTx(ctx, req, (tx) => offersModule.listCro(tx)));
   r.post('/v1/offers/cro', { schema: { tags: ['offers'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => offersModule.createCroHypothesis(tx, tenantOf(req), actorOf(req), req.body))));
 

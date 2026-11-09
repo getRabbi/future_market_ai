@@ -22,6 +22,16 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.post('/v1/social/caption-check', { schema: { tags: ['social'], body: z.object({ platform: z.enum(social.PLATFORMS), caption: z.string().min(1).max(70_000), link: z.string().url().nullable().optional(), images: z.number().int().min(0).max(20).optional() }).strict() } }, async (req) =>
     social.checkCaption(req.body.platform, req.body.caption, { link: req.body.link ?? null, images: req.body.images ?? 0 }),
   );
+  r.get(
+    '/v1/social/analytics/export.csv',
+    { schema: { tags: ['social'], querystring: z.object({ brandId: z.string().uuid().optional(), platform: z.enum(['instagram', 'tiktok', 'youtube', 'linkedin']).optional(), days: z.coerce.number().int().min(1).max(365).optional() }) }, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const out = await tenantTx(ctx, req, (tx) =>
+        social.analytics.socialAnalyticsCsv(tx, tenantOf(req), actorOf(req), deps.clock.now(), { ...(req.query.brandId ? { brandId: req.query.brandId } : {}), ...(req.query.platform ? { platform: req.query.platform } : {}), ...(req.query.days ? { days: req.query.days } : {}) }),
+      );
+      return reply.type('text/csv; charset=utf-8').header('content-disposition', `attachment; filename="${out.filename}"`).header('cache-control', 'no-store').send(out.csv);
+    },
+  );
   r.get('/v1/social/analytics', { schema: { tags: ['social'], querystring: z.object({ brandId: z.string().uuid().optional() }) } }, async (req) => tenantTx(ctx, req, (tx) => social.analytics.socialAnalyticsReport(tx, deps.clock.now(), req.query.brandId ? { brandId: req.query.brandId } : {})));
   r.post('/v1/social/connections/:id/analytics/sync', { schema: { tags: ['social'], params: Id } }, async (req) => social.analytics.syncSocialAnalytics(deps, tenantOf(req), req.params.id, { actor: actorOf(req) }));
   r.get('/v1/social/interactions', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.listInteractions(tx)));
@@ -55,6 +65,10 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.put('/v1/ads/drafts/:id', { schema: { tags: ['ads'], params: Id, body: Body } }, async (req) => tenantTx(ctx, req, (tx) => C.saveCampaignDraft(tx, deps, tenantOf(req), actorOf(req), req.body, req.params.id)));
   r.post('/v1/ads/drafts/:id/submit', { schema: { tags: ['ads'], params: Id } }, async (req, reply) => reply.status(201).send(await C.submitCampaignDraft(deps, tenantOf(req), actorOf(req), req.params.id)));
   r.post('/v1/ads/drafts/:id/cancel', { schema: { tags: ['ads'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => C.cancelCampaignDraft(tx, tenantOf(req), actorOf(req), req.params.id)));
+  r.get('/v1/ads/drafts/:id/optimizations', { schema: { tags: ['ads'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => paidMedia.optimization.optimizationSuggestions(tx, req.params.id, deps.clock.now())));
+  r.post('/v1/ads/drafts/:id/optimizations/:key/propose', { schema: { tags: ['ads'], params: z.object({ id: z.string().uuid(), key: z.enum(['turn_on', 'pause_cap_reached', 'pause_ended', 'pause_no_clicks', 'pause_low_ctr', 'pace_to_cap']) }) } }, async (req, reply) =>
+    reply.status(201).send(await paidMedia.optimization.proposeOptimization(deps, tenantOf(req), actorOf(req), req.params.id, req.params.key)),
+  );
   r.get('/v1/ads/reconciliations', { schema: { tags: ['ads'] } }, async (req) => tenantTx(ctx, req, (tx) => paidMedia.listReconciliations(tx)));
   r.post('/v1/ads/campaigns/:id/budget', { schema: { tags: ['ads'], params: Id, body: Body } }, async (req, reply) => reply.status(201).send(await paidMedia.proposeBudgetChange(deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
   r.post('/v1/ads/campaigns/:id/status', { schema: { tags: ['ads'], params: Id, body: z.object({ status: z.enum(['PAUSED', 'ACTIVE']), geographies: Geos, evidenceIds: z.array(z.string().uuid()).default([]), rationale: z.string().min(10).max(2000) }) } }, async (req, reply) =>
@@ -65,15 +79,23 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.get('/v1/seo/audits', { schema: { tags: ['seo'] } }, async (req) => tenantTx(ctx, req, (tx) => discovery.listAudits(tx)));
   r.post('/v1/seo/audits', { schema: { tags: ['seo'], body: Body } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => discovery.requestSeoAudit(tx, deps, tenantOf(req), actorOf(req), req.body))));
   r.get('/v1/seo/audits/:id', { schema: { tags: ['seo'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => discovery.auditDetail(tx, req.params.id)));
-  r.get('/v1/seo/opportunities/grounded', { schema: { tags: ['seo'], querystring: z.object({ minImpressions: z.coerce.number().int().min(1).max(1_000_000).optional() }) } }, async (req) =>
-    tenantTx(ctx, req, (tx) => discovery.groundedSeoOpportunities(tx, req.query.minImpressions ? { minImpressions: req.query.minImpressions } : {})),
+  const PeriodQuery = z.object({ siteUrl: z.string().min(4).max(500).optional(), periodStart: Day.optional(), periodEnd: Day.optional() });
+  const periodOf = (q: { periodStart?: string | undefined; periodEnd?: string | undefined }) => (q.periodStart && q.periodEnd ? { period: { start: q.periodStart, end: q.periodEnd } } : {});
+  r.get('/v1/seo/opportunities/grounded', { schema: { tags: ['seo'], querystring: PeriodQuery.extend({ minImpressions: z.coerce.number().int().min(1).max(1_000_000).optional() }) } }, async (req) =>
+    tenantTx(ctx, req, (tx) => discovery.groundedSeoOpportunities(tx, { ...(req.query.minImpressions ? { minImpressions: req.query.minImpressions } : {}), ...(req.query.siteUrl ? { siteUrl: req.query.siteUrl } : {}), ...periodOf(req.query) })),
   );
-  r.post('/v1/seo/opportunities/ideas', { schema: { tags: ['seo'], body: z.object({ limit: z.number().int().min(1).max(10).default(5) }).default({ limit: 5 }) } }, async (req) => tenantTx(ctx, req, (tx) => discovery.proposeSeoIdeas(tx, deps, tenantOf(req), actorOf(req), req.body)));
+  r.post('/v1/seo/opportunities/ideas', { schema: { tags: ['seo'], body: PeriodQuery.extend({ limit: z.number().int().min(1).max(10).default(5) }).default({ limit: 5 }) } }, async (req) =>
+    tenantTx(ctx, req, (tx) => discovery.proposeSeoIdeas(tx, deps, tenantOf(req), actorOf(req), { limit: req.body.limit, ...(req.body.siteUrl ? { siteUrl: req.body.siteUrl } : {}), ...periodOf(req.body) })),
+  );
   r.post('/v1/seo/keywords/upload', { schema: { tags: ['seo'], body: Body } }, async (req) => tenantTx(ctx, req, (tx) => discovery.uploadKeywordMetrics(tx, tenantOf(req), actorOf(req), req.body)));
-  r.post('/v1/seo/search-console/sync', { schema: { tags: ['seo'], body: z.object({ connectionId: z.string().uuid(), siteUrl: z.string().min(4), startDate: Day, endDate: Day }) } }, async (req) => {
+  r.post('/v1/seo/search-console/sync', { schema: { tags: ['seo'], body: z.object({ connectionId: z.string().uuid(), siteUrl: z.string().min(4).optional(), startDate: Day, endDate: Day }) }, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
     paidMedia.requireOperator(actorOf(req));
-    return discovery.syncSearchConsole(deps, tenantOf(req), req.body.connectionId, req.body);
+    return discovery.syncSearchConsole(deps, tenantOf(req), req.body.connectionId, { ...req.body, trigger: 'manual' });
   });
+  r.get('/v1/seo/search-console', { schema: { tags: ['seo'] } }, async (req) => tenantTx(ctx, req, (tx) => discovery.searchConsole.searchConsoleOverview(tx, deps.clock.now())));
+  r.get('/v1/seo/search-console/performance', { schema: { tags: ['seo'], querystring: discovery.searchConsole.PerformanceQuerySchema } }, async (req) => tenantTx(ctx, req, (tx) => discovery.searchConsole.searchPerformance(tx, req.query)));
+  r.get('/v1/seo/search-console/:id/properties', { schema: { tags: ['seo'], params: Id }, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => discovery.searchConsole.listProperties(deps, tenantOf(req), actorOf(req), req.params.id));
+  r.put('/v1/seo/search-console/:id/property', { schema: { tags: ['seo'], params: Id, body: z.object({ siteUrl: z.string().min(4).max(500) }).strict() } }, async (req) => discovery.searchConsole.selectProperty(deps, tenantOf(req), actorOf(req), req.params.id, req.body.siteUrl));
   r.get('/v1/seo/opportunities', { schema: { tags: ['seo'], querystring: z.object({ minImpressions: z.coerce.number().int().min(1).default(100) }) } }, async (req) => tenantTx(ctx, req, (tx) => discovery.keywordOpportunities(tx, { minImpressions: req.query.minImpressions })));
   r.post('/v1/aso/validate', { schema: { tags: ['aso'], body: z.object({ store: z.enum(['app_store', 'google_play']), fields: z.record(z.string(), z.string()) }) } }, async (req) => ({
     checks: discovery.validateListingFields(req.body.store, req.body.fields),
@@ -91,6 +113,7 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.get('/v1/app/applications', { schema: { tags: ['app'] } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.listApplications(tx)));
   r.get('/v1/app/campaigns', { schema: { tags: ['app'], querystring: appGrowth.CampaignQuerySchema } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.campaignConversions(tx, req.query, deps.clock.now())));
   r.get('/v1/app/attribution', { schema: { tags: ['app'], querystring: appGrowth.attribution.AttributionQuerySchema } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.attribution.attributionReport(tx, req.query, deps.clock.now())));
+  r.get('/v1/app/attribution/apps', { schema: { tags: ['app'] } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.attribution.attributionApps(tx)));
   r.get('/v1/app/cohorts', { schema: { tags: ['app'], querystring: z.object({ from: z.string().datetime({ offset: true }), to: z.string().datetime({ offset: true }), activationEvent: z.string().min(1).max(200) }) } }, async (req) =>
     tenantTx(ctx, req, (tx) => appGrowth.acquisitionCohorts(tx, { from: new Date(req.query.from), to: new Date(req.query.to), activationEvent: req.query.activationEvent })),
   );
@@ -146,6 +169,8 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.get('/v1/creators/:id/payout-readiness', { schema: { tags: ['creators'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.payoutReadiness(tx, req.params.id, deps.clock.now())));
   r.put('/v1/creators/:id/payout-profile', { schema: { tags: ['creators'], params: Id, body: Body } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.setPayoutProfile(tx, tenantOf(req), actorOf(req), req.params.id, req.body)));
   r.get('/v1/creators/payout-requests', { schema: { tags: ['creators'] } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.listPayoutRequests(tx)));
+  r.get('/v1/creators/payouts/overview', { schema: { tags: ['creators'] } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.payoutsOverview(tx, actorOf(req), deps.clock.now())));
+  r.get('/v1/creators/:id/ledger', { schema: { tags: ['creators'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.creatorLedger(tx, actorOf(req), req.params.id)));
   r.post('/v1/creators/payout-requests/:id/dispute', { schema: { tags: ['creators'], params: Id, body: z.object({ reason: z.string().min(5).max(1000) }) } }, async (req) => tenantTx(ctx, req, (tx) => creatorsModule.payouts.recordPayoutDispute(tx, tenantOf(req), actorOf(req), req.params.id, req.body.reason)));
   r.post('/v1/creators/:id/payout', { schema: { tags: ['creators'], params: Id } }, async (req, reply) => reply.status(201).send(await creatorsModule.proposePayout(deps, tenantOf(req), actorOf(req), req.params.id)));
 }

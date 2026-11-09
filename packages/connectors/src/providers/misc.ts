@@ -34,6 +34,19 @@ export async function searchConsoleQuery(ctx: ConnectorContext, siteUrl: string,
   return out;
 }
 
+export interface SearchConsoleSite {
+  siteUrl: string;
+  permissionLevel: string;
+}
+
+/** Properties the authorized user can see (read-only sites.list). Unverified entries stay in the list, marked by their permission level. */
+export async function searchConsoleSites(ctx: ConnectorContext): Promise<SearchConsoleSite[]> {
+  if (ctx.credentials.provider !== 'search_console') throw new Error('search_console credentials required');
+  const token = await googleAccessToken(ctx.http, ctx.endpoints.googleOAuth, ctx.credentials);
+  const res = await ctx.http.request<{ siteEntry?: SearchConsoleSite[] }>({ method: 'GET', url: `${ctx.endpoints.searchConsole}/sites`, headers: { authorization: `Bearer ${token}` }, idempotent: true });
+  return (res.data.siteEntry ?? []).map((s) => ({ siteUrl: s.siteUrl, permissionLevel: s.permissionLevel }));
+}
+
 /* --------------------------- PostHog capture (M02 forwarding) --------------------------- */
 
 export interface PosthogEvent {

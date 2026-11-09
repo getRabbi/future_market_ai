@@ -37,7 +37,7 @@ export { clearGoogleTokenCache, createCampaignOperations, gaqlSearch, googleAcce
 export * from './providers/google-play.js';
 export { fromLittle, toLittle } from './providers/linkedin.js';
 export { fetchPageInsights, fetchPagePosts, fetchPageProfile, fgTag, PAGE_INSIGHT_METRICS, PAGE_POST_METRICS, type PageInsightMetricResult, type PagePostCounter, type PagePostMetric, type PagePostObservation, type PageProfile } from './providers/meta.js';
-export { type ChatwootInbox, chatwootCreateHandoff, chatwootListInboxes, chatwootPostMessage, type PosthogEvent, posthogCaptureBatch, searchConsoleQuery } from './providers/misc.js';
+export { type ChatwootInbox, chatwootCreateHandoff, chatwootListInboxes, chatwootPostMessage, type PosthogEvent, posthogCaptureBatch, type SearchConsoleSite, searchConsoleQuery, searchConsoleSites } from './providers/misc.js';
 export * from './providers/money.js';
 export { mapPaypalBatchStatus, type PayoutItem, type PayoutParams, type PayoutStatus, paypalAmount, paypalReadBatch } from './providers/paypal.js';
 export { bestVideoFile, PEXELS_LICENSE, pexelsDownload, pexelsGet, pexelsSearch, photoDownloadUrl, type StockCandidate, type StockSearchQuery, type StockSearchResult } from './providers/pexels.js';
