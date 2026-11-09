@@ -161,7 +161,7 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
       const a = actorOf(req);
       if (!a.roles.some((r) => r === 'owner' || r === 'admin')) throw new FgError('FORBIDDEN', 'only owners and admins can see webhook URLs', 403);
       const [c] = (await connectionsModule.listConnections(tx)).filter((x) => x.id === req.params.id);
-      if (!c || c.provider !== 'chatwoot') throw new FgError('INVALID', 'webhook URLs are issued for Chatwoot connections', 400);
+      if (c?.provider !== 'chatwoot') throw new FgError('INVALID', 'webhook URLs are issued for Chatwoot connections', 400);
       return { url: `${deps.config.apiBaseUrl.replace(/\/$/, '')}/webhooks/chatwoot/${c.id}/${conversationsModule.chatwootWebhookToken(deps.config.identifierPepper, c.id)}`, events: ['message_created', 'conversation_status_changed'] };
     }),
   );

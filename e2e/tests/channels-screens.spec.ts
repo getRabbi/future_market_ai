@@ -116,20 +116,17 @@ async function seed() {
     }
 
     // Search Console: one connection reading sc-domain:e2e.example, one imported 7-day period.
-    await db.query(
-      `insert into connections (tenant_id, provider, external_account_id, display_name, metadata, created_by) values ($1, 'search_console', 'sc-domain:e2e.example', 'E2E Search Console', $2, 'e2e')`,
-      [org, JSON.stringify({ siteUrl: 'sc-domain:e2e.example', permissionLevel: 'siteOwner', searchConsoleSync: { status: 'ok', at: new Date().toISOString(), rows: 3, period: { start: '2026-10-28', end: '2026-11-03' }, trigger: 'scheduled' } })],
-    );
+    await db.query(`insert into connections (tenant_id, provider, external_account_id, display_name, metadata, created_by) values ($1, 'search_console', 'sc-domain:e2e.example', 'E2E Search Console', $2, 'e2e')`, [
+      org,
+      JSON.stringify({ siteUrl: 'sc-domain:e2e.example', permissionLevel: 'siteOwner', searchConsoleSync: { status: 'ok', at: new Date().toISOString(), rows: 3, period: { start: '2026-10-28', end: '2026-11-03' }, trigger: 'scheduled' } }),
+    ]);
     const sc = await evidence('google_search_console', 'search-console://sc-domain:e2e.example/2026-10-28..2026-11-03@e2e', { rows: 3, siteUrl: 'sc-domain:e2e.example' });
     for (const [query, page, impressions, clicks, pos] of [
       ['e2e coffee beans', 'https://e2e.example/beans', 900, 9, 7.5],
       ['e2e coffee', 'https://e2e.example/', 400, 160, 1.2],
       ['how to brew e2e', 'https://e2e.example/brew', 300, 30, 11],
     ] as const)
-      await db.query(
-        `insert into keyword_metrics (tenant_id, query, page_url, period_start, period_end, impressions, clicks, position, source, evidence_id) values ($1, $2, $3, '2026-10-28', '2026-11-03', $4, $5, $6, 'search_console', $7)`,
-        [org, query, page, impressions, clicks, pos, sc],
-      );
+      await db.query(`insert into keyword_metrics (tenant_id, query, page_url, period_start, period_end, impressions, clicks, position, source, evidence_id) values ($1, $2, $3, '2026-10-28', '2026-11-03', $4, $5, $6, 'search_console', $7)`, [org, query, page, impressions, clicks, pos, sc]);
     seeded = true;
   } finally {
     await db.end();
