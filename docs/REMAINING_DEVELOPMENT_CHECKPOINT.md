@@ -24,9 +24,15 @@ Provider-neutral generative video implemented using the existing media job queue
 
 Official Apple AdServices token exchange/reconciliation implemented with consent checks, backend-source binding, test-payload rejection, token-replay protection and campaign reporting through existing attribution. Campaign identity uses Apple org/campaign IDs. Apple campaign-management reporting (names/spend/impressions) remains a coding/setup gap pending a verified account-specific integration; no aggregate report is treated as campaign data.
 
-Validation: 30 targeted media, video, Apple, telemetry and gap-closure tests passed after correcting a rights-gate assertion; typecheck passed. Tests use fixtures, not live providers. Migrations 0025/0026 are generated only.
+Validation: 30 targeted media, video, Apple, telemetry and gap-closure tests passed after correcting a rights-gate assertion; typecheck passed. Tests use fixtures, not live providers. Migrations 0025/0026 are generated only. Batch C commit: `a3acab5`.
+
+## Batch D
+
+Reusable Flutter client now provides durable bounded retries, stable identities/timestamps, serialized once events, first-open/activation/session/conversion hooks, minimized referrer campaign mapping, immediate consent send suppression and unsent-data purge. iOS tokens are fetched only at send time. The backend relay contract requires authentication/attestation, install binding, current consent, rate limits and conversion verification; server ingestion secrets stay on the backend. Both named app profiles have integration hooks and tests. `examples/flutter/futuregrow_telemetry/APP_INTEGRATIONS.md` lists exact new files and interfaces for each external repository, with owner-confirmed activation definitions still required.
+
+Validation: Dart analysis passed and 14 mocked client/relay tests passed, including both apps, restart/retry/concurrency, backend validation limits, consent withdrawal and token non-persistence. No mobile repository was available or modified; native referrer/AdServices callbacks, durable storage and backend authentication/payment verification must be integrated and tested there.
 
 ## Remaining work
 
-- Batch D: reusable Flutter client and backend relay contract, retries/dedup/consent/referrer and app-specific integration guides/tests. External mobile repositories have not been inspected or modified.
-- Run focused regressions, typecheck/lint, graph update; separate logical commits; one draft PR. No full-system/E2E/load verification.
+- Combined regression: 40 tests passed across discovery, proactive campaigns, video, Apple attribution, AI controls, worker Autopilot, public ingestion and dashboard catalog. Typecheck passed; lint passed with 141 existing warnings and one configuration deprecation notice. Generated Dart/Python caches are excluded. Graph updated locally.
+- Commit Batch D and create one draft PR. No full-system/E2E/load verification or deployment performed. Existing D040 document changes remain unstaged.
