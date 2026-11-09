@@ -1027,6 +1027,13 @@ export const SECTIONS: Section[] = [
     summary: 'Budget and status changes inside agreed spend limits, with reported spend reconciled against what was approved.',
     resources: [
       {
+        title: 'Autopilot optimization reviews',
+        list: '/v1/ads/optimizations',
+        columns: ['message', 'refs', 'createdAt'],
+        empty: 'No pending optimization reviews. Autopilot needs fresh campaign evidence and must be enabled for this organization.',
+        rowActions: [{ label: 'Propose pause for approval', path: '/v1/ads/optimizations/:id/propose', form: { fields: [geos(true)] }, done: 'Submitted to M23; paid changes still require approval.' }],
+      },
+      {
         title: 'Campaigns',
         list: '/v1/ads/campaigns',
         columns: ['platform', 'name', 'status', 'dailyBudgetMicros', 'currency', 'lastSyncedAt'],

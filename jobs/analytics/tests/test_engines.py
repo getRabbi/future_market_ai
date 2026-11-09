@@ -291,6 +291,14 @@ def test_topic_labels_do_not_depend_on_hash_seed():
     assert len(runs) == 1
 
 
+def test_topic_terms_never_pad_with_zero_weight_terms():
+    items = ([{"id": f"a{i}", "text": "refund payment"} for i in range(12)]
+             + [{"id": f"b{i}", "text": "login password"} for i in range(12)])
+    out = topics.cluster_texts(items, k_range=(2, 2), top_terms=8)
+    assert out["status"] == "ok"
+    assert {tuple(c["terms"]) for c in out["clusters"]} == {("payment", "refund"), ("login", "password")}
+
+
 def test_mmm_analytic_gradient_matches_finite_differences():
     y, spend, _ = simulate_mmm(seed=5)
     controls = np.random.default_rng(2).normal(size=(len(y), 2))

@@ -337,14 +337,14 @@ export async function proposeBudgetChange(deps: CoreDeps, tenantId: string, acto
   return proposeAction(deps, tenantId, actor, { ...common, actionType: 'ads.meta.update_campaign_budget', params: { campaignId: c.externalCampaignId, newDailyBudget: next, previousDailyBudget: prev }, idempotencyKey: key });
 }
 
-export async function proposeStatusChange(deps: CoreDeps, tenantId: string, actor: Actor, campaignId: string, input: { status: 'PAUSED' | 'ACTIVE'; geographies?: string[]; evidenceIds?: string[]; rationale: string }) {
+export async function proposeStatusChange(deps: CoreDeps, tenantId: string, actor: Actor, campaignId: string, input: { status: 'PAUSED' | 'ACTIVE'; geographies?: string[]; evidenceIds?: string[]; rationale: string; idempotencyKey?: string }) {
   const c = await loadCampaign(deps, tenantId, actor, campaignId);
   if (c.dailyBudgetMicros === null || !c.currency) throw invalid('campaign budget unknown; sync campaigns first');
   const budget = { amountMicros: c.dailyBudgetMicros, currency: c.currency };
   // Enabling a paused campaign starts spend: the reservation covers one day of budget.
   const enabling = input.status === 'ACTIVE' && c.status !== 'ENABLED' && c.status !== 'ACTIVE';
   const risk = { spendDeltaMicros: enabling ? budget.amountMicros : 0, currency: c.currency, geographies: input.geographies ?? [] };
-  const key = `status:${c.id}:${c.status}->${input.status}:${deps.clock.now().toISOString().slice(0, 13)}`;
+  const key = input.idempotencyKey ?? `status:${c.id}:${c.status}->${input.status}:${deps.clock.now().toISOString().slice(0, 13)}`;
   if (c.platform === 'google_ads') {
     const [conn] = await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) => tx.execute<{ external_account_id: string }>(sql`select external_account_id from connections where id = ${c.connectionId}`)).then((r) => r.rows);
     const map = (s: string) => (s === 'ACTIVE' || s === 'ENABLED' ? 'ENABLED' : 'PAUSED');
@@ -431,4 +431,5 @@ export function requireOperator(actor: Actor): void {
 
 export * as campaignCreation from './create.js';
 export * as optimization from './optimize.js';
+export * as proactive from './proactive.js';
 export type { SpendRow };
