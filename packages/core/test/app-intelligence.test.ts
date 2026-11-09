@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { auditLog, campaignLinks, connections, contentPlanItems, evidenceRecords, metricPoints, metricSeries, organization, socialPosts, storeAccounts, storeApps, storeMetricObservations, storeReportCoverage, storeReportFiles, storeReportPartitions, storeSyncRuns, withTenant } from '@futuregrow/db';
 import { and, eq, sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { FixtureServer } from '../../../test/helpers/fixture-server.js';
 import { ascKey, csv, DOWNLOADS_HEADER, FakeApple, FakePlay, INSTALLS_HEADER, monthDays, serviceAccountKey, TRAFFIC_HEADER, tsv, utf16 } from '../../../test/helpers/store-fixtures.js';
@@ -276,8 +276,21 @@ describe('developer accounts and discovery (Google Play)', () => {
   });
 
   it('serializes syncs per account and resumes after a crashed worker', async () => {
-    const [a, b] = await Promise.all([sync(accountId), sync(accountId)]);
-    expect([a.skipped, b.skipped].sort()).toEqual([false, true]);
+    // The first sync is held inside its lease (at the bucket listing) while the second one runs, so the two
+    // always overlap; with Promise.all alone a loaded machine could finish the first before the second started.
+    let release!: () => void;
+    play.hold = new Promise<void>((r) => {
+      release = r;
+    });
+    const listings = () => server.find('GET', new RegExp(`^/storage/v1/b/${BUCKET}/o$`)).length;
+    const before = listings();
+    const first = sync(accountId);
+    await vi.waitFor(() => expect(listings()).toBeGreaterThan(before), { timeout: 10_000 });
+    const b = await sync(accountId);
+    release();
+    play.hold = null;
+    const a = await first;
+    expect([a.skipped, b.skipped]).toEqual([false, true]);
     await tx((t) =>
       t
         .update(storeAccounts)
