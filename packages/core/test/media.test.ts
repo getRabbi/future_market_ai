@@ -39,7 +39,9 @@ describe('provider-neutral media (D-044)', () => {
   it('enables only providers whose credentials and rights records exist and that FUTUREGROW can actually execute', async () => {
     const status = () => withTenant(h.deps.db, { tenantId: h.tenantId, actor: 'test:media' }, (t) => mediaProviders({ t, deps: h.deps, tenantId: h.tenantId }));
     let s = await status();
-    expect(Object.fromEntries(s.map((p) => [p.kind, p.enabled]))).toEqual({ template_card: true, verified_asset: false, stock_image: false, ai_image: false });
+    expect(Object.fromEntries(s.map((p) => [p.kind, p.enabled]))).toEqual({ template_card: true, verified_asset: false, stock_image: false, ai_image: false, ai_voice: false, ai_video: false });
+    // P3-04: generative video has no adapter and no approved provider; it is reported, never offered.
+    expect(s.find((p) => p.kind === 'ai_video')).toMatchObject({ adapter: 'not_built', prerequisitesMet: false });
     expect(s.find((p) => p.kind === 'ai_image')!.reason).toMatch(/B-011/);
     // P3-03: the Pexels adapter exists; without a connected key and an approved licence record it stays disabled.
     expect(s.find((p) => p.kind === 'stock_image')!.requires).toEqual([expect.stringMatching(/Pexels API key/), expect.stringMatching(/stock_media licence/)]);

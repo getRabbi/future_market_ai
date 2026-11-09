@@ -124,6 +124,8 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
           outputUsdPerMtok: z.number().nonnegative().nullable(),
           /** Image models: price of one image; image models without a price are never used. */
           usdPerImage: z.number().positive().max(5).nullable().optional(),
+          /** Speech models: price per million input characters; speech models without a price are never used. */
+          usdPerMillionChars: z.number().positive().max(1000).nullable().optional(),
         }),
       },
     },

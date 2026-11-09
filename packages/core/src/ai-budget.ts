@@ -37,7 +37,7 @@ export async function getAiBudget(tx: DbOrTx, tenantId: string, config: Pick<Cor
   const start = monthStart(now);
   const r = await tx.execute<{ spent: number | null; unpriced: number }>(sql`
     select coalesce(sum(amount_usd), 0)::float8 as spent, count(*) filter (where amount_usd is null)::int as unpriced
-    from cost_ledger where tenant_id = ${tenantId} and category in ('llm', 'embedding', 'image_generation') and occurred_at >= ${start}`);
+    from cost_ledger where tenant_id = ${tenantId} and category in ('llm', 'embedding', 'image_generation', 'speech_generation') and occurred_at >= ${start}`);
   const spentUsd = r.rows[0]?.spent ?? 0;
   const reservedUsd = reservations.get(tenantId) ?? 0;
   return {

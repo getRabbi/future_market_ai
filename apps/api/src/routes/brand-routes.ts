@@ -14,6 +14,9 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: ApiContext): void
   r.get('/v1/media/providers', { schema: { tags: ['brands'] } }, async (req) => tenantTx(ctx, req, (t) => media.mediaProviders({ t, deps: ctx.deps, tenantId: tenantOf(req) })));
   /* Licensed stock (P3-03) and AI images (P3-02): queued media jobs; results are assets with rights and provenance. */
   const S = media.sources;
+  /* AI voiceover (P3-04): readiness (no provider call) and a queued job; disabled until a speech model is approved and priced. */
+  r.get('/v1/media/voice', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (t) => media.voice.speechReadiness(t, ctx.deps)));
+  r.post('/v1/media/voiceovers', { schema: { tags: ['assets'], body: Body } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => media.voice.requestVoiceover(tx, ctx.deps, tenantOf(req), actorOf(req), req.body))));
   r.post('/v1/media/stock/search', { schema: { tags: ['assets'], body: Body } }, async (req) => S.searchStock(ctx.deps, tenantOf(req), actorOf(req), req.body));
   r.post('/v1/media/stock/import', { schema: { tags: ['assets'], body: Body } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => S.requestStockImport(tx, tenantOf(req), actorOf(req), req.body))));
   r.get('/v1/media/stock/assets', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => S.listStockAssets(tx)));

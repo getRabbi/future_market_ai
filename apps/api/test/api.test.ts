@@ -276,3 +276,24 @@ describe('connections', () => {
     await expect(connectionsModule.rotateConnectionCredentials(h.deps, h.tenantId, { ...h.users.owner, mfaVerified: false }, c.id, { credentials: { accessToken: 'X' } })).rejects.toThrow();
   });
 });
+
+describe('gap-closure read endpoints (P2/P3 screens)', () => {
+  it('serves the social analytics CSV as a download with no caching, and the new screens answer for a member', async () => {
+    const h1 = { headers: { 'x-fg-tenant': tenantId } };
+    const csv = await owner.req('GET', '/v1/social/analytics/export.csv?days=30', h1);
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toMatch(/^text\/csv/);
+    expect(csv.headers['content-disposition']).toMatch(/^attachment; filename="social-analytics-all-\d{4}-\d{2}-\d{2}\.csv"$/);
+    expect(csv.headers['cache-control']).toBe('no-store');
+    expect(csv.body.split('\r\n')[0]).toBe('platform,account,scope,object_ref,post_url,metric_key,metric_label,unit,value,status,observed_on,revision');
+    expect((await new Client(app).req('GET', '/v1/social/analytics/export.csv', h1)).status).toBe(401);
+    for (const path of ['/v1/offers/catalog', '/v1/creators/payouts/overview', '/v1/app/attribution/apps', '/v1/seo/search-console', '/v1/media/voice']) {
+      const r = await owner.req('GET', path, h1);
+      expect(r.status, path).toBe(200);
+    }
+    const voice = await owner.req('GET', '/v1/media/voice', h1);
+    expect(voice.json).toMatchObject({ model: null, missing: [expect.stringMatching(/speech_generation/)] });
+    const providers = await owner.req('GET', '/v1/media/providers', h1);
+    expect(providers.json.find((p: { id: string }) => p.id === 'ai-video-model')).toMatchObject({ enabled: false, adapter: 'not_built' });
+  });
+});

@@ -3,9 +3,11 @@ import { sha256Hex } from '@futuregrow/observability';
 import { and, eq } from 'drizzle-orm';
 import type { CoreDeps } from '../../deps.js';
 import { imageModelReadiness, stockLicence } from './sources.js';
+import { speechReadiness } from './voice.js';
 
 export * as sources from './sources.js';
 export * as video from './video.js';
+export * as voice from './voice.js';
 
 /**
  * Provider-neutral creative media (D-044). The studio asks for an image of a format; a provider
@@ -18,7 +20,7 @@ export { MEDIA_FORMATS, type MediaFormat } from './formats.js';
 
 import { MEDIA_FORMATS, type MediaFormat } from './formats.js';
 
-export type MediaProviderKind = 'template_card' | 'verified_asset' | 'stock_image' | 'ai_image';
+export type MediaProviderKind = 'template_card' | 'verified_asset' | 'stock_image' | 'ai_image' | 'ai_voice' | 'ai_video';
 
 export interface MediaLicense {
   ref: string;
@@ -154,7 +156,48 @@ export const aiImages: MediaProvider = {
   },
 };
 
-export const MEDIA_PROVIDERS: readonly MediaProvider[] = [templateCards, verifiedAssets, stockImages, aiImages];
+/** A speech model for voiceovers (P3-04): registry-approved for speech_generation, priced per character, configured, with an approved licence record. */
+export const aiVoice: MediaProvider = {
+  id: 'ai-voice-model',
+  kind: 'ai_voice',
+  async status(ctx) {
+    const r = await speechReadiness(ctx.t, ctx.deps);
+    return r.missing.length
+      ? { id: this.id, kind: this.kind, enabled: false, reason: 'No speech model is ready for production; videos use text and subtitles, or an uploaded voice recording with recorded voice rights.', requires: r.missing, adapter: 'available', prerequisitesMet: false }
+      : {
+          id: this.id,
+          kind: this.kind,
+          enabled: true,
+          reason: `${r.model!.provider}/${r.model!.modelId} is approved at about $${r.model!.usdPerMillionChars} per million characters; voices are synthetic stock voices, every voiceover is labelled AI-generated and counts toward the AI spending limit.`,
+          requires: [],
+          adapter: 'available',
+          prerequisitesMet: true,
+        };
+  },
+};
+
+/**
+ * Generative video models (text/image → video). No provider is approved and FUTUREGROW has no
+ * adapter: commercial terms, likeness and disclosure rules for generated video are not reviewed.
+ * Videos are rendered from licensed scenes in the Video Studio instead.
+ */
+export const aiVideo: MediaProvider = {
+  id: 'ai-video-model',
+  kind: 'ai_video',
+  async status() {
+    return {
+      id: this.id,
+      kind: this.kind,
+      enabled: false,
+      reason: 'Generative video is not available: no provider with reviewed commercial, likeness and disclosure terms is approved. The Video Studio renders licensed scenes instead.',
+      requires: ['an approved generative video provider and model (vendor and legal review)', 'an approved licence record for its output terms', 'counsel review of AI-generated media (Governance › Legal & licensing readiness)', 'a FUTUREGROW adapter for that provider'],
+      adapter: 'not_built',
+      prerequisitesMet: false,
+    };
+  },
+};
+
+export const MEDIA_PROVIDERS: readonly MediaProvider[] = [templateCards, verifiedAssets, stockImages, aiImages, aiVoice, aiVideo];
 
 export async function mediaProviders(ctx: MediaContext): Promise<MediaProviderStatus[]> {
   const out: MediaProviderStatus[] = [];

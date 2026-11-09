@@ -198,7 +198,7 @@ export async function requestImageGeneration(t: Tx, deps: CoreDeps, tenantId: st
 
 export type MediaJobOutcome = { kind: 'none' } | { kind: 'succeeded'; jobId: string; assetId: string } | { kind: 'retry'; jobId: string; reason: string } | { kind: 'failed' | 'refused' | 'blocked'; jobId: string; reason: string };
 
-async function storeAsset(t: Tx, deps: CoreDeps, tenantId: string, v: { bytes: Uint8Array; mime: string; kind: 'image' | 'video'; title: string; origin: 'stock' | 'generated'; width: number | null; height: number | null; manifest: Record<string, unknown>; disclosure: Record<string, unknown> }) {
+export async function storeAsset(t: Tx, deps: CoreDeps, tenantId: string, v: { bytes: Uint8Array; mime: string; kind: 'image' | 'video' | 'audio'; title: string; origin: 'stock' | 'generated'; width: number | null; height: number | null; manifest: Record<string, unknown>; disclosure: Record<string, unknown> }) {
   const sha = sha256Hex(v.bytes);
   const [dup] = await t.select().from(assets).where(eq(assets.sha256, sha));
   if (dup) return dup;
@@ -285,6 +285,11 @@ export async function processNextMediaJob(deps: CoreDeps, workerId = `media-sour
     await finish('failed', reason);
     return { kind: 'failed', jobId: job.id, reason };
   };
+
+  if (row!.kind === 'voiceover') {
+    const { runVoiceover } = await import('./voice.js');
+    return runVoiceover(deps, row!, { finish, retryOrFail: retryOrFail as never, storeAsset });
+  }
 
   if (row!.kind === 'stock_import') {
     const licence = await withTenant(deps.db, tctx, (t) => stockLicence(t));

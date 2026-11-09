@@ -4,4 +4,5 @@ export * from './images.js';
 export { HOSTED_PROVIDERS, type HostedProvider, type OpenAICompatibleConfig, OpenAICompatibleEmbedder, OpenAICompatibleProvider, structuredOutputSchema } from './openai-compatible.js';
 export * from './prompts.js';
 export * from './safety.js';
+export * from './speech.js';
 export * from './types.js';

@@ -274,6 +274,15 @@ export const DEFAULT_MODELS = [
   { provider: 'openai', modelId: 'gpt-5.4-mini', displayName: 'GPT-5.4 mini', purposes: REASONING, inputUsdPerMtok: 0.75, outputUsdPerMtok: 4.5, terms: 'OpenAI Services Agreement (API data not used for training by default)' },
   { provider: 'gemini', modelId: 'gemini-3.5-flash', displayName: 'Gemini 3.5 Flash', purposes: REASONING, inputUsdPerMtok: 1.5, outputUsdPerMtok: 9, terms: 'Gemini API Additional Terms: paid tier only (the unpaid tier may use prompts to improve Google products)' },
   { provider: 'openai', modelId: 'gpt-image-1', displayName: 'GPT Image 1 (image generation)', purposes: ['image_generation'], inputUsdPerMtok: null, outputUsdPerMtok: null, terms: 'OpenAI Services Agreement (API data not used for training by default); outputs owned by the customer per OpenAI terms' },
+  {
+    provider: 'openai',
+    modelId: 'tts-1',
+    displayName: 'TTS-1 (speech generation, synthetic voices)',
+    purposes: ['speech_generation'],
+    inputUsdPerMtok: null,
+    outputUsdPerMtok: null,
+    terms: 'OpenAI Services Agreement and Usage Policies (API data not used for training by default); end users must be told the voice is AI-generated',
+  },
   { provider: 'groq', modelId: 'openai/gpt-oss-120b', displayName: 'gpt-oss-120b on Groq', purposes: REASONING, inputUsdPerMtok: 0.15, outputUsdPerMtok: 0.6, terms: 'Groq Services Agreement (no training on inputs/outputs, no retention by default); weights Apache-2.0' },
 ] as const;
 
@@ -299,7 +308,11 @@ export async function seedModelRegistry(db: Db): Promise<void> {
   });
 }
 
-export async function approveModel(db: Db, actor: { userId: string }, input: { provider: string; modelId: string; trainingOnCustomerData: 'no' | 'yes' | 'unknown'; dataRetentionTerms: string; inputUsdPerMtok: number | null; outputUsdPerMtok: number | null; usdPerImage?: number | null }): Promise<void> {
+export async function approveModel(
+  db: Db,
+  actor: { userId: string },
+  input: { provider: string; modelId: string; trainingOnCustomerData: 'no' | 'yes' | 'unknown'; dataRetentionTerms: string; inputUsdPerMtok: number | null; outputUsdPerMtok: number | null; usdPerImage?: number | null; usdPerMillionChars?: number | null },
+): Promise<void> {
   await withSystem(db, `user:${actor.userId}`, async (tx) => {
     const [u] = await tx.select().from(authUser).where(eq(authUser.id, actor.userId));
     if (!u?.isPlatformAdmin) throw forbidden('model approval requires a platform administrator');
@@ -317,6 +330,7 @@ export async function approveModel(db: Db, actor: { userId: string }, input: { p
         inputUsdPerMtok: input.inputUsdPerMtok,
         outputUsdPerMtok: input.outputUsdPerMtok,
         ...(input.usdPerImage === undefined ? {} : { usdPerImage: input.usdPerImage }),
+        ...(input.usdPerMillionChars === undefined ? {} : { usdPerMillionChars: input.usdPerMillionChars }),
       })
       .where(and(eq(modelRegistry.provider, input.provider), eq(modelRegistry.modelId, input.modelId)))
       .returning({ id: modelRegistry.id });
@@ -534,7 +548,7 @@ export async function acknowledgeAlert(tx: Tx, actor: Actor, id: string) {
 export async function recordCost(
   tx: Tx,
   tenantId: string,
-  input: { category: 'llm' | 'embedding' | 'image_generation' | 'media_render' | 'api' | 'analytics' | 'storage'; provider: string; unit: string; quantity: number; unitCostUsd: number | null; refType?: string; refId?: string; metadata?: Record<string, unknown> },
+  input: { category: 'llm' | 'embedding' | 'image_generation' | 'speech_generation' | 'media_render' | 'api' | 'analytics' | 'storage'; provider: string; unit: string; quantity: number; unitCostUsd: number | null; refType?: string; refId?: string; metadata?: Record<string, unknown> },
 ) {
   await tx.insert(costLedger).values({
     tenantId,

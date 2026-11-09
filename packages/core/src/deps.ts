@@ -1,4 +1,4 @@
-import type { ImageModelProvider, ModelGateway } from '@futuregrow/agent-kernel';
+import type { ImageModelProvider, ModelGateway, SpeechModelProvider } from '@futuregrow/agent-kernel';
 import type { ApiVersions, HttpClient, ProviderEndpoints } from '@futuregrow/connectors';
 import type { Db } from '@futuregrow/db';
 import type { Logger } from '@futuregrow/observability';
@@ -62,6 +62,8 @@ export interface CoreDeps {
   models?: ModelGateway;
   /** Image-generation providers by registry provider name (P3-02); used only for approved image models. */
   images?: Record<string, ImageModelProvider>;
+  /** Speech (TTS) providers; called only for registry-approved, priced speech models (P3-04 voiceover). */
+  speech?: Record<string, SpeechModelProvider>;
   /** Operator alerts (ALERT_WEBHOOK_URL); absent = log only. */
   notifier?: Notifier;
 }

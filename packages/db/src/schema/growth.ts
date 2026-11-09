@@ -211,7 +211,12 @@ export const mediaJobs = pgTable(
     requestedAt: ts('requested_at').notNull().defaultNow(),
     finishedAt: ts('finished_at'),
   },
-  (t) => [index('media_jobs_queue_idx').on(t.status, t.nextAttemptAt), index('media_jobs_tenant_idx').on(t.tenantId, t.requestedAt), oneOf('media_jobs_kind_chk', t.kind, ['ai_image', 'stock_import']), oneOf('media_jobs_status_chk', t.status, ['queued', 'running', 'succeeded', 'failed', 'blocked', 'refused'])],
+  (t) => [
+    index('media_jobs_queue_idx').on(t.status, t.nextAttemptAt),
+    index('media_jobs_tenant_idx').on(t.tenantId, t.requestedAt),
+    oneOf('media_jobs_kind_chk', t.kind, ['ai_image', 'stock_import', 'voiceover']),
+    oneOf('media_jobs_status_chk', t.status, ['queued', 'running', 'succeeded', 'failed', 'blocked', 'refused']),
+  ],
 );
 
 /** Source tracking for licensed stock media: one row per imported provider item and format (dedupe, licence, revocation). */
