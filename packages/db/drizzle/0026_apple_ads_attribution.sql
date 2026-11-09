@@ -1,0 +1,2 @@
+ALTER TABLE "app_installs" DROP CONSTRAINT "app_installs_method_chk";--> statement-breakpoint
+ALTER TABLE "app_installs" ADD CONSTRAINT "app_installs_method_chk" CHECK ("app_installs"."attribution_method" in ('play_install_referrer', 'app_store_campaign_link', 'apple_ads_adservices', 'self_reported', 'unattributed'));

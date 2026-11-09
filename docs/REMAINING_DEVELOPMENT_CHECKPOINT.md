@@ -16,10 +16,17 @@ Validation: 19 focused tests passed (discovery, existing intelligence, dashboard
 
 Zero-weight topic terms are filtered after the existing stable sort; 3 topic tests passed, including hash-seed independence. Autopilot periodically evaluates all active connected campaigns and reevaluates after `ads.spend.synced`. Fresh evidence and three complete recent days are required; outcome comparisons require 14 complete days. Detects low CTR/no clicks, budget risk, declining conversions and improving efficiency. Review proposals appear in the existing alerts inbox and paid-media panel, with evidence, reasons and heuristic confidence. Unacknowledged/recent proposals are suppressed under a tenant advisory lock. Operator selection recomputes the rule and proposes a pause through M23 with an idempotency key; no automatic execution or spend increase. Opportunity signals are advisory.
 
-Validation: 2 optimizer tests and 12 existing gap-closure tests passed; typecheck passed. An invalid tenant-policy fixture was corrected before the passing rerun. Python emitted only a sandbox cache-write warning.
+Validation: 2 optimizer tests and 12 existing gap-closure tests passed; typecheck passed. An invalid tenant-policy fixture was corrected before the passing rerun. Python emitted only a sandbox cache-write warning. Batch B commit: `c08b0f4`.
+
+## Batch C
+
+Provider-neutral generative video implemented using the existing media job queue, model/licence registries, AI budget and asset store. Submit/poll operation IDs, durable video caps, unresolved-billing reservations, output probing, evidence and rights gating are covered with fixtures. No real adapter or provider is activated; see `docs/ADVANCED_MEDIA_ATTRIBUTION.md` for the exact integration contract and ffprobe requirement. Remotion remains unchanged.
+
+Official Apple AdServices token exchange/reconciliation implemented with consent checks, backend-source binding, test-payload rejection, token-replay protection and campaign reporting through existing attribution. Campaign identity uses Apple org/campaign IDs. Apple campaign-management reporting (names/spend/impressions) remains a coding/setup gap pending a verified account-specific integration; no aggregate report is treated as campaign data.
+
+Validation: 30 targeted media, video, Apple, telemetry and gap-closure tests passed after correcting a rights-gate assertion; typecheck passed. Tests use fixtures, not live providers. Migrations 0025/0026 are generated only.
 
 ## Remaining work
 
-- Batch C: provider-neutral async generative video with approved pricing/licence/budget gates and Video Studio UI; official Apple Ads campaign attribution integration.
 - Batch D: reusable Flutter client and backend relay contract, retries/dedup/consent/referrer and app-specific integration guides/tests. External mobile repositories have not been inspected or modified.
 - Run focused regressions, typecheck/lint, graph update; separate logical commits; one draft PR. No full-system/E2E/load verification.

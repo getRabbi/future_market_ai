@@ -37,9 +37,10 @@ export async function getAiBudget(tx: DbOrTx, tenantId: string, config: Pick<Cor
   const start = monthStart(now);
   const r = await tx.execute<{ spent: number | null; unpriced: number }>(sql`
     select coalesce(sum(amount_usd), 0)::float8 as spent, count(*) filter (where amount_usd is null)::int as unpriced
-    from cost_ledger where tenant_id = ${tenantId} and category in ('llm', 'embedding', 'image_generation', 'speech_generation') and occurred_at >= ${start}`);
+    from cost_ledger where tenant_id = ${tenantId} and category in ('llm', 'embedding', 'image_generation', 'speech_generation', 'video_generation') and occurred_at >= ${start}`);
+  const pending = await tx.execute<{ reserved: number }>(sql`select coalesce(sum(cost_usd), 0)::float8 as reserved from media_jobs where tenant_id = ${tenantId} and kind = 'ai_video' and (status in ('queued','running') or provenance->>'billingUnresolved' = 'true')`);
   const spentUsd = r.rows[0]?.spent ?? 0;
-  const reservedUsd = reservations.get(tenantId) ?? 0;
+  const reservedUsd = (reservations.get(tenantId) ?? 0) + (pending.rows[0]?.reserved ?? 0);
   return {
     limitUsd: limitUsd ?? null,
     source: policy ? 'tenant' : limitUsd ? 'platform' : 'none',

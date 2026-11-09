@@ -63,6 +63,11 @@ export function registerPublicChannelRoutes(app: FastifyInstance, ctx: ApiContex
   });
 
   /* ---------- M19: app installs (server keys only: the mobile backend relays referrer data) ---------- */
+  app.post('/ingest/v1/apple-ads-attribution', { bodyLimit: 20_000, config: { public: true, rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { tenantId, keyId } = await resolveIngestionKey(ctx, req);
+    if (!(req.headers.authorization ?? '').startsWith('Bearer fgk_sk_')) throw new FgError('FORBIDDEN', 'Apple attribution requires a server key', 403);
+    return reply.header('cache-control', 'no-store').send(await appGrowth.appleAds.reconcileAppleAttribution(deps, tenantId, `key:${keyId}`, req.body));
+  });
   app.post('/ingest/v1/app-installs', { config: { public: true, rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { tenantId, keyId } = await resolveIngestionKey(ctx, req);
     if (!(req.headers.authorization ?? '').startsWith('Bearer fgk_sk_')) throw new FgError('FORBIDDEN', 'install ingestion requires a server key', 403);

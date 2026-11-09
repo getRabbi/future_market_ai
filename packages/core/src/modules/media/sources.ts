@@ -137,7 +137,7 @@ export async function requestStockImport(t: Tx, tenantId: string, actor: Actor, 
   requireRole(actor, [...EDIT_ROLES], 'importing stock media');
   const input = StockImportSchema.parse(raw);
   const [conn] = await t.select().from(connections).where(eq(connections.id, input.connectionId));
-  if (!conn || conn.provider !== 'pexels') throw invalid('choose a connected Pexels account');
+  if (conn?.provider !== 'pexels') throw invalid('choose a connected Pexels account');
   if (!(await stockLicence(t))) throw forbidden('record the Pexels License (https://www.pexels.com/license/) as an approved stock_media licence in Governance before importing; nothing was downloaded');
   const [existing] = await t
     .select()
@@ -225,7 +225,7 @@ export async function storeAsset(t: Tx, deps: CoreDeps, tenantId: string, v: { b
   return row!;
 }
 
-async function runStock(deps: CoreDeps, job: typeof mediaJobs.$inferSelect, ctx: ConnectorContext) {
+async function runStock(_deps: CoreDeps, job: typeof mediaJobs.$inferSelect, ctx: ConnectorContext) {
   const req = job.request as z.infer<typeof StockImportSchema>;
   const item: StockCandidate = await pexelsGet(ctx, req.mediaType, req.externalId);
   const file = await pexelsDownload(ctx, item);
@@ -273,7 +273,7 @@ export async function processNextMediaJob(deps: CoreDeps, workerId = `media-sour
       await t
         .update(mediaJobs)
         .set({ status, statusReason: reason ? clipText(reason, 2000) : null, leaseOwner: null, leaseUntil: null, finishedAt: status === 'queued' ? null : deps.clock.now(), ...patch })
-        .where(eq(mediaJobs.id, job.id));
+        .where(and(eq(mediaJobs.id, job.id), eq(mediaJobs.leaseOwner, workerId), eq(mediaJobs.status, 'running')));
       await audit(t, tenantId, actor, `media.${row!.kind}.${status === 'queued' ? 'retry_scheduled' : status}`, { type: 'media_job', id: job.id }, { reason: reason ? clipText(reason, 300) : null, attempts: row!.attempts, ...(patch.assetId ? { assetId: patch.assetId } : {}) });
     });
   };
@@ -285,6 +285,11 @@ export async function processNextMediaJob(deps: CoreDeps, workerId = `media-sour
     await finish('failed', reason);
     return { kind: 'failed', jobId: job.id, reason };
   };
+
+  if (row!.kind === 'ai_video') {
+    const { runGenerativeVideo } = await import('./generative-video.js');
+    return runGenerativeVideo(deps, row!, finish);
+  }
 
   if (row!.kind === 'voiceover') {
     const { runVoiceover } = await import('./voice.js');

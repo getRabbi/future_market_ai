@@ -176,6 +176,20 @@
       "when": 1794217787629,
       "tag": "0024_competitor_discovery",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794244848731,
+      "tag": "0025_generative_video",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794245897439,
+      "tag": "0026_apple_ads_attribution",
+      "breakpoints": true
     }
   ]
 }

@@ -214,7 +214,7 @@ export const mediaJobs = pgTable(
   (t) => [
     index('media_jobs_queue_idx').on(t.status, t.nextAttemptAt),
     index('media_jobs_tenant_idx').on(t.tenantId, t.requestedAt),
-    oneOf('media_jobs_kind_chk', t.kind, ['ai_image', 'stock_import', 'voiceover']),
+    oneOf('media_jobs_kind_chk', t.kind, ['ai_image', 'stock_import', 'voiceover', 'ai_video']),
     oneOf('media_jobs_status_chk', t.status, ['queued', 'running', 'succeeded', 'failed', 'blocked', 'refused']),
   ],
 );
@@ -556,7 +556,7 @@ export const appInstalls = pgTable(
     uniqueIndex('app_installs_uq').on(t.tenantId, t.platform, t.installId),
     index('app_installs_campaign_idx').on(t.tenantId, t.appId, t.platform, t.campaignRef, t.installedAt),
     oneOf('app_installs_platform_chk', t.platform, ['ios', 'android']),
-    oneOf('app_installs_method_chk', t.attributionMethod, ['play_install_referrer', 'app_store_campaign_link', 'self_reported', 'unattributed']),
+    oneOf('app_installs_method_chk', t.attributionMethod, ['play_install_referrer', 'app_store_campaign_link', 'apple_ads_adservices', 'self_reported', 'unattributed']),
   ],
 );
 
