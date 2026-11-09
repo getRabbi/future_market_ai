@@ -62,7 +62,7 @@ screens keep their forms, row actions and permission checks.
 | Card | Data (persisted, tenant-scoped) | Honesty rules |
 |---|---|---|
 | Journey stepper | The 18 live-checked journey tasks, grouped into Setup · Connect · Plan · Create · Launch · Measure · Improve | Rank thresholds are frozen at the original stage totals (0/40/80/130/190/270/330/410 XP), so regrouping changed nobody's rank. |
-| At a glance | `GET /v1/autopilot/goals` | "Needs attention" = latest cycle blocked/failed or result below the forecast range; a forecast without data next to a verified result is on track; "not measured yet" is stated separately. |
+| At a glance | `GET /v1/autopilot/goals` | "Needs attention" = latest cycle blocked/failed or result below the forecast range; a forecast without data next to a verified result is on track; "not measured yet" is stated separately, without claiming the data is only late (since D-049: a Facebook-insights KPI may need `read_insights`; the goal's cycle lesson says so). |
 | Next best action | approvals, escalations, incidents, kill switches, Autopilot status and inbox, goals, journey | Priority: stop → escalation → severe incident → oldest approval (exact `?id=`) → inbox → blocked goal → next journey task → "You're on track". Skeleton until every input loaded; an error (not "on track") when one failed. |
 | Performance | `GET /v1/app-intelligence/overview?window=reported` + `/apps/:id` series, or a daily KPI series (`/v1/analytics/series/:id/points`) | Unreported days are gaps; partial days hollow; totals only for complete windows; % change only against a complete previous window; source and data-through date shown; table alternative. |
 | Blockers | kill switches, incidents, cycle attention notes, store account health and warnings, connections, policy | Levels: Critical · Action required · External setup needed · Optional enhancement · Temporarily unavailable. The Play Reporting API is always "Optional enhancement". |
@@ -73,7 +73,7 @@ screens keep their forms, row actions and permission checks.
 ## Global search
 
 `Ctrl+K` / `Cmd+K` or the header search opens a combobox dialog (arrow keys, Enter, Escape,
-focus returned on close). Static: 38 pages (titles, summaries, keywords, module ids such as
+focus returned on close). Static: 42 pages (titles, summaries, keywords, module ids such as
 "M17"), role-filtered quick actions, journey tasks and "how it works" guides. Records (fetched
 on first open, per organization, from existing endpoints that the API already scopes to the
 tenant and role): goals, apps, brands, connections, posts, actions waiting for approval. A list
@@ -102,7 +102,7 @@ targets on phones, light and dark tokens.
 | 8 | Optional provider API is not a failure | `autopilot.spec` (Blockers drawer: Optional enhancement, not Critical) |
 | 9 | Approval from the notification bell | `autopilot.spec` (fixture action → bell → exact drawer) |
 | 10 | Forecast, decision, audit evidence via navigation | `control-plane.spec` (every page renders) + goal details |
-| 11 | All advanced modules in the same shell | `control-plane.spec` (38 pages, same nav/search) and `/app/advanced` redirect |
+| 11 | All advanced modules in the same shell | `control-plane.spec` (42 pages, same nav/search) and `/app/advanced` redirect |
 | 12 | 390 px phone, no hidden actions or overflow | `autopilot.spec` and `control-plane.spec` phone tests (390 and 320 px) |
 | 13 | No restricted actions via search or deep links | `control-plane.spec` (approver: quick actions, search, deep links, 403) |
 | 14 | Switching organization leaks nothing | `control-plane.spec` (second organization: no goals, no search records) |
@@ -110,3 +110,7 @@ targets on phones, light and dark tokens.
 
 Not automated: the real EPS Page and Google Play account (production credentials; covered with
 fixtures of the same shape).
+
+## P2/P3 additions (D-050)
+
+No new dashboard or settings area: Connections gains **Integration status** (with PostHog forwarding and the Chatwoot webhook URL); Content gains **Brand programs** beside Daily lessons (lessons stay the default for curriculum organizations); Asset studio gains **Media sources**, licensed stock, AI image, media jobs and the **Video Studio**; Results gains **per-platform social results**; Campaigns & paid media gains **New paid campaigns**; Governance gains **Legal & licensing readiness**; Market & Competitors gains the **Authorized research sandbox**. Every screen lists its API calls (checked against the routes by `apps/web/test/catalog.test.ts`).

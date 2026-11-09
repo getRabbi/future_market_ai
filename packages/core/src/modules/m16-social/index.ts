@@ -19,6 +19,7 @@ import { type ActionRow, registerHooks, registerResolver } from '../m23-executio
 import { registerWebhookHandler } from '../webhooks.js';
 import { checkCaption } from './platforms.js';
 
+export * as analytics from './analytics.js';
 export * from './platforms.js';
 
 const PLATFORM_PROVIDER = { facebook: 'meta', instagram: 'meta', tiktok: 'tiktok', youtube: 'youtube', linkedin: 'linkedin', x: 'x' } as const;
@@ -218,9 +219,20 @@ function postAction(post: typeof socialPosts.$inferSelect, conn: typeof connecti
         },
       };
     case 'instagram':
+      // Several assets publish as one carousel (never just the first one).
       return {
         actionType: 'social.instagram.publish_media',
-        params: { igUserId: d.options.igUserId ?? conn.externalAccountId, mediaType: assetKinds[first!] === 'video' ? 'REELS' : 'IMAGE', mediaUrl: `asset://${first}`, caption: clipText(post.caption, 2200), postId: post.id, assetIds: post.assetIds, claimIds: post.claimIds, disclosure },
+        params: {
+          igUserId: d.options.igUserId ?? conn.externalAccountId,
+          mediaType: post.assetIds.length > 1 ? 'CAROUSEL' : assetKinds[first!] === 'video' ? 'REELS' : 'IMAGE',
+          mediaUrl: `asset://${first}`,
+          ...(post.assetIds.length > 1 ? { items: post.assetIds.map((id) => ({ mediaType: assetKinds[id] === 'video' ? 'VIDEO' : 'IMAGE', mediaUrl: `asset://${id}` })) } : {}),
+          caption: clipText(post.caption, 2200),
+          postId: post.id,
+          assetIds: post.assetIds,
+          claimIds: post.claimIds,
+          disclosure,
+        },
       };
     case 'tiktok':
       return {
@@ -342,7 +354,14 @@ async function resolveMediaUrl(deps: CoreDeps, tx: Tx, ref: string): Promise<str
   return url;
 }
 
-registerResolver('social.instagram.publish_media', async (deps, tx, action: ActionRow) => ({ ...action.params, mediaUrl: await resolveMediaUrl(deps, tx, action.params.mediaUrl as string) }));
+registerResolver('social.instagram.publish_media', async (deps, tx, action: ActionRow) => {
+  const items = action.params.items as { mediaType: string; mediaUrl: string }[] | undefined;
+  return {
+    ...action.params,
+    mediaUrl: await resolveMediaUrl(deps, tx, action.params.mediaUrl as string),
+    ...(items ? { items: await Promise.all(items.map(async (i) => ({ ...i, mediaUrl: await resolveMediaUrl(deps, tx, i.mediaUrl) }))) } : {}),
+  };
+});
 registerResolver('social.tiktok.publish_video', async (deps, tx, action: ActionRow) => ({ ...action.params, videoUrl: await resolveMediaUrl(deps, tx, action.params.videoUrl as string) }));
 
 for (const t of ['social.facebook.publish_post', 'social.instagram.publish_media', 'social.tiktok.publish_video', 'social.youtube.upload_video']) {

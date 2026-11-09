@@ -24,6 +24,14 @@ export function registerBrainRoutes(app: FastifyInstance, ctx: ApiContext): void
   r.post('/v1/competitors/sources/:id/crawl', { schema: { tags: ['competitors'], params: Id } }, async (req) => competitorsModule.crawlSource(deps, tenantOf(req), req.params.id));
   r.get('/v1/competitors/observations', { schema: { tags: ['competitors'], querystring: z.object({ competitorId: z.string().uuid().optional() }) } }, async (req) => tenantTx(ctx, req, (tx) => competitorsModule.listObservations(tx, req.query.competitorId)));
   r.get('/v1/competitors/gaps', { schema: { tags: ['competitors'] } }, async (req) => tenantTx(ctx, req, (tx) => competitorsModule.featureGaps(tx)));
+  /* Authorized research sandbox (P3-09): allowlisted targets, limits, second legal approval, isolated runner only. */
+  const RS = competitorsModule.sandbox;
+  r.get('/v1/competitors/research', { schema: { tags: ['competitors'] } }, async (req) => tenantTx(ctx, req, (tx) => RS.researchOverview(tx)));
+  r.post('/v1/competitors/research/targets', { schema: { tags: ['competitors'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => RS.addResearchTarget(tx, deps, tenantOf(req), actorOf(req), req.body))));
+  r.post('/v1/competitors/research/targets/:id/revoke', { schema: { tags: ['competitors'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => RS.revokeResearchTarget(tx, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/competitors/research/jobs', { schema: { tags: ['competitors'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => RS.requestResearchJob(tx, deps, tenantOf(req), actorOf(req), req.body))));
+  r.post('/v1/competitors/research/jobs/:id/approve', { schema: { tags: ['competitors'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => RS.approveResearchJob(tx, deps, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/competitors/research/jobs/:id/terminate', { schema: { tags: ['competitors'], params: Id, body: z.object({ reason: z.string().min(3).max(500) }) } }, async (req) => tenantTx(ctx, req, (tx) => RS.terminateResearchJob(tx, tenantOf(req), actorOf(req), req.params.id, req.body.reason)));
   r.post('/v1/competitors/rea-jobs', { schema: { tags: ['competitors'], body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => competitorsModule.registerReaJob(tx, tenantOf(req), actorOf(req), req.body))));
 
   /* ---------------- M06 ---------------- */

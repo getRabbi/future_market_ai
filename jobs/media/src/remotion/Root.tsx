@@ -1,5 +1,5 @@
 import type React from 'react';
-import { AbsoluteFill, Composition, Img, interpolate, OffthreadVideo, registerRoot, Sequence, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Audio, type CalculateMetadataFunction, Composition, Img, interpolate, OffthreadVideo, registerRoot, Sequence, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 
 export interface RenderProps {
   headline: string;
@@ -110,11 +110,94 @@ export const PersonaStory: React.FC<RenderProps> = (p) => (
   </AbsoluteFill>
 );
 
+/* ------------------------------------------------------------------ */
+/* Scene story (P3-04 Video Studio): storyboard scenes in any preset   */
+/* ------------------------------------------------------------------ */
+
+interface StoryScene {
+  id: string;
+  durationSeconds: number;
+  text: string;
+  subtitle: string;
+  mediaIndex: number | null;
+  transition: 'cut' | 'fade' | 'slide';
+  textPosition: 'top' | 'center' | 'bottom';
+  background: string | null;
+}
+interface StoryProps extends RenderProps {
+  storyboard: { preset: 'vertical_9x16' | 'square_1x1' | 'landscape_16x9'; brandColor: string; textColor: string; scenes: StoryScene[]; cta: string; disclosureText: string; audioIndex: number | null };
+}
+
+const PRESET_SIZE = { vertical_9x16: [1080, 1920], square_1x1: [1080, 1080], landscape_16x9: [1920, 1080] } as const;
+const STORY_FPS = 30;
+
+const storyDefaults: StoryProps = {
+  ...defaults,
+  storyboard: { preset: 'square_1x1', brandColor: '#0f766e', textColor: '#ffffff', scenes: [{ id: 's1', durationSeconds: 2, text: '', subtitle: '', mediaIndex: null, transition: 'cut', textPosition: 'center', background: null }], cta: '', disclosureText: '', audioIndex: null },
+};
+
+/** Size, fps and length come from the storyboard, so one composition serves every preset. */
+const storyMetadata: CalculateMetadataFunction<StoryProps> = ({ props }) => {
+  const [width, height] = PRESET_SIZE[props.storyboard.preset];
+  const seconds = props.storyboard.scenes.reduce((a, s) => a + s.durationSeconds, 0);
+  return { width, height, fps: STORY_FPS, durationInFrames: Math.max(1, Math.round(seconds * STORY_FPS)) };
+};
+
+const StoryScene: React.FC<{ scene: StoryScene; media: RenderProps['media']; frames: number; color: string; textColor: string; scale: number }> = ({ scene, media, frames, color, textColor, scale }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const fade = scene.transition === 'fade' ? interpolate(frame, [0, 8, frames - 8, frames], [0, 1, 1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }) : 1;
+  const slide = scene.transition === 'slide' ? interpolate(spring({ frame, fps, config: { damping: 200 } }), [0, 1], [100, 0]) : 0;
+  const m = scene.mediaIndex === null ? null : media[scene.mediaIndex];
+  const justify = scene.textPosition === 'top' ? 'flex-start' : scene.textPosition === 'bottom' ? 'flex-end' : 'center';
+  return (
+    <AbsoluteFill style={{ background: scene.background ?? color, opacity: fade, transform: `translateX(${slide}%)` }}>
+      {m ? <AbsoluteFill>{m.mime.startsWith('video/') ? <OffthreadVideo src={staticFile(m.file)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted /> : <Img src={staticFile(m.file)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}</AbsoluteFill> : null}
+      {scene.text ? (
+        <AbsoluteFill style={{ justifyContent: justify, alignItems: 'center', padding: 80 * scale }}>
+          <div style={{ color: textColor, fontFamily: 'Arial, Helvetica, sans-serif', fontSize: 84 * scale, fontWeight: 800, textAlign: 'center', lineHeight: 1.15, textShadow: m ? '0 4px 24px rgba(0,0,0,0.65)' : 'none' }}>{scene.text}</div>
+        </AbsoluteFill>
+      ) : null}
+      {scene.subtitle ? (
+        <div style={{ position: 'absolute', left: 60 * scale, right: 60 * scale, bottom: 120 * scale, textAlign: 'center' }}>
+          <span style={{ background: 'rgba(0,0,0,0.72)', color: '#fff', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: 44 * scale, fontWeight: 600, lineHeight: 1.4, padding: `${8 * scale}px ${16 * scale}px`, borderRadius: 10, boxDecorationBreak: 'clone' }}>{scene.subtitle}</span>
+        </div>
+      ) : null}
+    </AbsoluteFill>
+  );
+};
+
+export const SceneStory: React.FC<StoryProps> = (p) => {
+  const { width, height } = useVideoConfig();
+  const scale = Math.min(width, height) / 1080;
+  const sb = p.storyboard;
+  let from = 0;
+  const audio = sb.audioIndex === null ? null : p.media[sb.audioIndex];
+  return (
+    <AbsoluteFill style={{ background: sb.brandColor }}>
+      {sb.scenes.map((sc) => {
+        const frames = Math.max(1, Math.round(sc.durationSeconds * STORY_FPS));
+        const at = from;
+        from += frames;
+        return (
+          <Sequence key={sc.id} from={at} durationInFrames={frames}>
+            <StoryScene scene={sc} media={p.media} frames={frames} color={sb.brandColor} textColor={sb.textColor} scale={scale} />
+          </Sequence>
+        );
+      })}
+      {audio ? <Audio src={staticFile(audio.file)} /> : null}
+      <EndCard cta={sb.cta} color={sb.brandColor} />
+      <Disclosure text={sb.disclosureText} />
+    </AbsoluteFill>
+  );
+};
+
 const Root: React.FC = () => (
   <>
     <Composition id="product-showcase" component={ProductShowcase} width={1080} height={1920} fps={30} durationInFrames={450} defaultProps={defaults} />
     <Composition id="ugc-captioned" component={UgcCaptioned} width={1080} height={1920} fps={30} durationInFrames={600} defaultProps={defaults} />
     <Composition id="persona-story" component={PersonaStory} width={1080} height={1920} fps={30} durationInFrames={600} defaultProps={defaults} />
+    <Composition id="scene-story" component={SceneStory} width={1080} height={1080} fps={STORY_FPS} durationInFrames={60} defaultProps={storyDefaults} calculateMetadata={storyMetadata} />
   </>
 );
 

@@ -1,0 +1,9 @@
+{
+  "platform": "android",
+  "appId": "com.example.lessons",
+  "installId": "6f1c2a8e-4b3d-4e5f-9a7b-1c2d3e4f5a6b",
+  "userId": "app-user-1001",
+  "installedAt": "2026-10-20T09:15:00.000Z",
+  "installReferrer": "utm_source=facebook&utm_medium=organic_social&utm_campaign=lessons_261020_ab12&utm_content=day-1",
+  "consent": { "analytics": true }
+}

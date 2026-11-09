@@ -72,6 +72,32 @@ export async function api<T = unknown>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' 
   return data as T;
 }
 
+/**
+ * Downloads a file the API produces (e.g. a CSV export) with the same session and organization
+ * header, then hands it to the browser as a file. Nothing is opened in a new window.
+ */
+export async function downloadFile(path: string, fallbackName: string): Promise<{ filename: string; bytes: number }> {
+  const headers: Record<string, string> = { accept: 'text/csv, application/octet-stream' };
+  const tenant = getTenant();
+  if (tenant) headers['x-fg-tenant'] = tenant;
+  const res = await fetch(`${API_BASE}${path}`, { method: 'GET', headers, credentials: 'include' });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string; details?: unknown } } | null;
+    throw new ApiError(data?.error?.message ?? `${res.status} ${res.statusText}`, res.status, data?.error?.code ?? null, data?.error?.details ?? null);
+  }
+  const blob = await res.blob();
+  const filename = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return { filename, bytes: blob.size };
+}
+
 /** Upload raw bytes (M14 assets): metadata travels URI-encoded in a header. */
 export async function uploadBinary<T = unknown>(path: string, file: File, meta: Record<string, unknown>): Promise<T> {
   const headers: Record<string, string> = {

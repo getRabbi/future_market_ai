@@ -1,13 +1,69 @@
 import { type ProviderCredentials, READ_CONNECTORS } from '@futuregrow/connectors';
 import { PROVIDERS } from '@futuregrow/contracts';
-import { connections, type Tx, withTenant } from '@futuregrow/db';
+import { alerts, connections, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../deps.js';
 import { loadCredentials, storeCredentials } from '../secrets.js';
 import { ADMIN_ROLES, audit, record, requireMfa, requireRole } from '../util.js';
 import { connectorContext } from './m23-execution/gateway.js';
+import { raiseAlert } from './m24-governance/index.js';
+
+/**
+ * Credential lifecycle alerts (P1-07): an in-app warning a month before a token expires or loses
+ * data access, and a critical alert a week before (critical tenant alerts also reach the operator
+ * webhook). The connection itself only degrades inside the last week (connector warnings).
+ */
+export const TOKEN_ALERT_DAYS = { warning: 30, critical: 7 } as const;
+const LIFECYCLE_FIELDS = [
+  { key: 'tokenExpiresAt', what: 'access token expires', fix: 'replace it with a long-lived token in Connections' },
+  { key: 'tokenDataAccessUntil', what: 'access token loses data access', fix: 'have a Page admin authorize the app again in Meta and replace the token in Connections (a system-user token does not lapse)' },
+  { key: 'adsTokenExpiresAt', what: 'ads token expires', fix: 'replace it with a long-lived token in Connections' },
+  { key: 'adsTokenDataAccessUntil', what: 'ads token loses data access', fix: 'authorize the app again or switch to a system-user token, then replace it in Connections' },
+] as const;
+const DAY_MS = 86_400_000;
+
+export interface LifecycleAlert {
+  kind: 'connector.token_expiring';
+  severity: 'warning' | 'critical';
+  message: string;
+  dedupKey: string;
+  refs: Record<string, unknown>;
+}
+
+/** Alerts for the dated credential facts a health check reported; never includes a token value. */
+export function tokenLifecycleAlerts(connection: { id: string; displayName: string }, details: Record<string, unknown>, now: Date): LifecycleAlert[] {
+  const out: LifecycleAlert[] = [];
+  for (const f of LIFECYCLE_FIELDS) {
+    const at = details[f.key];
+    const ms = typeof at === 'string' ? Date.parse(at) : Number.NaN;
+    if (!Number.isFinite(ms)) continue; // 'never' or absent
+    const days = Math.ceil((ms - now.getTime()) / DAY_MS);
+    if (days > TOKEN_ALERT_DAYS.warning) continue;
+    const severity = days <= TOKEN_ALERT_DAYS.critical ? 'critical' : 'warning';
+    const date = new Date(ms).toISOString().slice(0, 10);
+    const when = days > 0 ? `on ${date} (in ${days} day${days === 1 ? '' : 's'})` : `on ${date} (already passed)`;
+    out.push({
+      kind: 'connector.token_expiring',
+      severity,
+      message: `Connection "${connection.displayName}": the ${f.what} ${when}. To keep automation running, ${f.fix} before then; after it lapses, posting and reads stop and queued actions wait instead of being attempted.`,
+      dedupKey: `token:${connection.id}:${f.key}:${date}:${severity}`,
+      refs: { connectionId: connection.id, field: f.key, at: new Date(ms).toISOString(), days },
+    });
+  }
+  return out;
+}
+
+/** Raise an alert at most once per dedup key, also after it was acknowledged (health checks run hourly). */
+async function raiseOnce(tx: Tx, tenantId: string, a: { kind: string; severity: 'warning' | 'critical'; message: string; dedupKey: string; refs: Record<string, unknown> }) {
+  const [seen] = await tx
+    .select({ id: alerts.id })
+    .from(alerts)
+    .where(and(eq(alerts.tenantId, tenantId), eq(alerts.dedupKey, a.dedupKey)))
+    .limit(1);
+  if (!seen) await raiseAlert(tx, tenantId, a);
+}
 
 export const ConnectionInputSchema = z.object({
   provider: z.enum(PROVIDERS).exclude(['internal']),
@@ -167,6 +223,17 @@ export async function checkConnectionHealth(deps: CoreDeps, tenantId: string, id
     if (u!.healthStatus !== prep.c.healthStatus || nextStatus !== prep.c.status) {
       await record(tx, tenantId, actor, 'connector.health.changed', { type: 'connection', id }, { from: prep.c.healthStatus, to: result.status, status: nextStatus, details: result.details });
     }
+    if (nextStatus === 'reauth_required' && prep.c.status === 'active') {
+      // Automation on this connection stops here; say so where the owner looks, and to the operator webhook.
+      await raiseAlert(tx, tenantId, {
+        kind: 'connector.reauth_required',
+        severity: 'critical',
+        message: `Connection "${prep.c.displayName}" (${prep.c.provider}) was refused by the provider: its credentials are invalid or expired. Posting and reads through it are paused and queued actions wait, they are not retried. Replace the credentials in Connections.`,
+        refs: { connectionId: id },
+        dedupKey: `reauth:${id}`,
+      });
+    }
+    for (const a of tokenLifecycleAlerts(prep.c, result.details ?? {}, deps.clock.now())) await raiseOnce(tx, tenantId, a);
     return { connection: connectionView(u!), result };
   });
 }

@@ -1,4 +1,4 @@
-import { AnthropicProvider, HOSTED_PROVIDERS, type HostedProvider, type ModelProvider, OpenAICompatibleEmbedder, OpenAICompatibleProvider } from '@futuregrow/agent-kernel';
+import { AnthropicProvider, HOSTED_PROVIDERS, type HostedProvider, type ModelProvider, OpenAICompatibleEmbedder, OpenAICompatibleProvider, OpenAIImageProvider, OpenAISpeechProvider } from '@futuregrow/agent-kernel';
 import { HttpClient } from '@futuregrow/connectors';
 import { buildCoreConfig, type CoreDeps, createModelGateway, DeprecationRecorder, type JobQueue, type knowledge, ops, systemClock } from '@futuregrow/core';
 import { configureTenantRole, createDb, probeDatabase } from '@futuregrow/db';
@@ -94,6 +94,10 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
     if (apiKey) providers[name] = new OpenAICompatibleProvider({ ...HOSTED_PROVIDERS[name], name, apiKey });
   }
   if (env.OPENAI_COMPATIBLE_BASE_URL) providers.openai_compatible = new OpenAICompatibleProvider({ baseUrl: env.OPENAI_COMPATIBLE_BASE_URL, ...(env.OPENAI_COMPATIBLE_API_KEY ? { apiKey: env.OPENAI_COMPATIBLE_API_KEY } : {}) });
+  // Image models (P3-02): the provider is only called for a registry-approved, priced image model.
+  if (env.OPENAI_API_KEY) deps.images = { openai: new OpenAIImageProvider({ apiKey: env.OPENAI_API_KEY }) };
+  // Never called unless a speech model is approved and priced in the registry and a licence record exists.
+  if (env.OPENAI_API_KEY) deps.speech = { openai: new OpenAISpeechProvider({ apiKey: env.OPENAI_API_KEY }) };
   if (Object.keys(providers).length) {
     deps.models = createModelGateway(deps, providers, secrets);
   } else {

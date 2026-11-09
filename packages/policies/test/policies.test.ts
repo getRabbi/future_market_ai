@@ -318,7 +318,7 @@ describe('policy engine', () => {
     const ok = evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, facts: lessonFacts() }));
     expect(ok.outcome).toBe('PRE_AUTHORIZED');
     expect(ok.reasons).toEqual([expect.objectContaining({ code: 'ORGANIC_EDUCATIONAL_POST', message: expect.stringMatching(/verified curriculum content/) })]);
-    expect(ok.policyVersion).toBe('fg-policy-1.4.0');
+    expect(ok.policyVersion).toBe('fg-policy-1.5.0');
     // Mentioning the app without an approved claim, or citing no curriculum unit at all: back to the legal path.
     expect(evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, facts: lessonFacts({ mentionsProduct: true }) })).outcome).toBe('REQUIRE_APPROVAL');
     expect(evaluatePolicy(fbInput({ message: LESSON, params: { claimIds: [] }, facts: lessonFacts({ curriculum: null }) })).outcome).toBe('REQUIRE_APPROVAL');

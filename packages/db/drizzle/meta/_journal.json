@@ -120,6 +120,55 @@
       "when": 1793903603487,
       "tag": "0016_store_reporting",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794124038939,
+      "tag": "0017_p2_providers",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794124358412,
+      "tag": "0018_universal_studio",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794125686347,
+      "tag": "0019_media_creation",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794127112730,
+      "tag": "0020_channels_paid",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794128331783,
+      "tag": "0021_business_ops",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794161057129,
+      "tag": "0022_research_compliance",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794170430040,
+      "tag": "0023_voiceover",
+      "breakpoints": true
     }
   ]
 }

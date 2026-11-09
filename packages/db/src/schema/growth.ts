@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, index, integer, pgTable, primaryKey, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, date, index, integer, pgTable, primaryKey, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { createdAt, dbl, json, micros, oneOf, pk, rawCheck, tenantId, textArray, ts, updatedAt, uuidArray } from './_common.js';
 
 /* ------------------------------------------------------------------ */
@@ -133,7 +133,7 @@ export const assets = pgTable(
     createdBy: text('created_by').notNull(),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex('assets_sha_uq').on(t.tenantId, t.sha256), oneOf('assets_kind_chk', t.kind, ['image', 'video', 'audio', 'font', 'caption']), oneOf('assets_origin_chk', t.origin, ['upload', 'render', 'generated'])],
+  (t) => [uniqueIndex('assets_sha_uq').on(t.tenantId, t.sha256), oneOf('assets_kind_chk', t.kind, ['image', 'video', 'audio', 'font', 'caption']), oneOf('assets_origin_chk', t.origin, ['upload', 'render', 'generated', 'stock'])],
 );
 
 /** Rights of each component that went into an asset (source media, music, voice, likeness...). */
@@ -179,7 +179,101 @@ export const renderJobs = pgTable(
     startedAt: ts('started_at'),
     finishedAt: ts('finished_at'),
   },
-  (t) => [index('render_jobs_queue_idx').on(t.status, t.requestedAt), oneOf('render_jobs_composition_chk', t.composition, ['product_showcase', 'ugc_captioned', 'persona_story']), oneOf('render_jobs_status_chk', t.status, ['queued', 'rendering', 'completed', 'failed', 'blocked_license'])],
+  (t) => [index('render_jobs_queue_idx').on(t.status, t.requestedAt), oneOf('render_jobs_composition_chk', t.composition, ['product_showcase', 'ugc_captioned', 'persona_story', 'scene_story']), oneOf('render_jobs_status_chk', t.status, ['queued', 'rendering', 'completed', 'failed', 'blocked_license'])],
+);
+
+/**
+ * Asynchronous media acquisition (P3-02 AI images, P3-03 stock imports): a job is queued, leased by
+ * one worker, and succeeds only with a stored, hashed asset carrying its provenance and rights.
+ */
+export const mediaJobs = pgTable(
+  'media_jobs',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    kind: text('kind').notNull(),
+    provider: text('provider').notNull(),
+    modelId: text('model_id'),
+    connectionId: uuid('connection_id'),
+    status: text('status').notNull().default('queued'),
+    statusReason: text('status_reason'),
+    /** Prompt, format, stock item id and media type: everything the job needs, hashed below. */
+    request: json<Record<string, unknown>>('request').notNull(),
+    requestSha256: text('request_sha256').notNull(),
+    assetId: uuid('asset_id'),
+    costUsd: dbl('cost_usd'),
+    provenance: json<Record<string, unknown>>('provenance').notNull().default({}),
+    attempts: integer('attempts').notNull().default(0),
+    leaseOwner: text('lease_owner'),
+    leaseUntil: ts('lease_until'),
+    nextAttemptAt: ts('next_attempt_at'),
+    requestedBy: text('requested_by').notNull(),
+    requestedAt: ts('requested_at').notNull().defaultNow(),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [
+    index('media_jobs_queue_idx').on(t.status, t.nextAttemptAt),
+    index('media_jobs_tenant_idx').on(t.tenantId, t.requestedAt),
+    oneOf('media_jobs_kind_chk', t.kind, ['ai_image', 'stock_import', 'voiceover']),
+    oneOf('media_jobs_status_chk', t.status, ['queued', 'running', 'succeeded', 'failed', 'blocked', 'refused']),
+  ],
+);
+
+/** Source tracking for licensed stock media: one row per imported provider item and format (dedupe, licence, revocation). */
+export const stockAssets = pgTable(
+  'stock_assets',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    provider: text('provider').notNull(),
+    externalId: text('external_id').notNull(),
+    mediaType: text('media_type').notNull(),
+    format: text('format').notNull(),
+    assetId: uuid('asset_id')
+      .notNull()
+      .references(() => assets.id, { onDelete: 'cascade' }),
+    pageUrl: text('page_url').notNull(),
+    author: text('author').notNull(),
+    authorUrl: text('author_url'),
+    attribution: text('attribution').notNull(),
+    license: json<Record<string, unknown>>('license').notNull(),
+    artifactLicenseId: uuid('artifact_license_id').notNull(),
+    importedBy: text('imported_by').notNull(),
+    importedAt: ts('imported_at').notNull().defaultNow(),
+    revokedAt: ts('revoked_at'),
+    revokedReason: text('revoked_reason'),
+  },
+  (t) => [uniqueIndex('stock_assets_item_uq').on(t.tenantId, t.provider, t.externalId, t.mediaType, t.format), oneOf('stock_assets_media_chk', t.mediaType, ['photo', 'video'])],
+);
+
+/**
+ * Video Studio (P3-04): idea → script → storyboard → scenes → assets → render → QA → preview →
+ * export → publish. The storyboard (scenes with text, duration, media and transitions) is the
+ * render's input; the render job and its MP4, thumbnail and subtitle assets are linked here.
+ */
+export const videoProjects = pgTable(
+  'video_projects',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    brandId: uuid('brand_id'),
+    title: text('title').notNull(),
+    status: text('status').notNull().default('storyboard'),
+    statusReason: text('status_reason'),
+    preset: text('preset').notNull(),
+    storyboard: json<Record<string, unknown>>('storyboard').notNull(),
+    renderJobId: uuid('render_job_id'),
+    outputAssetId: uuid('output_asset_id'),
+    thumbnailAssetId: uuid('thumbnail_asset_id'),
+    subtitlesAssetId: uuid('subtitles_asset_id'),
+    qa: json<Record<string, unknown>>('qa').notNull().default({}),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('video_projects_tenant_idx').on(t.tenantId, t.updatedAt), oneOf('video_projects_status_chk', t.status, ['storyboard', 'rendering', 'qa_failed', 'ready', 'failed'])],
 );
 
 export const syntheticPersonas = pgTable(
@@ -610,6 +704,9 @@ export const conversations = pgTable(
     authenticated: boolean('authenticated').notNull().default(false),
     status: text('status').notNull().default('open'),
     assignedUserId: text('assigned_user_id'),
+    /** Chatwoot conversation this one was handed off to (P2-12); null when not mirrored. */
+    chatwootConversationId: integer('chatwoot_conversation_id'),
+    handoffStatus: text('handoff_status'),
     startedAt: ts('started_at').notNull().defaultNow(),
     lastMessageAt: ts('last_message_at').notNull().defaultNow(),
   },
@@ -627,13 +724,15 @@ export const conversationMessages = pgTable(
     role: text('role').notNull(),
     text: text('text').notNull(),
     redactedText: text('redacted_text').notNull(),
+    /** Provider message id for mirrored messages (e.g. chatwoot:123): each delivery is stored once. */
+    externalId: text('external_id'),
     citations: json<unknown[]>('citations').notNull().default([]),
     confidence: dbl('confidence'),
     handoffReason: text('handoff_reason'),
     modelInfo: json<Record<string, unknown> | null>('model_info'),
     createdAt: createdAt(),
   },
-  (t) => [index('conversation_messages_conv_idx').on(t.conversationId, t.createdAt), oneOf('conversation_messages_role_chk', t.role, ['customer', 'assistant', 'human_agent', 'system'])],
+  (t) => [index('conversation_messages_conv_idx').on(t.conversationId, t.createdAt), uniqueIndex('conversation_messages_external_uq').on(t.tenantId, t.externalId), oneOf('conversation_messages_role_chk', t.role, ['customer', 'assistant', 'human_agent', 'system'])],
 );
 
 export const supportTickets = pgTable(
@@ -817,4 +916,170 @@ export const fraudFlags = pgTable(
     createdAt: createdAt(),
   },
   (t) => [oneOf('fraud_flags_kind_chk', t.kind, ['click_velocity', 'self_referral', 'refund_rate', 'duplicate_customer', 'incentivized_review']), oneOf('fraud_flags_status_chk', t.status, ['open', 'dismissed', 'confirmed'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* P3-05 Multi-platform analytics                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One provider-reported value of one platform metric for an account or a post, per observation
+ * day. Values are never summed across platforms; a metric the provider did not return is stored
+ * as not_returned with a null value (unknown, never zero). A re-read on the same day revises it.
+ */
+export const socialMetricObservations = pgTable(
+  'social_metric_observations',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    connectionId: uuid('connection_id').notNull(),
+    platform: text('platform').notNull(),
+    scope: text('scope').notNull(),
+    objectRef: text('object_ref').notNull(),
+    postId: uuid('post_id'),
+    metricKey: text('metric_key').notNull(),
+    value: dbl('value'),
+    status: text('status').notNull(),
+    observedOn: date('observed_on', { mode: 'string' }).notNull(),
+    observedAt: ts('observed_at').notNull(),
+    revision: integer('revision').notNull().default(1),
+    source: json<Record<string, unknown>>('source').notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('social_metric_obs_uq').on(t.tenantId, t.platform, t.scope, t.objectRef, t.metricKey, t.observedOn),
+    index('social_metric_obs_conn_idx').on(t.tenantId, t.connectionId, t.observedOn),
+    oneOf('social_metric_obs_scope_chk', t.scope, ['account', 'post']),
+    oneOf('social_metric_obs_status_chk', t.status, ['reported', 'not_returned']),
+    oneOf('social_metric_obs_platform_chk', t.platform, ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin', 'x']),
+  ],
+);
+
+/** Each analytics import: what was asked, what came back, and why it failed (freshness and diagnostics). */
+export const socialAnalyticsRuns = pgTable(
+  'social_analytics_runs',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    connectionId: uuid('connection_id').notNull(),
+    platform: text('platform').notNull(),
+    status: text('status').notNull(),
+    counts: json<Record<string, unknown>>('counts').notNull().default({}),
+    error: text('error'),
+    startedAt: ts('started_at').notNull().defaultNow(),
+    finishedAt: ts('finished_at'),
+  },
+  (t) => [index('social_analytics_runs_idx').on(t.tenantId, t.connectionId, t.startedAt), oneOf('social_analytics_runs_status_chk', t.status, ['running', 'succeeded', 'partial', 'failed'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* P3-06 Paid campaign creation (M17)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A paid campaign being prepared: brief → objective → targeting → budget → creative → review →
+ * approval (M23, finance + two-factor) → create (PAUSED) → verify → monitor. The spec is the
+ * exact action payload that M23 hashes and the approver signs.
+ */
+export const paidCampaignDrafts = pgTable(
+  'paid_campaign_drafts',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    brandId: uuid('brand_id'),
+    platform: text('platform').notNull(),
+    connectionId: uuid('connection_id').notNull(),
+    name: text('name').notNull(),
+    status: text('status').notNull().default('draft'),
+    statusReason: text('status_reason'),
+    brief: json<Record<string, unknown>>('brief').notNull().default({}),
+    spec: json<Record<string, unknown>>('spec').notNull(),
+    geographies: textArray('geographies').notNull().default(sql`'{}'::text[]`),
+    evidenceIds: uuidArray('evidence_ids').notNull().default(sql`'{}'::uuid[]`),
+    problems: json<string[]>('problems').notNull().default([]),
+    actionId: uuid('action_id'),
+    externalCampaignId: text('external_campaign_id'),
+    createdBy: text('created_by').notNull(),
+    updatedBy: text('updated_by'),
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('paid_campaign_drafts_idx').on(t.tenantId, t.updatedAt), oneOf('paid_campaign_drafts_platform_chk', t.platform, ['meta', 'google_ads']), oneOf('paid_campaign_drafts_status_chk', t.status, ['draft', 'submitted', 'created', 'failed', 'cancelled'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* P2-11 PostHog forwarding                                            */
+/* ------------------------------------------------------------------ */
+
+/** Forwarding of consented events to an analytics destination: on/off, cursor and counters (idempotent by event uuid). */
+export const eventForwarding = pgTable(
+  'event_forwarding',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    destination: text('destination').notNull(),
+    connectionId: uuid('connection_id').notNull(),
+    enabled: boolean('enabled').notNull().default(false),
+    cursorReceivedAt: ts('cursor_received_at'),
+    cursorEventId: uuid('cursor_event_id'),
+    forwarded: integer('forwarded').notNull().default(0),
+    skippedNoConsent: integer('skipped_no_consent').notNull().default(0),
+    lastRunAt: ts('last_run_at'),
+    lastStatus: text('last_status'),
+    lastError: text('last_error'),
+    updatedBy: text('updated_by'),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('event_forwarding_dest_uq').on(t.tenantId, t.destination, t.connectionId), oneOf('event_forwarding_dest_chk', t.destination, ['posthog'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* P2-14 Creator payouts                                               */
+/* ------------------------------------------------------------------ */
+
+/** What must be true before a creator can be paid: destination, identity/KYC and tax evidence. */
+export const creatorPayoutProfiles = pgTable(
+  'creator_payout_profiles',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    creatorId: uuid('creator_id').notNull(),
+    provider: text('provider').notNull(),
+    /** Receiver at the provider (e.g. PayPal email); stored only for payout execution. */
+    receiver: text('receiver').notNull(),
+    kycStatus: text('kyc_status').notNull().default('not_started'),
+    kycEvidenceId: uuid('kyc_evidence_id'),
+    taxFormEvidenceId: uuid('tax_form_evidence_id'),
+    country: text('country'),
+    updatedBy: text('updated_by').notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('creator_payout_profiles_uq').on(t.tenantId, t.creatorId), oneOf('creator_payout_profiles_kyc_chk', t.kycStatus, ['not_started', 'pending', 'verified', 'rejected'])],
+);
+
+/**
+ * One payout request: the readiness check at request time, the M23 action, the provider batch and
+ * its reconciliation. A request is only "paid" after the provider reports the batch as paid.
+ */
+export const payoutRequests = pgTable(
+  'payout_requests',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    creatorId: uuid('creator_id').notNull(),
+    status: text('status').notNull(),
+    amounts: json<{ currency: string; amountMicros: number }[]>('amounts').notNull(),
+    readiness: json<Record<string, unknown>>('readiness').notNull(),
+    blockers: textArray('blockers').notNull().default(sql`'{}'::text[]`),
+    actionId: uuid('action_id'),
+    providerBatchId: text('provider_batch_id'),
+    providerStatus: text('provider_status'),
+    reconciledAt: ts('reconciled_at'),
+    dispute: json<Record<string, unknown> | null>('dispute'),
+    requestedBy: text('requested_by').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('payout_requests_creator_idx').on(t.tenantId, t.creatorId, t.createdAt), oneOf('payout_requests_status_chk', t.status, ['blocked', 'proposed', 'approved', 'sent', 'paid', 'failed', 'denied', 'disputed', 'cancelled'])],
 );

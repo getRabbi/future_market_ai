@@ -196,6 +196,10 @@ export const modelRegistry = pgTable(
     approvedAt: ts('approved_at'),
     inputUsdPerMtok: dbl('input_usd_per_mtok'),
     outputUsdPerMtok: dbl('output_usd_per_mtok'),
+    /** Image models (P3-02): price of one generated image at the default quality. */
+    usdPerImage: dbl('usd_per_image'),
+    /** Speech models: price per million input characters; speech models without a price are never used. */
+    usdPerMillionChars: dbl('usd_per_million_chars'),
     status: text('status').notNull().default('active'),
     eolAt: ts('eol_at'),
     createdAt: createdAt(),
@@ -557,7 +561,7 @@ export const costLedger = pgTable(
     metadata: json<Record<string, unknown>>('metadata').notNull().default({}),
     occurredAt: ts('occurred_at').notNull().defaultNow(),
   },
-  (t) => [oneOf('cost_ledger_category_chk', t.category, ['llm', 'embedding', 'media_render', 'api', 'analytics', 'storage']), index('cost_ledger_tenant_time_idx').on(t.tenantId, t.occurredAt)],
+  (t) => [oneOf('cost_ledger_category_chk', t.category, ['llm', 'embedding', 'image_generation', 'speech_generation', 'media_render', 'api', 'analytics', 'storage']), index('cost_ledger_tenant_time_idx').on(t.tenantId, t.occurredAt)],
 );
 
 /**
@@ -624,4 +628,31 @@ export const apiDeprecationSignals = pgTable(
     lastSeenAt: ts('last_seen_at').notNull().defaultNow(),
   },
   (t) => [uniqueIndex('api_deprecation_signals_uq').on(t.provider, t.apiVersion, t.signal, t.endpoint), oneOf('api_deprecation_signals_signal_chk', t.signal, ['deprecation_header', 'sunset_header', 'provider_warning', 'version_upgraded', 'registry_eol'])],
+);
+
+/**
+ * Legal, policy and licensing readiness (P2-15): one record per review item. Approval needs a named
+ * reviewer, a document reference, admitted evidence and the content hash it covers; it expires.
+ * Code checks these records before gated features run; tests never stand in for the review.
+ */
+export const complianceItems = pgTable(
+  'compliance_items',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    key: text('key').notNull(),
+    status: text('status').notNull().default('not_started'),
+    reviewerName: text('reviewer_name'),
+    reviewerRole: text('reviewer_role'),
+    reviewedAt: ts('reviewed_at'),
+    documentRef: text('document_ref'),
+    evidenceId: uuid('evidence_id'),
+    contentSha256: text('content_sha256'),
+    note: text('note'),
+    expiresAt: ts('expires_at'),
+    decidedBy: text('decided_by'),
+    decidedAt: ts('decided_at'),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('compliance_items_uq').on(t.tenantId, t.key), oneOf('compliance_items_status_chk', t.status, ['not_started', 'in_review', 'approved', 'rejected'])],
 );

@@ -1,4 +1,4 @@
-import { autopilot, brain, competitorsModule, contentStudio, customers, governance, knowledge, registerEventHandlers, systemActor } from '@futuregrow/core';
+import { autopilot, brain, competitorsModule, contentStudio, customers, eventForwarding, governance, knowledge, media, registerEventHandlers, systemActor } from '@futuregrow/core';
 import { competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
 import { loadEnv, triggerNorthflankJob } from '@futuregrow/runtime';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
@@ -46,6 +46,61 @@ registerTasks((deps) => ({
         if (r.expired || r.superseded) deps.logger.info({ tenantId, ...r }, 'stale studio drafts closed');
       }),
     );
+  },
+
+  /** PostHog forwarding (P2-11): only enabled destinations, only consented events; failures leave the cursor in place. */
+  posthog_forward: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      const rows = await withTenant(deps.db, { tenantId, actor: 'system:event-forwarding' }, (tx) => eventForwarding.forwardingStatus(tx));
+      for (const r of rows.filter((x) => x.enabled)) {
+        const out = await eventForwarding.forwardEvents(deps, tenantId, r.connectionId);
+        if (out.status === 'failed') deps.logger.warn({ tenantId, connectionId: r.connectionId, error: out.error }, 'posthog forwarding failed; will retry');
+      }
+    });
+  },
+
+  /** Stock imports and AI images (P3-02/P3-03): up to five queued media jobs per tick, each leased and crash-safe. */
+  media_jobs_tick: async () => {
+    for (let i = 0; i < 5; i++) {
+      const r = await media.sources.processNextMediaJob(deps);
+      if (r.kind === 'none') break;
+      deps.logger.info({ job: r.jobId, outcome: r.kind, ...('reason' in r ? { reason: r.reason } : {}) }, 'media job processed');
+    }
+  },
+
+  /** Video Studio: rendering projects advance only from their render job's real outcome (ready, QA failed, failed). */
+  video_projects_sync: async () => {
+    await forEachTenant(deps, (tenantId) =>
+      withTenant(deps.db, { tenantId, actor: 'system:video-studio' }, async (tx) => {
+        const n = await media.video.syncVideoProjects(tx, tenantId);
+        if (n) deps.logger.info({ tenantId, projects: n }, 'video projects advanced');
+      }),
+    );
+  },
+
+  /** Stock assets whose licence record was withdrawn stop being publish-eligible. */
+  stock_licence_sweep: async () => {
+    await forEachTenant(deps, (tenantId) =>
+      withTenant(deps.db, { tenantId, actor: 'system:media-sources' }, async (tx) => {
+        const n = await media.sources.recheckStockLicences(tx, deps, tenantId);
+        if (n) deps.logger.warn({ tenantId, assets: n }, 'stock assets lost their licence');
+      }),
+    );
+  },
+
+  /** Universal Studio (P3-01): scheduled items advance only from their post's real state (verified, failed, measured, learned). */
+  studio_items_sync: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      const programs = await withTenant(deps.db, { tenantId, actor: 'system:universal-studio' }, (tx) => contentStudio.universal.listGeneralPrograms(tx));
+      for (const p of programs) {
+        try {
+          const r = await contentStudio.universal.syncProgramItems(deps, tenantId, p.id);
+          if (r.verified || r.failed || r.measured || r.learned) deps.logger.info({ tenantId, programId: p.id, ...r }, 'studio items advanced');
+        } catch (err) {
+          deps.logger.warn({ tenantId, programId: p.id, err: err instanceof Error ? err.message : String(err) }, 'studio items sync failed');
+        }
+      }
+    });
   },
 
   /** Autopilot (D-033): queue goals with due work; runs without any browser session. */
@@ -102,4 +157,16 @@ registerEventHandlers((bus, deps) => {
   });
 });
 
-export const MODULE_CRONTAB = ['* * * * * autopilot_tick', '13 * * * * competitor_crawl', '41 2 * * * claims_sweep', '19 * * * * studio_drafts_sweep', '53 3 * * * retention_sweep', '27 6 * * * brain_cycle'];
+export const MODULE_CRONTAB = [
+  '* * * * * autopilot_tick',
+  '13 * * * * competitor_crawl',
+  '41 2 * * * claims_sweep',
+  '19 * * * * studio_drafts_sweep',
+  '*/15 * * * * studio_items_sync',
+  '* * * * * media_jobs_tick',
+  '*/5 * * * * posthog_forward',
+  '*/2 * * * * video_projects_sync',
+  '33 4 * * * stock_licence_sweep',
+  '53 3 * * * retention_sweep',
+  '27 6 * * * brain_cycle',
+];

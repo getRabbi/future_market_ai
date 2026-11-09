@@ -357,3 +357,5 @@ export async function listCompetitors(tx: DbOrTx) {
   const [cs, sources] = await sequential([tx.select().from(competitors).orderBy(competitors.name), tx.select().from(competitorSources)]);
   return cs.map((c) => ({ ...c, sources: sources.filter((s) => s.competitorId === c.id) }));
 }
+
+export * as sandbox from './sandbox.js';

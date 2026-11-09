@@ -1,7 +1,8 @@
 import { LIFECYCLE_PROVIDERS } from '@futuregrow/connectors';
 import { JurisdictionApprovalSchema, JurisdictionRuleDraftSchema, KILL_SWITCH_SCOPES, listActionTypes, MODULES } from '@futuregrow/contracts';
-import { apiLifecycle, connectionsModule, evidence, execution, getAiBudget, governance, recordApiSunset } from '@futuregrow/core';
+import { apiLifecycle, connectionsModule, conversationsModule, eventForwarding, evidence, execution, getAiBudget, governance, integrations, recordApiSunset } from '@futuregrow/core';
 import { alerts, artifactLicenses, authAccount, authUser, incidents, killSwitches, member, organization, platformCapabilities, withSystem } from '@futuregrow/db';
+import { FgError } from '@futuregrow/observability';
 import type { Env } from '@futuregrow/runtime';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -121,6 +122,10 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
           dataRetentionTerms: z.string().min(3),
           inputUsdPerMtok: z.number().nonnegative().nullable(),
           outputUsdPerMtok: z.number().nonnegative().nullable(),
+          /** Image models: price of one image; image models without a price are never used. */
+          usdPerImage: z.number().positive().max(5).nullable().optional(),
+          /** Speech models: price per million input characters; speech models without a price are never used. */
+          usdPerMillionChars: z.number().positive().max(1000).nullable().optional(),
         }),
       },
     },
@@ -149,6 +154,30 @@ export function registerCoreRoutes(app: FastifyInstance, ctx: ApiContext, env: P
 
   /* ---------------- connections ---------------- */
   r.get('/v1/connections', { schema: { tags: ['connections'] } }, async (req) => tenantTx(ctx, req, (tx) => connectionsModule.listConnections(tx)));
+  r.get('/v1/integrations', { schema: { tags: ['connections'] } }, async (req) => tenantTx(ctx, req, (tx) => integrations.integrationCatalog(tx, deps.clock.now())));
+  /** The URL to paste into Chatwoot › Integrations › Webhooks (owner/admin only; the path token authenticates deliveries). */
+  r.get('/v1/connections/:id/webhook-url', { schema: { tags: ['connections'], params: Id } }, async (req) =>
+    tenantTx(ctx, req, async (tx) => {
+      const a = actorOf(req);
+      if (!a.roles.some((r) => r === 'owner' || r === 'admin')) throw new FgError('FORBIDDEN', 'only owners and admins can see webhook URLs', 403);
+      const [c] = (await connectionsModule.listConnections(tx)).filter((x) => x.id === req.params.id);
+      if (c?.provider !== 'chatwoot') throw new FgError('INVALID', 'webhook URLs are issued for Chatwoot connections', 400);
+      return { url: `${deps.config.apiBaseUrl.replace(/\/$/, '')}/webhooks/chatwoot/${c.id}/${conversationsModule.chatwootWebhookToken(deps.config.identifierPepper, c.id)}`, events: ['message_created', 'conversation_status_changed'] };
+    }),
+  );
+  /* Legal, policy and licensing readiness (P2-15). */
+  r.get('/v1/governance/compliance', { schema: { tags: ['governance'] } }, async (req) => tenantTx(ctx, req, (tx) => governance.compliance.complianceChecklist(tx, deps.clock.now())));
+  r.put('/v1/governance/compliance/:key', { schema: { tags: ['governance'], params: z.object({ key: z.string().regex(/^[a-z_]{3,40}$/) }), body: z.record(z.string(), z.unknown()) } }, async (req) =>
+    tenantTx(ctx, req, (tx) => governance.compliance.recordComplianceReview(tx, tenantOf(req), actorOf(req), req.params.key, req.body, deps.clock.now())),
+  );
+  /* PostHog forwarding (P2-11): off until enabled; consented events only. */
+  r.get('/v1/customers/forwarding', { schema: { tags: ['customers'] } }, async (req) => tenantTx(ctx, req, (tx) => eventForwarding.forwardingStatus(tx)));
+  r.put('/v1/customers/forwarding/:id', { schema: { tags: ['customers'], params: Id, body: z.object({ enabled: z.boolean() }).strict() } }, async (req) => tenantTx(ctx, req, (tx) => eventForwarding.setForwarding(tx, tenantOf(req), actorOf(req), req.params.id, req.body.enabled)));
+  r.post('/v1/customers/forwarding/:id/run', { schema: { tags: ['customers'], params: Id } }, async (req) => {
+    const a = actorOf(req);
+    if (!a.roles.some((r) => r === 'owner' || r === 'admin')) throw new FgError('FORBIDDEN', 'only owners and admins can run forwarding', 403);
+    return eventForwarding.forwardEvents(deps, tenantOf(req), req.params.id);
+  });
   r.post('/v1/connections', { schema: { tags: ['connections'], body: z.record(z.string(), z.unknown()) } }, async (req, reply) => reply.status(201).send(await connectionsModule.createConnection(deps, tenantOf(req), actorOf(req), req.body)));
   r.post('/v1/connections/:id/credentials', { schema: { tags: ['connections'], params: Id, body: z.object({ credentials: z.record(z.string(), z.unknown()), credentialsExpireAt: z.string().datetime({ offset: true }).nullable().optional(), metadata: z.record(z.string(), z.unknown()).optional() }) } }, async (req) =>
     connectionsModule.rotateConnectionCredentials(deps, tenantOf(req), actorOf(req), req.params.id, req.body),

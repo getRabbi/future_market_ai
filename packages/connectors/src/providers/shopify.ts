@@ -166,3 +166,34 @@ export const shopifyRead: ReadConnector = {
     }
   },
 };
+
+/* --------------------------- Product and inventory context (P2-09, read-only) --------------------------- */
+
+export interface ShopifyProduct {
+  id: string;
+  title: string;
+  handle: string;
+  status: string;
+  totalInventory: number | null;
+  onlineStoreUrl: string | null;
+  variants: { id: string; sku: string | null; price: string; inventoryQuantity: number | null }[];
+}
+
+/** Active products with prices and inventory (read_products, read_inventory); at most `max` products, paged by cursor. */
+export async function shopifyListProducts(ctx: ConnectorContext, max = 250): Promise<{ products: ShopifyProduct[]; currency: string | null }> {
+  type Page = { shop: { currencyCode: string }; products: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: (Omit<ShopifyProduct, 'variants'> & { variants: { nodes: ShopifyProduct['variants'] } })[] } };
+  const q = `query($after: String) { shop { currencyCode } products(first: 50, after: $after, query: "status:active") { pageInfo { hasNextPage endCursor } nodes { id title handle status totalInventory onlineStoreUrl variants(first: 20) { nodes { id sku price inventoryQuantity } } } } }`;
+  const products: ShopifyProduct[] = [];
+  let after: string | null = null;
+  let currency: string | null = null;
+  while (products.length < max) {
+    const r: Awaited<ReturnType<typeof gql<Page>>> = await gql<Page>(ctx, q, { after }, true);
+    const d: Page | undefined = r.data.data;
+    if (!d) break;
+    currency = d.shop.currencyCode;
+    for (const p of d.products.nodes) products.push({ ...p, variants: p.variants.nodes });
+    if (!d.products.pageInfo.hasNextPage || !d.products.pageInfo.endCursor) break;
+    after = d.products.pageInfo.endCursor;
+  }
+  return { products: products.slice(0, max), currency };
+}

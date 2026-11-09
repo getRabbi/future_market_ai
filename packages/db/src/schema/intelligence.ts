@@ -219,10 +219,48 @@ export const reaJobs = pgTable(
     legalApproved: boolean('legal_approved').notNull(),
     status: text('status').notNull(),
     statusReason: text('status_reason'),
+    /** P3-09: the allowlisted target, resource limits, isolated runner, second approval and output quarantine. */
+    targetId: uuid('target_id'),
+    purpose: text('purpose'),
+    limits: json<Record<string, unknown>>('limits'),
+    runner: text('runner'),
+    approvedBy: text('approved_by'),
+    approvedAt: ts('approved_at'),
+    startedAt: ts('started_at'),
+    finishedAt: ts('finished_at'),
+    terminatedBy: text('terminated_by'),
+    quarantine: json<Record<string, unknown>>('quarantine'),
     createdBy: text('created_by').notNull(),
     createdAt: createdAt(),
   },
-  (t) => [oneOf('rea_jobs_status_chk', t.status, ['registered', 'blocked_no_sandbox', 'rejected']), rawCheck('rea_jobs_legal_chk', sql`${t.legalApproved} = true`)],
+  (t) => [oneOf('rea_jobs_status_chk', t.status, ['registered', 'blocked_no_sandbox', 'rejected', 'pending_approval', 'approved', 'refused', 'running', 'completed', 'failed', 'terminated']), rawCheck('rea_jobs_legal_chk', sql`${t.legalApproved} = true`)],
+);
+
+/** P3-09: research targets the tenant is authorized to analyse (allowlist with legal evidence and expiry). */
+export const researchTargets = pgTable(
+  'research_targets',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    kind: text('kind').notNull(),
+    value: text('value').notNull(),
+    description: text('description').notNull(),
+    ownership: text('ownership').notNull(),
+    authorizationEvidenceId: uuid('authorization_evidence_id').notNull(),
+    allowedHosts: textArray('allowed_hosts').notNull().default(sql`'{}'::text[]`),
+    status: text('status').notNull().default('active'),
+    approvedBy: text('approved_by').notNull(),
+    approvedAt: ts('approved_at').notNull(),
+    expiresAt: ts('expires_at').notNull(),
+    revokedAt: ts('revoked_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('research_targets_uq').on(t.tenantId, t.kind, t.value),
+    oneOf('research_targets_kind_chk', t.kind, ['artifact', 'package', 'domain']),
+    oneOf('research_targets_status_chk', t.status, ['active', 'revoked']),
+    oneOf('research_targets_ownership_chk', t.ownership, ['owned_by_tenant', 'licensed_with_analysis_rights', 'explicit_written_authorization']),
+  ],
 );
 
 /* ------------------------------------------------------------------ */

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type Me } from '../lib/api.js';
 import { readableText, relativeTime } from '../lib/format.js';
+import { UniversalStudio } from './UniversalStudio.js';
 import { Badge, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
 
 /** Every API call this screen makes (checked against the API's routes in catalog.test.ts). */
@@ -32,8 +33,19 @@ export interface Program {
   id: string;
   connectionId: string;
   pack: string;
+  kind?: 'curriculum' | 'general';
   status: 'active' | 'paused';
-  settings: { appCtaPerWeek?: number; linkPerWeek?: number; campaign?: string };
+  settings: { appCtaPerWeek?: number; linkPerWeek?: number; campaign?: string; campaignIdentity?: 'shared' | 'per_post' };
+}
+export interface StoreAttribution {
+  campaign: string;
+  status: 'awaiting_reports' | 'reported' | 'not_listed';
+  windowStart: string;
+  windowEnd: string;
+  reportedThrough: string | null;
+  acquisitions: number | null;
+  visitors: number | null;
+  daysListed: number;
 }
 export interface PlanItem {
   id: string;
@@ -51,9 +63,11 @@ export interface PlanItem {
   learningEligible: boolean;
   metrics: { reactions?: number | null; comments?: number | null; shares?: number | null; url?: string | null; observedAt?: string };
   unit: { korean: string } | null;
+  storeAttribution?: StoreAttribution | null;
 }
 export interface StudioOverview {
   program: Program;
+  campaignIdentity?: 'shared' | 'per_post';
   today: string;
   calendar: PlanItem[];
   history: PlanItem[];
@@ -85,12 +99,37 @@ export const KIND: Record<string, string> = { vocab: 'Word', hangul: 'Hangul', g
 export const OBJECTIVE: Record<string, string> = { EDUCATE: 'Teach', ENGAGE: 'Ask for answers', DISCOVER: 'Mention the app', VISIT_APP: 'Store link', INSTALL_APP: 'Install', RETAIN: 'Return' };
 const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-/** Content studio (D-040): the Page's daily lesson posts, their cards and results, and the community workspace. */
+/**
+ * Content studio: brand programs for any business (Universal Studio, P3-01) and the Page's daily
+ * lesson posts (D-040), their cards and results, and the community workspace.
+ */
 export function ContentStudioView({ me }: { me: Me }) {
-  const programs = useApi<Program[]>('/v1/content/programs');
+  const all = useApi<Program[]>('/v1/content/programs');
+  const [chosen, setMode] = useState<'brand' | 'lessons' | null>(null);
+  // The lesson studio stays the default (EPS behaviour); an organization with only brand programs opens on those.
+  const kinds = new Set((all.data ?? []).map((p) => p.kind ?? 'curriculum'));
+  const mode = chosen ?? (kinds.has('general') && !kinds.has('curriculum') ? 'brand' : 'lessons');
+  return (
+    <div className="stack">
+      <div className="seg" role="tablist" aria-label="Studio">
+        <button type="button" role="tab" aria-selected={mode === 'lessons'} className="seg-btn" onClick={() => setMode('lessons')}>
+          Daily lessons
+        </button>
+        <button type="button" role="tab" aria-selected={mode === 'brand'} className="seg-btn" onClick={() => setMode('brand')}>
+          Brand programs
+        </button>
+      </div>
+      {mode === 'brand' ? <UniversalStudio me={me} /> : <LessonStudio me={me} />}
+    </div>
+  );
+}
+
+function LessonStudio({ me }: { me: Me }) {
+  const all = useApi<Program[]>('/v1/content/programs');
   const [sel, setSel] = useState<string | null>(null);
-  if (programs.error) return <ErrorNotice error={programs.error} />;
-  if (!programs.data) return <LoadingRows label="Loading the content studio…" />;
+  if (all.error) return <ErrorNotice error={all.error} />;
+  if (!all.data) return <LoadingRows label="Loading the content studio…" />;
+  const programs = { ...all, data: all.data.filter((p) => (p.kind ?? 'curriculum') === 'curriculum') };
   const program = programs.data.find((p) => p.id === sel) ?? programs.data[0];
   return (
     <div className="stack">
@@ -166,6 +205,16 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
       setError(err);
     }
   };
+  const setIdentity = async (campaignIdentity: 'shared' | 'per_post') => {
+    setError(null);
+    try {
+      await api('PUT', '/v1/content/programs', { connectionId: program.connectionId, pack: program.pack, status: program.status, settings: { ...program.settings, campaignIdentity } });
+      onChange();
+      ov.reload();
+    } catch (err) {
+      setError(err);
+    }
+  };
   const show = async (id: string) => {
     setPreview({ id });
     try {
@@ -195,6 +244,25 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
         </header>
         <ErrorNotice error={error} />
         <p className="small muted">Image source: branded lesson templates with licensed Korean and Bangla fonts. The studio uses these templates while no approved image provider is configured.</p>
+        <p className="small muted">
+          Store link campaigns:{' '}
+          {o.campaignIdentity === 'per_post' ? (
+            <>one campaign per post, so Google Play can report each post's store listing acquisitions.</>
+          ) : (
+            <>
+              one shared campaign ({program.settings.campaign ?? 'eps_daily'}) for every post, so Google Play reports results for the program only, not per post.
+              {canEdit ? (
+                <>
+                  {' '}
+                  <button type="button" className="btn" onClick={() => void setIdentity('per_post')}>
+                    Use one campaign per post
+                  </button>{' '}
+                  Applies to future posts only; past posts keep their links.
+                </>
+              ) : null}
+            </>
+          )}
+        </p>
         <div className="studio-grid">
           {o.calendar.map((i) => (
             <article key={i.id} className="studio-day">
@@ -256,6 +324,7 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
                   : i.status === 'published'
                     ? ' · awaiting measurement'
                     : ''}
+                {i.storeAttribution ? <span className="muted"> · {attributionText(i.storeAttribution)}</span> : null}
                 {i.statusReason ? <span className="muted"> · {readableText(i.statusReason)}</span> : null}
               </li>
             ))}
@@ -271,6 +340,13 @@ function ProgramView({ program, onChange, me }: { program: Program; onChange: ()
       </section>
     </>
   );
+}
+
+/** Google's attribution of store visits to this post's own campaign; never called installs caused by the post. */
+export function attributionText(a: StoreAttribution): string {
+  if (a.status === 'awaiting_reports') return `Google Play results for this post's link after final reports through ${day(a.windowEnd)}`;
+  if (a.status === 'not_listed') return `Google Play listed no store visits for this post's link through ${day(a.windowEnd)} (unknown, not zero)`;
+  return `Google Play: ${a.acquisitions ?? 'unavailable'} store listing acquisitions and ${a.visitors ?? 'unavailable'} visitors from this post's link, ${day(a.windowStart)}–${day(a.windowEnd)} (Google-reported attribution, not proven effect)`;
 }
 
 const PERMISSIONS: { key: string; label: string }[] = [

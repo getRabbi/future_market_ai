@@ -97,7 +97,7 @@ interface Detail {
   account: { displayName: string; health: string; lastSuccessAt: string | null; nextSyncAt: string | null; syncing: boolean };
   series: Record<string, Bucket[]>;
   breakdowns: Record<'countries' | 'sources' | 'versions', { value: string; metrics: Record<string, number | null> }[]>;
-  campaigns: { rows: { utmSource: string | null; utmCampaign: string; acquisitions: number | null; visitors: number | null; identity: { status: string; postId?: string | null; posts?: number } }[]; note: string } | null;
+  campaigns: { rows: { utmSource: string | null; utmCampaign: string; acquisitions: number | null; visitors: number | null; days?: number; excludedDays?: number; identity: { status: string; postId?: string | null; posts?: number } }[]; note: string } | null;
   coverage: { family: string; dimension: string; period: string; status: string; detail: { reason?: string; through?: string | null } }[];
   files: { family: string; dimension: string; period: string; status: string; rowsRejected: number; unmappedColumns: string[]; importedAt: string }[];
   telemetry: { available: boolean; installsByDay: { day: string; installs: number }[]; note: string };
@@ -419,9 +419,10 @@ function AppDetail({ id, range, onClose }: { id: string; range: { from: string; 
               campaign: c.utmCampaign,
               acquisitions: num(c.acquisitions),
               visitors: num(c.visitors),
+              days: c.excludedDays ? `${c.days ?? 0} final (+${c.excludedDays} not final yet)` : String(c.days ?? '—'),
               identity: c.identity.status === 'post' ? 'one post' : c.identity.status === 'program' ? `shared by ${c.identity.posts ?? 'several'} posts` : c.identity.status.replace('_', ' '),
             }))}
-            columns={['source', 'campaign', 'acquisitions', 'visitors', 'identity']}
+            columns={['source', 'campaign', 'acquisitions', 'visitors', 'days', 'identity']}
             empty="No tagged campaign rows in this period."
           />
           <p className="small muted">{d.campaigns.note}</p>

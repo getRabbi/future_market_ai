@@ -25,6 +25,8 @@ export interface ActionTypeDefinition {
   rollback: 'supported' | 'manual' | 'impossible';
   supported: boolean;
   blockerRef?: string;
+  /** Never pre-authorized, whatever the tenant autonomy policy says: a person approves every instance (e.g. creating paid campaigns, P3-06). */
+  alwaysRequiresApproval?: boolean;
   paramsSchema: z.ZodType;
 }
 
@@ -75,23 +77,31 @@ export const ACTION_TYPES = [
     provider: 'meta',
     capability: 'instagram_content_publish',
     category: 'PUBLIC_PUBLISHING',
-    description: 'Publish an image or reel to an authorized Instagram professional account.',
+    description: 'Publish an image, a reel or a carousel (2–10 images/videos) to an authorized Instagram professional account.',
     affectsSpend: false,
     publicFacing: true,
     contactsPeople: false,
     verification: 'status_poll',
     rollback: 'manual',
     supported: true,
-    paramsSchema: z.object({
-      igUserId: z.string().min(1),
-      mediaType: z.enum(['IMAGE', 'REELS']),
-      mediaUrl: z.string().url(),
-      caption: z.string().max(2200),
-      postId: z.string().uuid(),
-      assetIds: z.array(z.string().uuid()).min(1),
-      claimIds: z.array(z.string().uuid()).default([]),
-      disclosure,
-    }),
+    paramsSchema: z
+      .object({
+        igUserId: z.string().min(1),
+        mediaType: z.enum(['IMAGE', 'REELS', 'CAROUSEL']),
+        mediaUrl: z.string().url(),
+        caption: z.string().max(2200),
+        /** CAROUSEL only: the items in order, one per asset (asset:// references until execution). */
+        items: z
+          .array(z.object({ mediaType: z.enum(['IMAGE', 'VIDEO']), mediaUrl: z.string().url() }))
+          .min(2)
+          .max(10)
+          .optional(),
+        postId: z.string().uuid(),
+        assetIds: z.array(z.string().uuid()).min(1).max(10),
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => (p.mediaType === 'CAROUSEL' ? p.items?.length === p.assetIds.length && p.assetIds.length >= 2 : !p.items && p.assetIds.length === 1), 'a carousel lists one item per asset (2–10); an image or reel has exactly one asset'),
   },
   {
     type: 'social.tiktok.publish_video',
@@ -296,6 +306,104 @@ export const ACTION_TYPES = [
     }),
   },
   {
+    type: 'ads.meta.create_campaign',
+    provider: 'meta',
+    capability: 'meta_ads_campaign_create',
+    category: 'SPEND',
+    alwaysRequiresApproval: true,
+    description: 'Create a complete Meta campaign (campaign, ad set, creative, ad), every level PAUSED; activation is a separate approved status change (P3-06).',
+    affectsSpend: true,
+    publicFacing: false,
+    contactsPeople: false,
+    verification: 'read_after_write',
+    rollback: 'supported',
+    supported: true,
+    paramsSchema: z
+      .object({
+        adAccountId: z.string().regex(/^act_\d+$/),
+        draftId: z.string().uuid(),
+        name: z.string().min(1).max(150),
+        objective: z.enum(['OUTCOME_AWARENESS', 'OUTCOME_TRAFFIC', 'OUTCOME_ENGAGEMENT', 'OUTCOME_LEADS', 'OUTCOME_APP_PROMOTION', 'OUTCOME_SALES']),
+        dailyBudget: money,
+        startTime: z.string().datetime({ offset: true }),
+        endTime: z.string().datetime({ offset: true }),
+        targeting: z.object({
+          countries: z
+            .array(z.string().regex(/^[A-Z]{2}$/))
+            .min(1)
+            .max(25),
+          ageMin: z.number().int().min(18).max(65),
+          ageMax: z.number().int().min(18).max(65),
+          publisherPlatforms: z
+            .array(z.enum(['facebook', 'instagram', 'audience_network', 'messenger']))
+            .min(1)
+            .nullable(),
+        }),
+        optimizationGoal: z.enum(['LINK_CLICKS', 'LANDING_PAGE_VIEWS', 'REACH', 'IMPRESSIONS', 'POST_ENGAGEMENT']),
+        billingEvent: z.literal('IMPRESSIONS'),
+        creative: z.object({
+          pageId: z.string().regex(/^\d+$/),
+          message: z.string().min(1).max(2000),
+          link: z.string().url().startsWith('https://'),
+          headline: z.string().min(1).max(255),
+          callToAction: z.enum(['LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'DOWNLOAD', 'INSTALL_MOBILE_APP', 'CONTACT_US', 'SUBSCRIBE']),
+          image: z.object({ assetId: z.string().uuid(), sha256: z.string().regex(/^[0-9a-f]{64}$/) }),
+        }),
+        urlTags: z.string().max(500),
+        /** The most the campaign can spend between start and end (daily budget x days); reserved against the spend envelope. */
+        lifetimeCap: money,
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => p.targeting.ageMin <= p.targeting.ageMax, 'ageMin must not exceed ageMax')
+      .refine((p) => Date.parse(p.endTime) > Date.parse(p.startTime), 'the campaign must end after it starts')
+      .refine((p) => p.lifetimeCap.currency === p.dailyBudget.currency, 'cap and budget currencies differ'),
+  },
+  {
+    type: 'ads.google.create_campaign',
+    provider: 'google_ads',
+    capability: 'google_ads_campaign_create',
+    category: 'SPEND',
+    alwaysRequiresApproval: true,
+    description: 'Create a Google Ads Search campaign PAUSED with budget, targeting, ad group, keywords and a responsive search ad in one atomic mutate (P3-06).',
+    affectsSpend: true,
+    publicFacing: false,
+    contactsPeople: false,
+    verification: 'read_after_write',
+    rollback: 'supported',
+    supported: true,
+    paramsSchema: z
+      .object({
+        customerId: z.string().regex(/^\d{10}$/),
+        draftId: z.string().uuid(),
+        name: z.string().min(1).max(200),
+        dailyBudget: money,
+        startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        geoTargetConstants: z.array(z.number().int().positive()).min(1).max(25),
+        languageConstants: z.array(z.number().int().positive()).max(10).default([]),
+        bidding: z.object({ strategy: z.enum(['MAXIMIZE_CLICKS', 'MANUAL_CPC']), cpcBidCeiling: money.nullable() }),
+        adGroup: z.object({ name: z.string().min(1).max(255), cpcBid: money.nullable() }),
+        ad: z.object({
+          finalUrl: z.string().url().startsWith('https://'),
+          finalUrlSuffix: z.string().max(500).nullable(),
+          headlines: z.array(z.string().min(1).max(30)).min(3).max(15),
+          descriptions: z.array(z.string().min(1).max(90)).min(2).max(4),
+          path1: z.string().max(15).nullable(),
+          path2: z.string().max(15).nullable(),
+        }),
+        keywords: z
+          .array(z.object({ text: z.string().min(1).max(80), matchType: z.enum(['BROAD', 'PHRASE', 'EXACT']) }))
+          .min(1)
+          .max(50),
+        lifetimeCap: money,
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => p.endDate >= p.startDate, 'the campaign must end on or after its start date')
+      .refine((p) => p.lifetimeCap.currency === p.dailyBudget.currency, 'cap and budget currencies differ'),
+  },
+  {
     type: 'email.send',
     provider: 'resend',
     capability: 'email_send',
@@ -426,10 +534,11 @@ export const ACTION_TYPES = [
   },
   {
     type: 'creator.payout',
-    provider: 'internal',
-    capability: 'creator_payout',
+    provider: 'paypal',
+    capability: 'creator_payout_create',
     category: 'PAYOUT',
-    description: 'Pay a creator/affiliate. Payment provider unspecified [U].',
+    alwaysRequiresApproval: true,
+    description: 'Pay a creator/affiliate through PayPal Payouts (P2-14). Disabled until legal review, a merchant agreement, KYC and tax handling exist.',
     affectsSpend: true,
     publicFacing: false,
     contactsPeople: false,
@@ -437,7 +546,14 @@ export const ACTION_TYPES = [
     rollback: 'manual',
     supported: false,
     blockerRef: 'B-015',
-    paramsSchema: z.object({}).passthrough(),
+    paramsSchema: z.object({
+      payoutRequestId: z.string().uuid(),
+      creatorId: z.string().uuid(),
+      items: z
+        .array(z.object({ itemId: z.string().min(1).max(30), receiver: z.string().email(), amountMicros: z.number().int().positive(), currency: z.string().length(3), note: z.string().max(4000) }))
+        .min(1)
+        .max(10),
+    }),
   },
 ] as const satisfies readonly ActionTypeDefinition[];
 
@@ -461,7 +577,7 @@ export function listActionTypes(): readonly ActionTypeDefinition[] {
 export const JURISDICTION_DOMAINS = {
   organic_social: ['social.facebook.publish_post', 'social.instagram.publish_media', 'social.tiktok.publish_video', 'social.youtube.upload_video', 'social.linkedin.publish_post', 'social.x.publish_post'],
   social_engagement: ['social.facebook.reply_comment'],
-  advertising: ['ads.google.update_campaign_budget', 'ads.google.set_campaign_status', 'ads.meta.update_campaign_budget', 'ads.meta.set_campaign_status'],
+  advertising: ['ads.google.update_campaign_budget', 'ads.google.set_campaign_status', 'ads.meta.update_campaign_budget', 'ads.meta.set_campaign_status', 'ads.meta.create_campaign', 'ads.google.create_campaign'],
   messaging: ['email.send', 'sms.send', 'whatsapp.send'],
   pricing_promotions: ['commerce.shopify.create_discount'],
   store_listing: ['store.app_store.update_localization'],

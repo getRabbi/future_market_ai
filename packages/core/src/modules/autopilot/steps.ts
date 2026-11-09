@@ -3,6 +3,8 @@ import {
   actionRequests,
   analyticsRequests,
   appStoreReports,
+  brandApps,
+  brandChannels,
   claims,
   competitorObservations,
   connections,
@@ -51,7 +53,7 @@ import {
 } from '../m16-social/index.js';
 import { keywordOpportunities, queueSeoAudit } from '../m18-discovery/index.js';
 import { DOWNLOADS_SERIES_KEY, syncDownloadsSeries } from '../m19-app-growth/index.js';
-import { isStoreSeriesKey, SIGNAL_RULES, storeTrendContext, syncStoreKpiSeries } from '../m19-app-growth/store/signals.js';
+import { appsTrendContext, isStoreSeriesKey, SIGNAL_RULES, storeTrendContext, syncStoreKpiSeries } from '../m19-app-growth/store/signals.js';
 import { approvedJurisdictionScopes, getTenantPolicy } from '../m24-governance/index.js';
 import { draftPlannedPost, learnFrom, nextPostingSlot, POST_WINDOW, postingWindow, programForConnection, programHistory, syncPlanResults } from '../studio/index.js';
 import { type GoalRow, goalActions, goalCategories, goalKpi, limitsOf } from './goals.js';
@@ -225,7 +227,7 @@ const storeBridge = (written: { key: string; points: number }[], key: string) =>
   return w?.points ? { seriesId: '', points: w.points } : null;
 };
 
-type StoreTrend = NonNullable<Awaited<ReturnType<typeof storeTrendContext>>>;
+type StoreTrend = NonNullable<Awaited<ReturnType<typeof storeTrendContext>>> | NonNullable<Awaited<ReturnType<typeof appsTrendContext>>>;
 
 /**
  * Store-report trends found by this cycle's observe step, as prompt context for the Idea Lab and
@@ -236,8 +238,15 @@ export function storeTrendLines(prior: Partial<Record<TaskKind, TaskRow>>): stri
   const s = prior.observe?.output.storeTrend as StoreTrend | null | undefined;
   if (!s) return '';
   const lines = s.stated.map((x) => x.statement);
-  if (s.withheld.length) lines.push(`No trend is stated for ${s.withheld.map((x) => `${x.appId} (${x.status.replaceAll('_', ' ')})`).join(', ')}.`);
-  return lines.length ? `\nOfficial store reports (observational; not an effect of any post or action, and no post is credited with installs): ${lines.join(' ')}` : '';
+  if (s.withheld.length) lines.push(`No trend is stated for ${s.withheld.map((x) => `${'label' in x && x.label ? `${x.label} of ` : ''}${x.appId} (${x.status.replaceAll('_', ' ')})`).join(', ')}.`);
+  const scope = s.scope === 'brand_apps' ? ` for this brand's own app${s.apps.length === 1 ? '' : 's'} (${s.apps.join(', ')}; other apps of the developer account are excluded)` : '';
+  return lines.length ? `\nOfficial store reports${scope} (observational; not an effect of any post or action, and no post is credited with installs): ${lines.join(' ')}` : '';
+}
+
+/** Store apps linked to the brands that own these Page connections (D-041). */
+async function brandAppsOf(t: Tx, connectionIds: string[]) {
+  if (!connectionIds.length) return [];
+  return t.selectDistinct({ platform: brandApps.platform, appId: brandApps.appId }).from(brandChannels).innerJoin(brandApps, eq(brandApps.brandId, brandChannels.brandId)).where(inArray(brandChannels.connectionId, connectionIds));
 }
 
 const observe: StepExecutor = async (c) => {
@@ -246,7 +255,6 @@ const observe: StepExecutor = async (c) => {
   return tx(c, async (t) => {
     const kpi = goalKpi(c.goal);
     const bridged = kpi.metricKey === DOWNLOADS_SERIES_KEY ? await syncDownloadsSeries(t, c.tenantId) : isStoreSeriesKey(kpi.metricKey) ? storeBridge(await syncStoreKpiSeries(t, c.tenantId, c.now), kpi.metricKey) : null;
-    const storeTrend = isStoreSeriesKey(kpi.metricKey) ? await storeTrendContext(t, kpi.metricKey, c.now) : null;
     const [series] = await t.select().from(metricSeries).where(eq(metricSeries.key, kpi.metricKey));
     const [stats] = series
       ? await t
@@ -284,6 +292,19 @@ const observe: StepExecutor = async (c) => {
           c.now,
         )
       : null;
+    // Store-KPI goals read their own series; organic Page goals read the apps of the Page's brand, never all apps.
+    const storeTrend = isStoreSeriesKey(kpi.metricKey)
+      ? await storeTrendContext(t, kpi.metricKey, c.now)
+      : organic?.pages.length
+        ? await appsTrendContext(
+            t,
+            await brandAppsOf(
+              t,
+              organic.pages.map((p) => p.connectionId),
+            ),
+            c.now,
+          )
+        : null;
     const pageLines = (organic?.pages ?? []).map((p) =>
       p.snapshot
         ? `Facebook Page ${p.name}: ${p.snapshot.stats.posts} post${p.snapshot.stats.posts === 1 ? '' : 's'} in the last 90 days${p.snapshot.stats.lastPostAt ? ` (latest ${fmtDate(p.snapshot.stats.lastPostAt)})` : ''}; lifetime post counters: ${describeTotals(p.snapshot.totals)}.`
@@ -971,7 +992,20 @@ const learn: StepExecutor = async (c) => {
       : drafted
         ? `${drafted} post draft${drafted === 1 ? '' : 's'} prepared, none handed to the execution gateway`
         : 'no new post';
-    lessons.push(`Bootstrap cycle (exploratory, not forecast-validated): ${posted}; forecasts and Growth Brain decisions start once ${goalKpi(c.goal).label} has ${MIN_KPI_POINTS} daily values.`);
+    const kpi = goalKpi(c.goal);
+    // Page insights values never arrive without read_insights: say so instead of implying they are only late.
+    const insightsBlocked =
+      isFacebookInsightsKey(kpi.metricKey) &&
+      !(await tx(c, async (t) => {
+        const pages = await t
+          .select({ scopes: connections.grantedScopes })
+          .from(connections)
+          .where(and(eq(connections.provider, 'meta'), inArray(connections.status, ['active', 'read_only'])));
+        return pages.some((p) => p.scopes.includes('read_insights'));
+      }));
+    lessons.push(
+      `Bootstrap cycle (exploratory, not forecast-validated): ${posted}; forecasts and Growth Brain decisions start once ${kpi.label} has ${MIN_KPI_POINTS} daily values${insightsBlocked ? '. Those values come from Facebook Page insights, which need the read_insights permission that the connected Page token does not have, so they will not arrive until the Page is authorized again with it' : ''}.`,
+    );
   }
 
   // Experiments behind this goal's ideas get a fresh analysis at most once a day (M10).

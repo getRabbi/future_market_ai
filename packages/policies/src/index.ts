@@ -1,6 +1,6 @@
 import type { ActionRisk, ActionTypeDefinition, ApprovalGroup, CategoryPolicy, DataPurpose, PlatformCapability, PolicyDecision, PolicyOutcome, Proposer, RiskCategory, TenantPolicy, TenantRole } from '@futuregrow/contracts';
 
-export const POLICY_VERSION = 'fg-policy-1.4.0';
+export const POLICY_VERSION = 'fg-policy-1.5.0';
 
 /* ------------------------------------------------------------------ */
 /* Inputs: facts are gathered by the caller from the database; the      */
@@ -462,6 +462,8 @@ function ruleAutonomy(i: PolicyInput): { findings: Finding[]; group: ApprovalGro
     };
   }
   if (cp.autonomy === 'deny') return { findings: [deny('R-AUTONOMY', 'CATEGORY_DENIED', `tenant policy denies ${category} actions`)], group, distinct };
+  // fg-policy-1.5.0 (P3-06): some actions are never pre-authorized, whatever the category's limits.
+  if (d?.alwaysRequiresApproval) return { findings: [approve('R-AUTONOMY', 'ALWAYS_REQUIRES_APPROVAL', `${d.type} always needs a person's approval`, group)], group, distinct };
   if (cp.autonomy === 'approval_required') {
     return { findings: [approve('R-AUTONOMY', 'CATEGORY_REQUIRES_APPROVAL', `tenant policy requires approval for ${category}`, group)], group, distinct };
   }

@@ -16,13 +16,15 @@ export interface RenderInput {
 
 export interface RenderedVideo {
   path: string;
+  /** PNG still (thumbnail) when the caller asked for one. */
+  stillPath?: string | null;
   metadata: { width: number; height: number; fps: number; durationInSeconds: number | null; codec: string; canPlayInVideoTag: boolean };
   engineVersion: string;
 }
 
 /** Rendering engine boundary (Remotion in production). */
 export interface Renderer {
-  render(args: { composition: string; props: Record<string, unknown>; inputs: RenderInput[]; jobId: string }): Promise<RenderedVideo>;
+  render(args: { composition: string; props: Record<string, unknown>; inputs: RenderInput[]; jobId: string; stillFrame?: number }): Promise<RenderedVideo>;
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -49,8 +51,8 @@ export class RemotionRenderer implements Renderer {
     return this.bundleDir;
   }
 
-  async render(args: { composition: string; props: Record<string, unknown>; inputs: RenderInput[]; jobId: string }): Promise<RenderedVideo> {
-    const { ensureBrowser, getVideoMetadata, openBrowser, renderMedia, selectComposition } = await import('@remotion/renderer');
+  async render(args: { composition: string; props: Record<string, unknown>; inputs: RenderInput[]; jobId: string; stillFrame?: number }): Promise<RenderedVideo> {
+    const { ensureBrowser, getVideoMetadata, openBrowser, renderMedia, renderStill, selectComposition } = await import('@remotion/renderer');
     await ensureBrowser();
     const serveUrl = await this.bundleOnce();
     const pub = path.join(serveUrl, 'public', args.jobId);
@@ -67,9 +69,15 @@ export class RemotionRenderer implements Renderer {
     // Remotion's start-up limit is a fixed 25 s that a loaded machine can exceed; a start that timed
     // out is retried once before the attempt counts as failed.
     const browser = await openBrowser('chrome').catch((err: unknown) => (/Timed out after \d+ ms while trying to connect to the browser/.test(String(err)) ? openBrowser('chrome') : Promise.reject(err)));
+    let stillPath: string | null = null;
     try {
       const composition = await selectComposition({ serveUrl, id: args.composition.replaceAll('_', '-'), inputProps, puppeteerInstance: browser });
       await renderMedia({ composition, serveUrl, codec: 'h264', outputLocation, inputProps, concurrency: Number(process.env.RENDER_CONCURRENCY ?? 1), puppeteerInstance: browser });
+      if (args.stillFrame !== undefined) {
+        // Thumbnail (P3-04): one frame of the same composition, rendered in the same browser.
+        stillPath = path.join(os.tmpdir(), `fg-still-${args.jobId}.png`);
+        await renderStill({ composition, serveUrl, output: stillPath, frame: Math.min(args.stillFrame, composition.durationInFrames - 1), inputProps, imageFormat: 'png', puppeteerInstance: browser });
+      }
     } finally {
       await browser.close({ silent: true }).catch(() => undefined);
     }
@@ -79,6 +87,7 @@ export class RemotionRenderer implements Renderer {
     const { VERSION } = await import('remotion/version');
     return {
       path: outputLocation,
+      stillPath,
       metadata: { width: md.width, height: md.height, fps: md.fps, durationInSeconds: md.durationInSeconds, codec: md.codec, canPlayInVideoTag: md.canPlayInVideoTag },
       engineVersion: `remotion@${VERSION}`,
     };
@@ -128,7 +137,7 @@ export async function processNextRender(deps: CoreDeps, renderer: Renderer, work
       await withTenant(deps.db, tctx, (tx) => tx.update(renderJobs).set({ status: 'blocked_license', statusReason: 'Remotion licence eligibility not recorded (B-014)', lockedBy: null }).where(eq(renderJobs.id, job.id)));
       return { kind: 'blocked', jobId: job.id, reason: 'remotion licence' };
     }
-    const cfg = prep.j.workflowConfig as { composition: string; width: number; height: number; fps: number; durationInFrames: number; props: Record<string, unknown>; inputs: { assetId: string; sha256: string; mime: string }[]; claimIds?: string[] };
+    const cfg = prep.j.workflowConfig as { composition: string; width: number; height: number; fps: number; durationInFrames: number; props: Record<string, unknown>; inputs: { assetId: string; sha256: string; mime: string }[]; claimIds?: string[]; outputs?: { thumbnail?: boolean; subtitles?: string } };
     const files: RenderInput[] = [];
     for (const [n, spec] of cfg.inputs.entries()) {
       const a = prep.inputs.find((x) => x.id === spec.assetId);
@@ -140,7 +149,9 @@ export async function processNextRender(deps: CoreDeps, renderer: Renderer, work
       files.push({ file: `input-${n}.${ext(a.mime)}`, mime: a.mime, bytes });
     }
 
-    const out = await renderer.render({ composition: cfg.composition, props: cfg.props, inputs: files, jobId: job.id });
+    const out = await renderer.render({ composition: cfg.composition, props: cfg.props, inputs: files, jobId: job.id, ...(cfg.outputs?.thumbnail ? { stillFrame: Math.min(cfg.fps, cfg.durationInFrames - 1) } : {}) });
+    const still = out.stillPath ? new Uint8Array(await fs.readFile(out.stillPath)) : null;
+    if (out.stillPath) await fs.rm(out.stillPath, { force: true });
     const md = out.metadata;
     const expectedSeconds = cfg.durationInFrames / cfg.fps;
     const problems: string[] = [];
@@ -226,6 +237,52 @@ export async function processNextRender(deps: CoreDeps, renderer: Renderer, work
         for (const r of prep.rights) {
           await tx.insert(assetRights).values({ tenantId, assetId: target.id, component: r.component, rightsHolder: r.rightsHolder, licenseRef: r.licenseRef, artifactLicenseId: r.artifactLicenseId, commercialUse: r.commercialUse, evidenceId: r.evidenceId, expiresAt: r.expiresAt });
         }
+        // A video made only of the tenant's own text and templates (no input media) is the tenant's own work.
+        if (!prep.rights.some((r) => r.component === 'source_media')) {
+          await tx.insert(assetRights).values({ tenantId, assetId: target.id, component: 'source_media', rightsHolder: 'tenant (own text and composition)', licenseRef: 'original work rendered from the tenant storyboard', commercialUse: 'allowed', evidenceId: prov.evidenceId });
+        }
+      }
+      // Video Studio exports (P3-04): a PNG thumbnail and SRT subtitles stored as their own assets.
+      const extra: { thumbnailAssetId?: string; subtitlesAssetId?: string } = {};
+      const sidecar = async (bytes: Uint8Array, mime: string, kind: 'image' | 'caption', title: string, width: number | null, height: number | null) => {
+        const ssha = sha256Hex(bytes);
+        const sput = await deps.store.put(tenantKey(tenantId, 'assets', ssha), bytes, mime);
+        const [row] = await tx
+          .insert(assets)
+          .values({
+            tenantId,
+            kind,
+            title,
+            objectKey: sput.key,
+            sha256: ssha,
+            mime,
+            bytes: sput.bytes,
+            width,
+            height,
+            origin: 'render',
+            renderJobId: job.id,
+            manifest: { parentAssetId: target.id, contains, captions: '', claimIds: cfg.claimIds ?? [], provenanceEvidenceId: prov.evidenceId },
+            qa: { technical: { passed: true, mime } },
+            disclosure: target.disclosure,
+            createdBy: 'system:media-job',
+          })
+          .onConflictDoNothing()
+          .returning();
+        const s = row ?? (await tx.select().from(assets).where(eq(assets.sha256, ssha)))[0]!;
+        if (row) {
+          const parentRights = await tx.select().from(assetRights).where(eq(assetRights.assetId, target.id));
+          for (const r of parentRights) await tx.insert(assetRights).values({ tenantId, assetId: s.id, component: r.component, rightsHolder: r.rightsHolder, licenseRef: r.licenseRef, artifactLicenseId: r.artifactLicenseId, commercialUse: r.commercialUse, evidenceId: r.evidenceId, expiresAt: r.expiresAt });
+          await assetsModule.recomputeEligibility(tx, deps, tenantId, s.id);
+        }
+        return s.id;
+      };
+      if (still) extra.thumbnailAssetId = await sidecar(still, 'image/png', 'image', `${cfg.composition} thumbnail ${job.id.slice(0, 8)}`, md.width, md.height);
+      if (cfg.outputs?.subtitles) extra.subtitlesAssetId = await sidecar(new TextEncoder().encode(cfg.outputs.subtitles), 'application/x-subrip', 'caption', `${cfg.composition} subtitles ${job.id.slice(0, 8)}`, null, null);
+      if (extra.thumbnailAssetId || extra.subtitlesAssetId) {
+        await tx
+          .update(assets)
+          .set({ manifest: { ...(target.manifest as Record<string, unknown>), ...extra } })
+          .where(eq(assets.id, target.id));
       }
       await assetsModule.recomputeEligibility(tx, deps, tenantId, target.id);
       await tx

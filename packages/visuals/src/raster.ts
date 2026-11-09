@@ -88,3 +88,17 @@ export function hammingDistance(a: string, b: string): number {
   }
   return n;
 }
+
+/**
+ * Cover-fits a raster image (PNG/JPEG/WebP) into exactly width×height: scaled to cover the frame
+ * and centre-cropped (CSS object-fit: cover). Used to bring stock and generated images to the
+ * studio's formats (e.g. 1080×1350) without distorting them.
+ */
+export async function coverFit(bytes: Uint8Array, mime: string, width: number, height: number): Promise<Raster> {
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(mime)) throw new Error(`cannot fit ${mime}`);
+  const href = `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><image x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" href="${href}" xlink:href="${href}"/></svg>`;
+  const out = await rasterize(svg, width);
+  if (out.width !== width || out.height !== height) throw new Error(`cover fit produced ${out.width}×${out.height}, expected ${width}×${height}`);
+  return out;
+}

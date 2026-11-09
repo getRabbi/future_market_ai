@@ -56,6 +56,8 @@ export class FakePlay {
   apps: { packageName: string; displayName: string }[] = [];
   denyBucket = false;
   denyReporting = false;
+  /** While set, bucket listings wait for it: a test can hold one sync inside its lease deterministically. */
+  hold: Promise<void> | null = null;
   vitals = new Map<string, { latest: string; rows: { date: string; crashRate?: string; anrRate?: string }[] }>();
   private gen = 1_700_000_000_000_000;
 
@@ -78,7 +80,8 @@ export class FakePlay {
       if (f?.get('grant_type') !== 'urn:ietf:params:oauth:grant-type:jwt-bearer' || !f.get('assertion')) return { status: 400, json: { error: 'invalid_grant' } };
       return { json: { access_token: `ya29.fixture-${f.get('assertion')!.length}`, expires_in: 3599, token_type: 'Bearer' } };
     });
-    s.on('GET', new RegExp(`^/storage/v1/b/${this.bucket}/o$`), (req) => {
+    s.on('GET', new RegExp(`^/storage/v1/b/${this.bucket}/o$`), async (req) => {
+      if (this.hold) await this.hold;
       if (this.denyBucket) return { status: 403, json: { error: { code: 403, message: 'fixture: caller does not have storage.objects.list access' } } };
       const prefix = req.query.get('prefix') ?? '';
       const all = [...this.objects.values()].filter((o) => o.name.startsWith(prefix)).sort((a, b) => a.name.localeCompare(b.name));

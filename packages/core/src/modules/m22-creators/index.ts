@@ -390,19 +390,12 @@ export async function creatorBalance(tx: DbOrTx, creatorId: string, now: Date) {
  * (B-015), so the action type is unsupported and policy denies it; nothing is ever paid here.
  */
 export async function proposePayout(deps: CoreDeps, tenantId: string, actor: Actor, creatorId: string) {
-  requireRole(actor, ['owner', 'admin', 'finance_approver'], 'proposing payouts');
-  const bal = await withTenant(deps.db, { tenantId, actor: actorRef(actor) }, (tx) => creatorBalance(tx, creatorId, deps.clock.now()));
-  const payable = bal.filter((b) => b.payable > 0);
-  if (payable.length === 0) throw new FgError('CONFLICT', 'nothing payable yet', 409);
-  return proposeAction(deps, tenantId, actor, {
-    actionType: 'creator.payout',
-    connectionId: null,
-    target: { creatorId },
-    params: { creatorId, amounts: payable.map((b) => ({ currency: b.currency, amountMicros: b.payable })) },
-    risk: { spendDeltaMicros: payable[0]!.payable, currency: payable[0]!.currency },
-    idempotencyKey: `payout:${creatorId}:${deps.clock.now().toISOString().slice(0, 10)}`,
-  });
+  // P2-14: a payout request with an explicit readiness check; blocked requests propose nothing.
+  const { requestPayout } = await import('./payouts.js');
+  return requestPayout(deps, tenantId, actor, creatorId);
 }
+
+export * as payouts from './payouts.js';
 
 /* ------------------------------------------------------------------ */
 /* Reads                                                               */

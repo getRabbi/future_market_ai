@@ -11,6 +11,9 @@ import { lintCopy } from '../m03-knowledge/index.js';
 import type { PublicFetcher } from '../m05-competitors/index.js';
 import { proposeAction } from '../m23-execution/gateway.js';
 import { registerHooks } from '../m23-execution/registry.js';
+import { propertyOf, recordSyncOutcome } from './search-console.js';
+
+export * as searchConsole from './search-console.js';
 
 export const SEO_USER_AGENT = 'FUTUREGROW-SiteAudit/0.1 (+https://futuregrow.invalid/bot)';
 
@@ -300,18 +303,38 @@ export async function listAudits(tx: DbOrTx) {
 /* Keyword / query metrics                                             */
 /* ------------------------------------------------------------------ */
 
-export async function syncSearchConsole(deps: CoreDeps, tenantId: string, connectionId: string, args: { siteUrl: string; startDate: string; endDate: string }) {
+/**
+ * Imports one period of Search Console query × page rows for the connection's property (or the
+ * property given). Every attempt's outcome (rows, period or the error) is stored on the connection
+ * so the Search Console screen can show sync state; failures are re-thrown to the caller.
+ */
+export async function syncSearchConsole(deps: CoreDeps, tenantId: string, connectionId: string, args: { siteUrl?: string; startDate: string; endDate: string; trigger?: 'manual' | 'scheduled' }) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(args.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(args.endDate)) throw invalid('dates must be YYYY-MM-DD');
-  const { ctx } = await readContext(deps, tenantId, connectionId, 'search_console');
-  const rows = await searchConsoleQuery(ctx, args.siteUrl, args.startDate, args.endDate);
+  if (args.endDate < args.startDate) throw invalid('the end date is before the start date');
+  const trigger = args.trigger ?? 'manual';
+  const period = { start: args.startDate, end: args.endDate };
+  try {
+    const out = await importSearchConsole(deps, tenantId, connectionId, args);
+    await recordSyncOutcome(deps, tenantId, connectionId, { status: 'ok', at: deps.clock.now().toISOString(), rows: out.rows, period, trigger });
+    return out;
+  } catch (err) {
+    await recordSyncOutcome(deps, tenantId, connectionId, { status: 'failed', at: deps.clock.now().toISOString(), period, error: err instanceof Error ? err.message : String(err), trigger }).catch(() => {});
+    throw err;
+  }
+}
+
+async function importSearchConsole(deps: CoreDeps, tenantId: string, connectionId: string, args: { siteUrl?: string; startDate: string; endDate: string }) {
+  const { ctx, connection } = await readContext(deps, tenantId, connectionId, 'search_console');
+  const siteUrl = args.siteUrl ?? propertyOf(connection);
+  const rows = await searchConsoleQuery(ctx, siteUrl, args.startDate, args.endDate);
   const actor = systemActor('search-console-sync');
   return withTenant(deps.db, { tenantId, actor: actorRef(actor) }, async (tx) => {
     const ev = await admitInternalEvidence(tx, tenantId, actor, {
       kind: 'metric',
       sourceType: 'primary',
       owner: 'google_search_console',
-      uri: `search-console://${args.siteUrl}/${args.startDate}..${args.endDate}@${deps.clock.now().toISOString()}`,
-      content: { rows: rows.length, siteUrl: args.siteUrl },
+      uri: `search-console://${siteUrl}/${args.startDate}..${args.endDate}@${deps.clock.now().toISOString()}`,
+      content: { rows: rows.length, siteUrl },
       summary: `${rows.length} query/page rows from Search Console`,
       confidence: 1,
       license: 'Google Search Console API terms (verified property owner)',
@@ -326,7 +349,7 @@ export async function syncSearchConsole(deps: CoreDeps, tenantId: string, connec
       rows.map((r) => ({ query: r.query, pageUrl: r.page || null, impressions: r.impressions, clicks: r.clicks, position: r.position })),
       { periodStart: args.startDate, periodEnd: args.endDate, source: 'search_console', evidenceId: ev.evidenceId },
     );
-    return { rows: n, evidenceId: ev.evidenceId };
+    return { rows: n, evidenceId: ev.evidenceId, siteUrl };
   });
 }
 
@@ -368,13 +391,36 @@ async function upsertKeywordRows(tx: Tx, tenantId: string, rows: { query: string
  * "Striking distance" opportunities: queries with real impressions, average position 4–20 and
  * CTR below the period median. A heuristic for prioritising content work, not a forecast.
  */
-export async function keywordOpportunities(tx: DbOrTx, opts: { minImpressions?: number; limit?: number } = {}) {
+export interface OpportunityOptions {
+  minImpressions?: number;
+  limit?: number;
+  /** One Search Console property (by the evidence of its imports); default: every source. */
+  siteUrl?: string;
+  /** One reported period; default: the latest one in scope. Overlapping periods are never added. */
+  period?: { start: string; end: string };
+}
+
+async function opportunityScope(tx: DbOrTx, opts: OpportunityOptions) {
+  const site = opts.siteUrl ? sql`k.source = 'search_console' and e.content ->> 'siteUrl' = ${opts.siteUrl}` : sql`true`;
+  let period = opts.period ?? null;
+  if (!period) {
+    const [latest] = (await tx.execute<{ period_start: string; period_end: string }>(sql`select k.period_start, k.period_end from keyword_metrics k join evidence_records e on e.id = k.evidence_id where ${site} order by k.period_end desc, k.period_start asc limit 1`)).rows;
+    period = latest ? { start: latest.period_start, end: latest.period_end } : null;
+  }
+  return { site, period };
+}
+
+export async function keywordOpportunities(tx: DbOrTx, opts: OpportunityOptions = {}) {
   const minImp = opts.minImpressions ?? 100;
+  const { site, period } = await opportunityScope(tx, opts);
+  if (!period) return { rows: [] as { query: string; page_url: string | null; impressions: number; clicks: number; position: number; ctr: number }[], period: null, method: 'heuristic: position 4–20, CTR ≤ median, impressions ≥ threshold', note: 'Prioritisation aid; no ranking or traffic outcome is promised.' };
   const r = await tx.execute<{ query: string; page_url: string | null; impressions: number; clicks: number; position: number; ctr: number }>(sql`
     with agg as (
-      select query, page_url, sum(impressions)::int as impressions, sum(clicks)::int as clicks,
-             sum(position * impressions) / nullif(sum(impressions), 0) as position
-      from keyword_metrics group by query, page_url
+      select k.query, k.page_url, sum(k.impressions)::int as impressions, sum(k.clicks)::int as clicks,
+             sum(k.position * k.impressions) / nullif(sum(k.impressions), 0) as position
+      from keyword_metrics k join evidence_records e on e.id = k.evidence_id
+      where ${site} and k.period_start = ${period.start} and k.period_end = ${period.end}
+      group by k.query, k.page_url
     ), med as (
       select percentile_cont(0.5) within group (order by clicks::float / nullif(impressions, 0)) as m from agg where impressions >= ${minImp}
     )
@@ -382,7 +428,7 @@ export async function keywordOpportunities(tx: DbOrTx, opts: { minImpressions?: 
     from agg a, med
     where a.impressions >= ${minImp} and a.position between 4 and 20 and a.clicks::float / nullif(a.impressions, 0) <= coalesce(med.m, 1)
     order by a.impressions desc limit ${opts.limit ?? 100}`);
-  return { rows: r.rows, method: 'heuristic: position 4–20, CTR ≤ median, impressions ≥ threshold', note: 'Prioritisation aid; no ranking or traffic outcome is promised.' };
+  return { rows: r.rows, period, method: 'heuristic: position 4–20, CTR ≤ median, impressions ≥ threshold (one reported period)', note: 'Prioritisation aid; no ranking or traffic outcome is promised.' };
 }
 
 /* ------------------------------------------------------------------ */
@@ -525,4 +571,59 @@ registerHooks('store.app_store.update_localization', {
 
 export async function listListings(tx: DbOrTx) {
   return tx.select().from(storeListings).orderBy(desc(storeListings.createdAt)).limit(200);
+}
+
+/* ------------------------------------------------------------------ */
+/* Grounded SEO opportunities → Idea Lab (P2-13)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Striking-distance queries (position 4–20, CTR at or below the median, enough impressions) with
+ * the Search Console evidence behind each one. These are observations of the past period, not a
+ * forecast: no ranking, traffic or click outcome is promised.
+ */
+export async function groundedSeoOpportunities(tx: DbOrTx, opts: OpportunityOptions = {}) {
+  const base = await keywordOpportunities(tx, opts);
+  const rows = [];
+  for (const r of base.rows) {
+    const ev = await tx.execute<{ evidence_id: string; period_start: string; period_end: string }>(sql`
+      select evidence_id, period_start, period_end from keyword_metrics
+      where query = ${r.query} and ${r.page_url === null ? sql`page_url is null` : sql`page_url = ${r.page_url}`} and evidence_id is not null
+        and period_start = ${base.period!.start} and period_end = ${base.period!.end}
+      order by period_end desc limit 3`);
+    rows.push({ ...r, evidenceIds: [...new Set(ev.rows.map((e) => e.evidence_id))], periods: ev.rows.map((e) => `${e.period_start}..${e.period_end}`) });
+  }
+  return { ...base, rows: rows.filter((r) => r.evidenceIds.length > 0) };
+}
+
+/** Turns the top grounded opportunities into Idea Lab hypotheses (each cites its Search Console evidence); duplicates are left to M06 screening. */
+export async function proposeSeoIdeas(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, opts: { limit?: number; siteUrl?: string; period?: { start: string; end: string } } = {}) {
+  requireRole(actor, ['owner', 'admin', 'growth_operator'], 'turning SEO opportunities into ideas');
+  const { rows } = await groundedSeoOpportunities(tx, { limit: opts.limit ?? 5, ...(opts.siteUrl ? { siteUrl: opts.siteUrl } : {}), ...(opts.period ? { period: opts.period } : {}) });
+  const { createIdea } = await import('../m06-ideas/index.js');
+  const created = [];
+  for (const r of rows.slice(0, opts.limit ?? 5)) {
+    const page = r.page_url ?? 'the ranking page';
+    created.push(
+      await createIdea(
+        tx,
+        deps,
+        tenantId,
+        actor,
+        {
+          title: `Improve the snippet for “${r.query.slice(0, 120)}”`,
+          hypothesis: `“${r.query}” has ${r.impressions} impressions at an average position of ${Number(r.position).toFixed(1)} with a CTR of ${(Number(r.ctr) * 100).toFixed(1)}%. A clearer title and description on ${page} may raise its click-through rate.`,
+          mechanism: 'Searchers choose results by title and description; a snippet that matches the query intent earns more clicks at the same position.',
+          audience: 'People searching for this query on Google',
+          targetMetric: 'search_console.ctr',
+          evidenceIds: r.evidenceIds,
+          test: { type: 'smoke_test' },
+          killCriteria: ['CTR does not rise after 28 days with comparable impressions', 'average position drops by more than 3'],
+          risks: ['Search Console data is sampled and delayed; positions move for reasons outside the page'],
+        },
+        'agent',
+      ),
+    );
+  }
+  return { created: created.length, ideas: created };
 }

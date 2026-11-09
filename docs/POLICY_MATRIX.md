@@ -2,7 +2,7 @@
 
 # Policy matrix
 
-Every consequential write is an ActionRequest evaluated by the deterministic policy engine (`fg-policy-1.4.0`) at proposal and again at preflight. Outcomes: ALLOW (pre-authorized), REQUIRE_APPROVAL (one approval per required group, distinct people, never the proposer, MFA, bound to the action hash), or DENY. No action is successful until VERIFIED by independent read-back.
+Every consequential write is an ActionRequest evaluated by the deterministic policy engine (`fg-policy-1.5.0`) at proposal and again at preflight. Outcomes: ALLOW (pre-authorized), REQUIRE_APPROVAL (one approval per required group, distinct people, never the proposer, MFA, bound to the action hash), or DENY. No action is successful until VERIFIED by independent read-back.
 
 ## Action allowlist
 
@@ -19,6 +19,8 @@ Every consequential write is an ActionRequest evaluated by the deterministic pol
 | `ads.google.set_campaign_status` | google_ads | SPEND | yes |  |  | read_after_write | supported | yes |
 | `ads.meta.update_campaign_budget` | meta | SPEND | yes |  |  | read_after_write | supported | yes |
 | `ads.meta.set_campaign_status` | meta | SPEND | yes |  |  | read_after_write | supported | yes |
+| `ads.meta.create_campaign` | meta | SPEND | yes |  |  | read_after_write | supported | yes |
+| `ads.google.create_campaign` | google_ads | SPEND | yes |  |  | read_after_write | supported | yes |
 | `email.send` | resend | MESSAGING |  |  | yes | status_poll | impossible | yes |
 | `commerce.shopify.create_discount` | shopify | PRICING | yes | yes |  | read_after_write | supported | yes |
 | `store.app_store.update_localization` | app_store_connect | STORE_METADATA |  | yes |  | read_after_write | supported | yes |
@@ -26,7 +28,7 @@ Every consequential write is an ActionRequest evaluated by the deterministic pol
 | `data.export_customer_data` | internal | DATA_EXPORT |  |  |  | database_readback | impossible | yes |
 | `sms.send` | internal | MESSAGING |  |  | yes | status_poll | impossible | no (D-018) |
 | `whatsapp.send` | internal | MESSAGING |  |  | yes | status_poll | impossible | no (D-018) |
-| `creator.payout` | internal | PAYOUT | yes |  |  | reconciliation | manual | no (B-015) |
+| `creator.payout` | paypal | PAYOUT | yes |  |  | reconciliation | manual | no (B-015) |
 
 ## Default approver roles
 

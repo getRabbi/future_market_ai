@@ -15,7 +15,7 @@ export interface ConnectionField {
 }
 
 export interface ProviderForm {
-  provider: 'meta' | 'google_ads' | 'tiktok' | 'youtube' | 'shopify' | 'app_store_connect' | 'resend';
+  provider: 'meta' | 'google_ads' | 'tiktok' | 'youtube' | 'linkedin' | 'x' | 'shopify' | 'app_store_connect' | 'resend' | 'posthog' | 'chatwoot' | 'search_console' | 'pexels' | 'paypal';
   name: string;
   enables: string;
   docsUrl: string;
@@ -103,6 +103,77 @@ export const PROVIDER_FORMS: ProviderForm[] = [
     docsUrl: 'https://resend.com/docs/dashboard/api-keys/introduction',
     account: { label: 'Sending domain', placeholder: 'mail.example.com', help: 'A domain verified in Resend (SPF/DKIM).' },
     fields: [{ key: 'apiKey', label: 'API key', secret: true, placeholder: 're_…' }],
+  },
+  {
+    provider: 'linkedin',
+    name: 'LinkedIn (organization page)',
+    enables: 'Organization posts once LinkedIn grants the Community Management API product; post statistics.',
+    docsUrl: 'https://learn.microsoft.com/en-us/linkedin/marketing/community-management/community-management-overview',
+    account: { label: 'Organization ID', placeholder: '5515715', help: 'The number in the organization admin URL (linkedin.com/company/<id>/admin).', pattern: /^\d{3,15}$/, patternHint: 'digits only' },
+    fields: [{ key: 'accessToken', label: 'Member access token', secret: true, help: 'OAuth token of an ADMINISTRATOR or CONTENT_ADMIN with w_organization_social and r_organization_social.' }],
+  },
+  {
+    provider: 'x',
+    name: 'X',
+    enables: 'Nothing until the owner authorizes pay-per-use posting (B-019); the connection only checks the account.',
+    docsUrl: 'https://docs.x.com/resources/fundamentals/authentication/oauth-2-0/overview',
+    account: { label: 'User ID', placeholder: '2244994945', pattern: /^\d{1,20}$/, patternHint: 'digits only' },
+    fields: [{ key: 'accessToken', label: 'OAuth 2.0 user access token', secret: true, help: 'Scopes tweet.read, tweet.write, users.read, media.write.' }],
+  },
+  {
+    provider: 'posthog',
+    name: 'PostHog (optional)',
+    enables: 'Forwarding of consented product events; FUTUREGROW’s own event store keeps working without it.',
+    docsUrl: 'https://posthog.com/docs/api/capture',
+    account: { label: 'Project ID', placeholder: '12345', help: 'PostHog → Project settings → Project ID.', pattern: /^\d{1,12}$/, patternHint: 'digits only' },
+    fields: [
+      { key: 'projectApiKey', label: 'Project API key', secret: true, placeholder: 'phc_…', help: 'The public project key used for capture (not a personal API key).' },
+      { key: 'host', label: 'Host', placeholder: 'https://eu.i.posthog.com', help: 'Your PostHog region or self-hosted URL (https).' },
+    ],
+  },
+  {
+    provider: 'chatwoot',
+    name: 'Chatwoot',
+    enables: 'Human handoff of AI conversations to your Chatwoot inbox, with agent replies mirrored back.',
+    docsUrl: 'https://www.chatwoot.com/developers/api/',
+    account: { label: 'Account ID', placeholder: '1', pattern: /^\d{1,12}$/, patternHint: 'digits only', alsoCredential: 'accountId' },
+    fields: [
+      { key: 'baseUrl', label: 'Instance URL', placeholder: 'https://app.chatwoot.com' },
+      { key: 'apiAccessToken', label: 'Agent access token', secret: true, help: 'Chatwoot → Profile settings → Access token.' },
+      { key: 'inboxId', label: 'Handoff inbox ID', target: 'metadata', placeholder: '3', help: 'The API inbox that receives handoffs (Settings → Inboxes).' },
+    ],
+  },
+  {
+    provider: 'search_console',
+    name: 'Google Search Console',
+    enables: 'Search Analytics import (queries, pages, clicks, impressions, CTR, position) for SEO opportunities.',
+    docsUrl: 'https://developers.google.com/webmaster-tools/v1/how-tos/authorizing',
+    account: { label: 'Property', placeholder: 'https://example.com/ or sc-domain:example.com', help: 'Exactly as shown in Search Console.' },
+    fields: [
+      { key: 'clientId', label: 'OAuth client ID', placeholder: '…apps.googleusercontent.com' },
+      { key: 'clientSecret', label: 'OAuth client secret', secret: true },
+      { key: 'refreshToken', label: 'Refresh token', secret: true, help: 'From the OAuth consent flow with the webmasters.readonly scope.' },
+    ],
+  },
+  {
+    provider: 'pexels',
+    name: 'Pexels (licensed stock media)',
+    enables: 'Searching and importing stock photos and videos under the Pexels License, with attribution recorded.',
+    docsUrl: 'https://www.pexels.com/api/documentation/',
+    account: { label: 'Account label', placeholder: 'brand-stock', help: 'Any name for this API key.' },
+    fields: [{ key: 'apiKey', label: 'API key', secret: true, help: 'pexels.com/api → Your API key.' }],
+  },
+  {
+    provider: 'paypal',
+    name: 'PayPal Payouts (creator payouts)',
+    enables: 'Nothing until legal review, a merchant agreement and the platform enabling payouts; then approved payouts with read-back.',
+    docsUrl: 'https://developer.paypal.com/docs/payouts/standard/',
+    account: { label: 'Merchant ID', placeholder: 'ABCDEFGHIJ123' },
+    fields: [
+      { key: 'clientId', label: 'Client ID' },
+      { key: 'clientSecret', label: 'Client secret', secret: true },
+      { key: 'environment', label: 'Environment', placeholder: 'sandbox', help: 'sandbox or live. Start with sandbox.' },
+    ],
   },
 ];
 

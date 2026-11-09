@@ -1,0 +1,8 @@
+name: futuregrow_telemetry
+description: Consented first-open, activation, session and conversion telemetry for FUTUREGROW (relayed through your backend).
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+dependencies:
+  http: ^1.2.0

@@ -29,7 +29,33 @@ export function registerContentRoutes(app: FastifyInstance, ctx: ApiContext): vo
     })),
   );
   r.get('/v1/content/programs', { schema: { tags: ['content'] } }, async (req) => tenantTx(ctx, req, (tx) => contentStudio.listPrograms(tx)));
-  r.put('/v1/content/programs', { schema: { tags: ['content'], body: Body } }, async (req) => tenantTx(ctx, req, (tx) => contentStudio.upsertProgram(tx, tenantOf(req), actorOf(req), req.body)));
+  r.put('/v1/content/programs', { schema: { tags: ['content'], body: Body } }, async (req) =>
+    tenantTx(ctx, req, (tx) => ((req.body as { kind?: unknown }).kind === 'general' ? contentStudio.universal.upsertGeneralProgram(tx, tenantOf(req), actorOf(req), req.body) : contentStudio.upsertProgram(tx, tenantOf(req), actorOf(req), req.body))),
+  );
+
+  /* ---------------- Universal Studio (P3-01): research → idea → brief → create → validate → approve → schedule → verify → measure → learn ---------------- */
+  const U = contentStudio.universal;
+  r.get('/v1/studio/programs', { schema: { tags: ['content'] } }, async (req) => tenantTx(ctx, req, (tx) => U.listGeneralPrograms(tx)));
+  r.get('/v1/studio/programs/:id/items', { schema: { tags: ['content'], params: Id, querystring: z.object({ stage: z.string().max(200).optional() }) } }, async (req) => tenantTx(ctx, req, (tx) => U.listItems(tx, req.params.id, { stages: req.query.stage ? req.query.stage.split(',') : undefined })));
+  r.get('/v1/studio/programs/:id/insights', { schema: { tags: ['content'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => U.programInsights(tx, req.params.id)));
+  r.get('/v1/studio/programs/:id/research', { schema: { tags: ['content'], params: Id } }, async (req) =>
+    tenantTx(ctx, req, async (tx) => {
+      const [p] = await U.listGeneralPrograms(tx).then((rows) => rows.filter((x) => x.id === req.params.id));
+      if (!p) return { claims: [], evidence: [], recentTitles: [], insights: [] };
+      const m = await U.groundedMaterial(tx, p, deps.clock.now());
+      return { brand: { id: m.brand.id, name: m.brand.name }, claims: m.claims, evidence: m.evidence, recentTitles: m.recentTitles, insights: m.insights };
+    }),
+  );
+  r.post('/v1/studio/programs/:id/ideas/generate', { schema: { tags: ['content'], params: Id, body: Body.default({}) } }, async (req) => U.generateIdeas(deps, tenantOf(req), actorOf(req), req.params.id, req.body));
+  r.post('/v1/studio/programs/:id/ideas', { schema: { tags: ['content'], params: Id, body: Body } }, async (req, reply) => reply.status(201).send(await tenantTx(ctx, req, (tx) => U.addIdea(tx, tenantOf(req), actorOf(req), req.params.id, req.body))));
+  r.post('/v1/studio/programs/:id/sync', { schema: { tags: ['content'], params: Id } }, async (req) => U.syncProgramItems(deps, tenantOf(req), req.params.id));
+  r.get('/v1/studio/items/:id/preview', { schema: { tags: ['content'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => U.itemPreview(tx, req.params.id)));
+  r.post('/v1/studio/items/:id/brief', { schema: { tags: ['content'], params: Id, body: Body.default({}) } }, async (req) => tenantTx(ctx, req, (tx) => U.writeBrief(tx, deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
+  r.post('/v1/studio/items/:id/draft', { schema: { tags: ['content'], params: Id, body: Body.default({}) } }, async (req) => U.draftItem(deps, tenantOf(req), actorOf(req), req.params.id, req.body));
+  r.post('/v1/studio/items/:id/validate', { schema: { tags: ['content'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => U.validateItem(tx, deps, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/studio/items/:id/approve', { schema: { tags: ['content'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => U.approveItem(tx, deps, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/studio/items/:id/reject', { schema: { tags: ['content'], params: Id, body: z.object({ reason: z.string().min(3).max(500) }) } }, async (req) => tenantTx(ctx, req, (tx) => U.rejectItem(tx, tenantOf(req), actorOf(req), req.params.id, req.body.reason)));
+  r.post('/v1/studio/items/:id/schedule', { schema: { tags: ['content'], params: Id, body: Body } }, async (req) => tenantTx(ctx, req, (tx) => U.scheduleItem(tx, deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
   r.get('/v1/content/programs/:id/overview', { schema: { tags: ['content'], params: Id } }, async (req) => contentStudio.overview(deps, tenantOf(req), req.params.id));
   r.get('/v1/content/plan-items/:id/preview', { schema: { tags: ['content'], params: Id } }, async (req) => {
     const p = await contentStudio.previewPlanItem(deps, tenantOf(req), req.params.id);

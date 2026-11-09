@@ -269,12 +269,26 @@ export async function storeTrendContext(t: DbOrTx, seriesKey: string, now: Date)
   const def = STORE_KPI_SERIES[parsed.base];
   const { signals } = await storeKpiSignals(t, now);
   const scoped = signals.filter((s) => s.platform === def.platform && s.metricKey === def.metricKey && (parsed.appSuffix === null || perAppKey(parsed.base, s.appId) === seriesKey));
+  return { seriesKey, scope: parsed.appSuffix === null ? ('all_apps' as const) : ('app' as const), ...splitTrends(scoped) };
+}
+
+function splitTrends(scoped: StoreSignal[]) {
   const stated = scoped.filter((s) => s.status === 'increase' || s.status === 'decrease' || s.status === 'no_clear_change');
   const withheld = scoped.filter((s) => !stated.includes(s));
   return {
-    seriesKey,
-    scope: parsed.appSuffix === null ? ('all_apps' as const) : ('app' as const),
-    stated: stated.map((s) => ({ appId: s.appId, status: s.status, statement: s.statement, evidenceIds: s.evidenceIds })),
-    withheld: withheld.map((s) => ({ appId: s.appId, status: s.status, statement: s.statement })),
+    stated: stated.map((s) => ({ appId: s.appId, metricKey: s.metricKey, status: s.status, statement: s.statement, evidenceIds: s.evidenceIds })),
+    withheld: withheld.map((s) => ({ appId: s.appId, metricKey: s.metricKey, label: s.label, status: s.status, statement: s.statement })),
   };
+}
+
+/**
+ * Store trends of named apps only (P1): the apps linked to the brand that owns a goal's Facebook
+ * Pages (D-041 brand links). Each app is read from its own reports, never from an all-apps total
+ * that would mix in other apps of the developer account. Same abstention rules as the KPI context.
+ */
+export async function appsTrendContext(t: DbOrTx, apps: { platform: string; appId: string }[], now: Date) {
+  if (!apps.length) return null;
+  const wanted = new Set(apps.map((a) => `${a.platform}|${a.appId}`));
+  const { signals } = await storeKpiSignals(t, now);
+  return { seriesKey: null, scope: 'brand_apps' as const, apps: [...wanted].map((k) => k.split('|')[1]!), ...splitTrends(signals.filter((s) => wanted.has(`${s.platform}|${s.appId}`))) };
 }

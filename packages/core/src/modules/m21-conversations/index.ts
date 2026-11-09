@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { injectionSignals, PROMPTS, redactPii, untrustedBlock } from '@futuregrow/agent-kernel';
 import { chatwootCreateHandoff } from '@futuregrow/connectors';
 import { chatWidgets, connections, conversationMessages, conversations, type DbOrTx, leads, supportTickets, type Tx, withSystem, withTenant } from '@futuregrow/db';
-import { FgError, forbidden, invalid, notFound, safeEqual, sha256Hex } from '@futuregrow/observability';
+import { FgError, forbidden, hmacSha256Hex, invalid, notFound, safeEqual, sha256Hex } from '@futuregrow/observability';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { runAgent } from '../../agents.js';
@@ -11,6 +11,7 @@ import { audit, record, requireRole } from '../../util.js';
 import { readContext } from '../connections.js';
 import { type Embedder, lintCopy, type RetrievedChunk, screenRetrieved, searchKnowledge } from '../m03-knowledge/index.js';
 import { raiseAlert } from '../m24-governance/index.js';
+import { registerWebhookHandler } from '../webhooks.js';
 
 /* ------------------------------------------------------------------ */
 /* Widgets                                                             */
@@ -205,7 +206,13 @@ export async function postCustomerMessage(deps: CoreDeps, args: { publicKey: str
     if (answer?.lead.interestedInPurchase) await upsertLead(tx, tenantId, state.c.id, answer.lead);
     if (handoff) await requestHandoff(tx, tenantId, state.c.id, reasons.join('; '));
   });
-  if (handoff) await forwardToChatwoot(deps, tenantId, state.c.id).catch((err) => deps.logger.warn({ err: err instanceof Error ? err.message : String(err), conversationId: state.c.id }, 'chatwoot handoff failed; ticket remains in FUTUREGROW'));
+  if (handoff) {
+    await forwardToChatwoot(deps, tenantId, state.c.id).catch(async (err) => {
+      // Never reported as handed over when Chatwoot did not accept it: the ticket stays in FUTUREGROW's inbox.
+      await withTenant(deps.db, { tenantId, actor: 'system:chat' }, (tx) => tx.update(conversations).set({ handoffStatus: 'forward_failed' }).where(eq(conversations.id, state.c.id)));
+      deps.logger.warn({ err: err instanceof Error ? err.message : String(err), conversationId: state.c.id }, 'chatwoot handoff failed; ticket remains in FUTUREGROW');
+    });
+  }
   return { role: handoff ? 'system' : 'assistant', text: replyText, citations, handoff };
 }
 
@@ -264,7 +271,10 @@ async function forwardToChatwoot(deps: CoreDeps, tenantId: string, conversationI
     .slice(0, 20_000);
   const { ctx } = await readContext(deps, tenantId, conn.id, 'chatwoot');
   const res = await chatwootCreateHandoff(ctx, { inboxId, contactName: `Web visitor ${conversationId.slice(0, 8)}`, transcript });
-  await withTenant(deps.db, { tenantId, actor: 'system:chat' }, (tx) => audit(tx, tenantId, systemActor('chat'), 'conversation.handoff.forwarded', { type: 'conversation', id: conversationId }, { chatwootConversationId: res.conversationId }));
+  await withTenant(deps.db, { tenantId, actor: 'system:chat' }, async (tx) => {
+    await tx.update(conversations).set({ chatwootConversationId: res.conversationId, handoffStatus: 'forwarded' }).where(eq(conversations.id, conversationId));
+    await audit(tx, tenantId, systemActor('chat'), 'conversation.handoff.forwarded', { type: 'conversation', id: conversationId }, { chatwootConversationId: res.conversationId });
+  });
   return res;
 }
 
@@ -340,3 +350,61 @@ export async function setLeadStatus(tx: Tx, tenantId: string, actor: Actor, id: 
   await audit(tx, tenantId, actor, 'conversation.lead.status_changed', { type: 'lead', id }, { status });
   return l;
 }
+
+/* ------------------------------------------------------------------ */
+/* Chatwoot webhooks (P2-12): agent replies come back exactly once     */
+/* ------------------------------------------------------------------ */
+
+/** The secret path token of a Chatwoot connection's webhook URL (keyed hash; nothing to store or leak in metadata). */
+export function chatwootWebhookToken(pepper: string, connectionId: string): string {
+  return hmacSha256Hex(pepper, `chatwoot-webhook:${connectionId}`).slice(0, 40);
+}
+
+interface ChatwootEvent {
+  event?: string;
+  id?: number;
+  content?: string;
+  message_type?: string | number;
+  private?: boolean;
+  status?: string;
+  sender?: { type?: string; name?: string };
+  conversation?: { id?: number; status?: string };
+}
+
+registerWebhookHandler('chatwoot', async ({ deps, tenantId, payload }) => {
+  if (!tenantId) return 'ignored';
+  const e = payload as ChatwootEvent;
+  const chatwootConversationId = e.conversation?.id ?? (e.event === 'conversation_status_changed' ? e.id : undefined);
+  if (typeof chatwootConversationId !== 'number') return 'ignored';
+  return withTenant(deps.db, { tenantId, actor: 'connector:chatwoot' }, async (tx) => {
+    const [c] = await tx.select().from(conversations).where(eq(conversations.chatwootConversationId, chatwootConversationId));
+    if (!c) return 'ignored';
+    const actor = systemActor('chatwoot');
+    if (e.event === 'message_created') {
+      // Only public replies written by a human agent are mirrored; incoming, private notes and bots are not.
+      const outgoing = e.message_type === 'outgoing' || e.message_type === 1;
+      if (!outgoing || e.private || e.sender?.type !== 'user' || typeof e.id !== 'number' || !e.content?.trim()) return 'ignored';
+      if (c.status === 'closed') return 'ignored';
+      const text = e.content.slice(0, 4000);
+      const [m] = await tx
+        .insert(conversationMessages)
+        .values({ tenantId, conversationId: c.id, role: 'human_agent', text, redactedText: redactPii(text), externalId: `chatwoot:${e.id}` })
+        .onConflictDoNothing()
+        .returning({ id: conversationMessages.id });
+      if (!m) return 'ignored'; // duplicate delivery
+      await tx.update(conversations).set({ lastMessageAt: new Date(), handoffStatus: 'agent_replied' }).where(eq(conversations.id, c.id));
+      await audit(tx, tenantId, actor, 'conversation.message.chatwoot_reply', { type: 'conversation', id: c.id }, { messageId: m.id, chatwootMessageId: e.id });
+      return 'processed';
+    }
+    if (e.event === 'conversation_status_changed' && (e.status === 'resolved' || e.conversation?.status === 'resolved') && c.status !== 'closed') {
+      await tx.update(conversations).set({ status: 'closed', handoffStatus: 'resolved' }).where(eq(conversations.id, c.id));
+      await tx
+        .update(supportTickets)
+        .set({ status: 'solved' })
+        .where(and(eq(supportTickets.conversationId, c.id), eq(supportTickets.status, 'open')));
+      await audit(tx, tenantId, actor, 'conversation.closed', { type: 'conversation', id: c.id }, { by: 'chatwoot' });
+      return 'processed';
+    }
+    return 'ignored';
+  });
+});

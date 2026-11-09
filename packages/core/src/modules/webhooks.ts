@@ -4,7 +4,7 @@ import { and, eq, lt, notInArray, sql } from 'drizzle-orm';
 import { type CoreDeps, systemActor } from '../deps.js';
 import { record } from '../util.js';
 
-export type WebhookProvider = 'meta' | 'shopify' | 'resend' | 'tiktok';
+export type WebhookProvider = 'meta' | 'shopify' | 'resend' | 'tiktok' | 'chatwoot';
 
 export interface InboxInput {
   provider: WebhookProvider;
@@ -16,6 +16,8 @@ export interface InboxInput {
   payload: unknown;
   /** Provider account id used to resolve the tenant (page id, shop domain, ...). */
   accountRef: string | null;
+  /** A connection the route already authenticated (per-connection webhook token); takes precedence over accountRef. */
+  connectionId?: string | null;
 }
 
 const KEEP_HEADERS = /^(x-shopify-topic|x-shopify-shop-domain|x-shopify-webhook-id|x-shopify-api-version|svix-id|svix-timestamp|content-type|user-agent)$/i;
@@ -29,7 +31,16 @@ export async function ingestWebhook(db: Db, input: InboxInput): Promise<{ id: st
   return withSystem(db, `connector:${input.provider}`, async (tx) => {
     let tenantId: string | null = null;
     let connectionId: string | null = null;
-    if (input.accountRef && input.signatureValid) {
+    if (input.connectionId && input.signatureValid) {
+      const [row] = await tx
+        .select({ id: connections.id, tenantId: connections.tenantId })
+        .from(connections)
+        .where(and(eq(connections.id, input.connectionId), eq(connections.provider, input.provider), notInArray(connections.status, ['disabled', 'revoked'])));
+      if (row) {
+        tenantId = row.tenantId;
+        connectionId = row.id;
+      }
+    } else if (input.accountRef && input.signatureValid) {
       // A disabled or revoked connection never claims a delivery, so an account moved to another
       // tenant resolves to the one connection still in use.
       const rows = await tx

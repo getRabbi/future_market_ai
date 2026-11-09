@@ -1,5 +1,5 @@
 import { getActionType } from '@futuregrow/contracts';
-import { connections, type DbOrTx, platformCapabilities, socialPosts } from '@futuregrow/db';
+import { assets, connections, type DbOrTx, platformCapabilities, socialPosts } from '@futuregrow/db';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 
 /* ------------------------------------------------------------------ */
@@ -134,7 +134,7 @@ export interface PlatformReadiness {
  * the strength of code or credentials alone.
  */
 export async function platformReadiness(t: DbOrTx, now: Date): Promise<PlatformReadiness[]> {
-  const [conns, caps, verified] = await Promise.all([
+  const [conns, caps, verified, videos] = await Promise.all([
     t
       .select()
       .from(connections)
@@ -146,6 +146,11 @@ export async function platformReadiness(t: DbOrTx, now: Date): Promise<PlatformR
       .where(and(eq(socialPosts.status, 'published_verified')))
       .orderBy(desc(socialPosts.verifiedAt))
       .limit(500),
+    t
+      .select({ id: assets.id })
+      .from(assets)
+      .where(and(eq(assets.kind, 'video'), eq(assets.publishEligible, true)))
+      .limit(1),
   ]);
   return PLATFORMS.map((platform) => {
     const spec = SPEC[platform];
@@ -183,9 +188,9 @@ export async function platformReadiness(t: DbOrTx, now: Date): Promise<PlatformR
     } else if (usable.every((c) => c.missingScopes.length)) {
       status = 'missing_permissions';
       reasons.push(`Missing permission(s): ${[...new Set(usable.flatMap((c) => c.missingScopes))].join(', ')}.`);
-    } else if (format.needsVideo) {
+    } else if (format.needsVideo && !videos.length) {
       status = 'needs_video';
-      reasons.push('This platform publishes video; the studio produces images only.');
+      reasons.push('This platform publishes video: render one in the Video Studio (Asset studio) or upload a video with recorded rights.');
     } else if (last && now.getTime() - last.getTime() <= 14 * DAY) {
       status = 'live_verified';
       reasons.push(`Last post verified by read-back ${lastVerifiedPostAt}.`);

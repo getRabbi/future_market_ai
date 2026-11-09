@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appGrowth, appIntelligence, discovery, lifecycle, paidMedia, social } from '@futuregrow/core';
+import { appGrowth, appIntelligence, discovery, lifecycle, offersModule, paidMedia, social } from '@futuregrow/core';
 import { connections, withTenant } from '@futuregrow/db';
 import { and, inArray } from 'drizzle-orm';
 import { forEachTenant, registerTasks } from './tasks.js';
@@ -34,6 +34,25 @@ registerTasks((deps) => ({
   },
 
   /** M16: daily organic Page insights into the Facebook KPI series (Meta closes a day at Pacific midnight), then the daily post-counter snapshot (D-035). */
+  /** Instagram, TikTok, YouTube and LinkedIn account and post metrics (P3-05); each failure is recorded on its run. */
+  social_analytics_sync: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      for (const r of await social.analytics.syncAllSocialAnalytics(deps, tenantId)) {
+        if (r.status !== 'succeeded') deps.logger.warn({ tenantId, platform: r.platform, status: r.status, error: r.error, notes: r.notes.slice(0, 3) }, 'social analytics import incomplete');
+      }
+    });
+  },
+
+  /** Paid campaign drafts follow their M23 action (created and verified, refused, failed). */
+  campaign_drafts_sync: async () => {
+    await forEachTenant(deps, (tenantId) =>
+      withTenant(deps.db, { tenantId, actor: 'system:paid-media' }, async (tx) => {
+        const n = await paidMedia.campaignCreation.syncCampaignDrafts(tx, tenantId);
+        if (n) deps.logger.info({ tenantId, drafts: n }, 'campaign drafts advanced');
+      }),
+    );
+  },
+
   page_insights_sync: async () => {
     await forEachTenant(deps, async (tenantId) => {
       for (const c of await activeConnections(deps, tenantId, ['meta'])) {
@@ -87,14 +106,29 @@ registerTasks((deps) => ({
     await discovery.runSeoAudit(deps, p.tenantId, p.auditId);
   },
 
-  /** M18: Search Console query data (site URL from connection metadata). */
+  /**
+   * M18: Search Console query data for each connection's property (the chosen one, else the
+   * property it was connected with). One failing connection is recorded on that connection and
+   * never stops the others.
+   */
   search_console_sync: async () => {
     await forEachTenant(deps, async (tenantId) => {
       for (const c of await activeConnections(deps, tenantId, ['search_console'])) {
-        const siteUrl = typeof c.metadata.siteUrl === 'string' ? c.metadata.siteUrl : null;
-        if (!siteUrl) continue;
-        // Search Console data lags ~2 days; pull a rolling 7-day window.
-        await discovery.syncSearchConsole(deps, tenantId, c.id, { siteUrl, startDate: day(daysAgo(9)), endDate: day(daysAgo(3)) });
+        // Search Console data lags ~2 days; pull a rolling 7-day window (read one period at a time).
+        try {
+          await discovery.syncSearchConsole(deps, tenantId, c.id, { siteUrl: discovery.searchConsole.propertyOf(c), startDate: day(daysAgo(9)), endDate: day(daysAgo(3)), trigger: 'scheduled' });
+        } catch (err) {
+          deps.logger.warn({ tenantId, connectionId: c.id, err: err instanceof Error ? err.message : String(err) }, 'search console sync failed');
+        }
+      }
+    });
+  },
+
+  /** M12: daily read-only Shopify product and inventory refresh (unchanged products keep their fact). */
+  shopify_catalog_sync: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      for (const r of await offersModule.catalog.syncAllCatalogs(deps, tenantId)) {
+        if (!r.ok) deps.logger.warn({ tenantId, connectionId: r.connectionId, err: r.error }, 'shopify catalog sync failed');
       }
     });
   },
@@ -140,4 +174,17 @@ registerTasks((deps) => ({
   },
 }));
 
-export const CHANNEL_CRONTAB = ['* * * * * social_dispatch', '* * * * * journey_tick', '25 11 * * * page_insights_sync', '37 */6 * * * ads_sync', '15 7 * * * spend_reconcile', '45 5 * * * search_console_sync', '5 9 * * * app_store_sales_sync', '*/10 * * * * store_reporting_tick', '47 4 * * * store_report_retention'];
+export const CHANNEL_CRONTAB = [
+  '* * * * * social_dispatch',
+  '* * * * * journey_tick',
+  '25 11 * * * page_insights_sync',
+  '55 11 * * * social_analytics_sync',
+  '*/10 * * * * campaign_drafts_sync',
+  '37 */6 * * * ads_sync',
+  '15 7 * * * spend_reconcile',
+  '45 5 * * * search_console_sync',
+  '20 6 * * * shopify_catalog_sync',
+  '5 9 * * * app_store_sales_sync',
+  '*/10 * * * * store_reporting_tick',
+  '47 4 * * * store_report_retention',
+];

@@ -162,6 +162,45 @@ describe('Meta Graph API', () => {
     expect((await e.verify(ctx(), p, r.receipt)).verdict).toBe('VERIFIED');
   });
 
+  it('instagram: a carousel creates one container per item, waits for each, then publishes the album once', async () => {
+    let n = 0;
+    server.on('POST', '/v26.0/ig1/media', (req) => ({ json: { id: req.form?.get('media_type') === 'CAROUSEL' ? 'album' : `item${++n}` } }));
+    for (const id of ['item1', 'item2', 'item3', 'album']) server.on('GET', `/v26.0/${id}`, { json: { status_code: 'FINISHED' } });
+    server.on('POST', '/v26.0/ig1/media_publish', { json: { id: 'media77' } });
+    server.on('GET', '/v26.0/media77', { json: { id: 'media77', caption: 'Three', media_type: 'CAROUSEL_ALBUM', media_product_type: 'FEED', permalink: 'https://instagram.com/p/y', children: { data: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] } } });
+    const e = exec('social.instagram.publish_media');
+    const p = {
+      igUserId: 'ig1',
+      mediaType: 'CAROUSEL',
+      mediaUrl: 'https://cdn.example/1.jpg',
+      caption: 'Three',
+      items: [
+        { mediaType: 'IMAGE', mediaUrl: 'https://cdn.example/1.jpg' },
+        { mediaType: 'VIDEO', mediaUrl: 'https://cdn.example/2.mp4' },
+        { mediaType: 'IMAGE', mediaUrl: 'https://cdn.example/3.jpg' },
+      ],
+    };
+    const r = await e.execute(ctx(), p, meta);
+    const created = server.find('POST', '/v26.0/ig1/media').map((x) => Object.fromEntries(x.form!.entries()));
+    expect(created.slice(0, 3)).toEqual([
+      { is_carousel_item: 'true', image_url: 'https://cdn.example/1.jpg' },
+      { is_carousel_item: 'true', media_type: 'VIDEO', video_url: 'https://cdn.example/2.mp4' },
+      { is_carousel_item: 'true', image_url: 'https://cdn.example/3.jpg' },
+    ]);
+    expect(created[3]).toEqual({ media_type: 'CAROUSEL', children: 'item1,item2,item3', caption: 'Three' });
+    expect(server.find('POST', '/v26.0/ig1/media_publish')).toHaveLength(1);
+    expect(r.receipt.providerObjectId).toBe('media77');
+    expect((await e.verify(ctx(), p, r.receipt)).verdict).toBe('VERIFIED');
+    // The platform shows fewer items than were sent: not verified.
+    server.on('GET', '/v26.0/media77', { json: { id: 'media77', caption: 'Three', media_type: 'CAROUSEL_ALBUM', media_product_type: 'FEED', children: { data: [{ id: 'a' }] } } });
+    expect((await e.verify(ctx(), p, r.receipt)).verdict).toBe('MISMATCH');
+    // Fewer than two items is refused before anything is sent.
+    server.reset();
+    const err = await e.execute(ctx(), { ...p, items: p.items.slice(0, 1) }, meta).catch((x) => x);
+    expect(err.phase).toBe('before_send');
+    expect(server.requests).toHaveLength(0);
+  });
+
   it('instagram: an errored container is rejected and nothing is published', async () => {
     server.on('POST', '/v26.0/ig1/media', { json: { id: 'c2' } });
     server.on('GET', '/v26.0/c2', { json: { status_code: 'ERROR' } });
