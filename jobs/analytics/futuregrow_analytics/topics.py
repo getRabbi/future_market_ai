@@ -26,7 +26,8 @@ def tokenize(text: str) -> list[str]:
 
 def tfidf(docs: list[list[str]], max_features: int = 2000, min_df: int = 2):
     df = Counter(t for d in docs for t in set(d))
-    vocab = [t for t, c in df.most_common() if c >= min_df][:max_features]
+    # Ties broken by term, not by set iteration order (which follows the per-process str hash seed).
+    vocab = [t for t, c in sorted(df.items(), key=lambda tc: (-tc[1], tc[0])) if c >= min_df][:max_features]
     index = {t: i for i, t in enumerate(vocab)}
     n = len(docs)
     idf = np.array([math.log((1 + n) / (1 + df[t])) + 1 for t in vocab])
@@ -104,7 +105,8 @@ def cluster_texts(items: list[dict], k_range=(2, 8), seed: int = 5, top_terms: i
         idx = np.where(labels == j)[0]
         if not len(idx):
             continue
-        terms = [vocab[t] for t in np.argsort(-C[j])[:top_terms]]
+        # Stable sort: equal weights keep vocab order (higher df, then alphabetical) on every CPU/SIMD path.
+        terms = [vocab[t] for t in np.argsort(-C[j], kind="stable")[:top_terms]]
         clusters.append({"label": " / ".join(terms[:3]), "terms": terms, "size": int(len(idx)), "sampleRefs": [items[keep[i]]["id"] for i in idx[:10]]})
     clusters.sort(key=lambda c: -c["size"])
     return {"status": "ok", "k": k, "silhouette": best[0], "n": len(keep), "clusters": clusters}

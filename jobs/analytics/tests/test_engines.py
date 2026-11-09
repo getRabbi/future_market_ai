@@ -1,4 +1,8 @@
 import math
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -267,6 +271,24 @@ def test_topic_clustering_separates_themes():
     assert out["status"] == "ok" and out["k"] >= 2
     labels = [c["label"] for c in out["clusters"]]
     assert any("refund" in l for l in labels) and any(("password" in l) or ("login" in l) or ("account" in l) for l in labels)
+
+
+def test_topic_labels_do_not_depend_on_hash_seed():
+    # Tied TF-IDF weights must rank identically in every process: str hashing (and so set order) is
+    # randomised per interpreter, and seed 12 used to label the login theme "reset / sign / locked".
+    code = (
+        "import json\n"
+        "from futuregrow_analytics import topics\n"
+        "a = [{'id': f'a{i}', 'text': f'refund request order {i} refund money back payment'} for i in range(20)]\n"
+        "b = [{'id': f'b{i}', 'text': f'login password reset account locked sign in {i}'} for i in range(20)]\n"
+        "print(json.dumps(topics.cluster_texts(a + b), sort_keys=True))\n"
+    )
+    root = Path(__file__).resolve().parents[1]
+    runs = {
+        subprocess.run([sys.executable, "-c", code], cwd=root, env={**os.environ, "PYTHONHASHSEED": seed}, capture_output=True, text=True, check=True).stdout
+        for seed in ("0", "12", "26", "81")
+    }
+    assert len(runs) == 1
 
 
 def test_mmm_analytic_gradient_matches_finite_differences():
