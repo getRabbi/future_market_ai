@@ -430,4 +430,5 @@ export function requireOperator(actor: Actor): void {
 }
 
 export * as campaignCreation from './create.js';
+export * as optimization from './optimize.js';
 export type { SpendRow };

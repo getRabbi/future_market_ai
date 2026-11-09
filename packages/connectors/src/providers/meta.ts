@@ -224,43 +224,83 @@ export const facebookReplyComment: ActionExecutor<{ commentId: string; message: 
 
 interface IgParams {
   igUserId: string;
-  mediaType: 'IMAGE' | 'REELS';
+  /** CAROUSEL: 2–10 images and/or videos in one feed post (one Content Publishing API post). */
+  mediaType: 'IMAGE' | 'REELS' | 'CAROUSEL';
   mediaUrl: string;
   caption: string;
+  items?: { mediaType: 'IMAGE' | 'VIDEO'; mediaUrl: string }[];
+}
+
+/** Container processing is asynchronous; nothing is public until media_publish. */
+async function waitForContainer(ctx: ConnectorContext, containerId: string) {
+  let status = 'IN_PROGRESS';
+  for (let i = 0; i < 30 && status === 'IN_PROGRESS'; i++) {
+    if (i > 0) await ctx.sleep(Math.min(2000 * i, 10_000));
+    const s = await graph<{ status_code?: string }>(ctx, 'GET', containerId, { query: { fields: 'status_code,status' } });
+    status = s.data?.status_code ?? 'IN_PROGRESS';
+  }
+  if (status !== 'FINISHED') {
+    throw new ProviderHttpError(`instagram container ${containerId} not publishable: ${status}`, { status: null, phase: 'rejected', body: { containerId, status } });
+  }
+}
+
+async function createContainer(ctx: ConnectorContext, igUserId: string, form: Record<string, string>) {
+  const container = await graph<{ id: string }>(ctx, 'POST', `${igUserId}/media`, { form });
+  const id = container.data?.id;
+  if (!id) throw new ProviderHttpError('instagram returned no container id', { status: container.status, phase: 'rejected', body: container.data });
+  return { id, data: container.data };
 }
 
 export const instagramPublishMedia: ActionExecutor<IgParams> = {
   actionType: 'social.instagram.publish_media',
   provider: 'meta',
   async execute(ctx, p) {
-    const form: Record<string, string> = { caption: p.caption };
-    if (p.mediaType === 'IMAGE') form.image_url = p.mediaUrl;
-    else {
-      form.media_type = 'REELS';
-      form.video_url = p.mediaUrl;
+    let container: { id: string; data: unknown };
+    let children: string[] = [];
+    if (p.mediaType === 'CAROUSEL') {
+      const items = await preWrite(async () => {
+        const list = p.items ?? [];
+        if (list.length < 2 || list.length > 10) throw new ProviderHttpError(`an Instagram carousel needs 2–10 items, got ${list.length}`, { status: null, phase: 'before_send' });
+        return list;
+      });
+      // Item containers first (each must finish), then the carousel container that lists them.
+      for (const item of items) {
+        const form: Record<string, string> = { is_carousel_item: 'true' };
+        if (item.mediaType === 'IMAGE') form.image_url = item.mediaUrl;
+        else {
+          form.media_type = 'VIDEO';
+          form.video_url = item.mediaUrl;
+        }
+        const c = await createContainer(ctx, p.igUserId, form);
+        await waitForContainer(ctx, c.id);
+        children.push(c.id);
+      }
+      container = await createContainer(ctx, p.igUserId, { media_type: 'CAROUSEL', children: children.join(','), caption: p.caption });
+    } else {
+      const form: Record<string, string> = { caption: p.caption };
+      if (p.mediaType === 'IMAGE') form.image_url = p.mediaUrl;
+      else {
+        form.media_type = 'REELS';
+        form.video_url = p.mediaUrl;
+      }
+      container = await createContainer(ctx, p.igUserId, form);
+      children = [];
     }
-    const container = await graph<{ id: string }>(ctx, 'POST', `${p.igUserId}/media`, { form });
-    const containerId = container.data?.id;
-    if (!containerId) throw new ProviderHttpError('instagram returned no container id', { status: container.status, phase: 'rejected', body: container.data });
-
-    // Container processing is asynchronous; nothing is public until media_publish.
-    let status = 'IN_PROGRESS';
-    for (let i = 0; i < 30 && status === 'IN_PROGRESS'; i++) {
-      if (i > 0) await ctx.sleep(Math.min(2000 * i, 10_000));
-      const s = await graph<{ status_code?: string }>(ctx, 'GET', containerId, { query: { fields: 'status_code,status' } });
-      status = s.data?.status_code ?? 'IN_PROGRESS';
-    }
-    if (status !== 'FINISHED') {
-      throw new ProviderHttpError(`instagram container ${containerId} not publishable: ${status}`, { status: null, phase: 'rejected', body: { containerId, status } });
-    }
-    const pub = await graph<{ id: string }>(ctx, 'POST', `${p.igUserId}/media_publish`, { form: { creation_id: containerId } });
+    await waitForContainer(ctx, container.id);
+    const pub = await graph<{ id: string }>(ctx, 'POST', `${p.igUserId}/media_publish`, { form: { creation_id: container.id } });
     if (!pub.data?.id) throw new ProviderHttpError('instagram returned no media id', { status: pub.status, phase: 'ambiguous', body: pub.data });
-    return { receipt: receiptOf(ctx, pub, pub.data.id, { containerId }), beforeState: null, rawResponse: { container: container.data, publish: pub.data } };
+    return { receipt: receiptOf(ctx, pub, pub.data.id, { containerId: container.id, ...(children.length ? { children } : {}) }), beforeState: null, rawResponse: { container: container.data, publish: pub.data } };
   },
   async verify(ctx, p, receipt) {
-    const m = await graphOrNull<{ id: string; caption?: string; media_type?: string; media_product_type?: string; permalink?: string }>(ctx, receipt.providerObjectId!, { fields: 'id,caption,media_type,media_product_type,permalink,timestamp' });
+    const carousel = p.mediaType === 'CAROUSEL';
+    const m = await graphOrNull<{ id: string; caption?: string; media_type?: string; media_product_type?: string; permalink?: string; children?: { data?: { id: string }[] } }>(ctx, receipt.providerObjectId!, {
+      fields: `id,caption,media_type,media_product_type,permalink,timestamp${carousel ? ',children{id}' : ''}`,
+    });
     if (!m) return proof('PENDING', 'status_poll', { exists: true }, { exists: false }, ctx.now());
     const kind = p.mediaType === 'REELS' ? 'REELS' : 'FEED';
+    if (carousel) {
+      return compareProof('status_poll', { caption: p.caption, product: 'FEED', mediaType: 'CAROUSEL_ALBUM', items: p.items?.length ?? 0 }, { caption: m.caption, product: m.media_product_type ?? 'FEED', mediaType: m.media_type, items: m.children?.data?.length ?? 0, permalink: m.permalink }, ctx.now());
+    }
     return compareProof('status_poll', { caption: p.caption, product: kind }, { caption: m.caption, product: m.media_product_type ?? (m.media_type === 'IMAGE' ? 'FEED' : m.media_type), permalink: m.permalink }, ctx.now());
   },
 };

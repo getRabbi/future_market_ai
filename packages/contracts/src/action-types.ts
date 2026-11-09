@@ -77,23 +77,31 @@ export const ACTION_TYPES = [
     provider: 'meta',
     capability: 'instagram_content_publish',
     category: 'PUBLIC_PUBLISHING',
-    description: 'Publish an image or reel to an authorized Instagram professional account.',
+    description: 'Publish an image, a reel or a carousel (2–10 images/videos) to an authorized Instagram professional account.',
     affectsSpend: false,
     publicFacing: true,
     contactsPeople: false,
     verification: 'status_poll',
     rollback: 'manual',
     supported: true,
-    paramsSchema: z.object({
-      igUserId: z.string().min(1),
-      mediaType: z.enum(['IMAGE', 'REELS']),
-      mediaUrl: z.string().url(),
-      caption: z.string().max(2200),
-      postId: z.string().uuid(),
-      assetIds: z.array(z.string().uuid()).min(1),
-      claimIds: z.array(z.string().uuid()).default([]),
-      disclosure,
-    }),
+    paramsSchema: z
+      .object({
+        igUserId: z.string().min(1),
+        mediaType: z.enum(['IMAGE', 'REELS', 'CAROUSEL']),
+        mediaUrl: z.string().url(),
+        caption: z.string().max(2200),
+        /** CAROUSEL only: the items in order, one per asset (asset:// references until execution). */
+        items: z
+          .array(z.object({ mediaType: z.enum(['IMAGE', 'VIDEO']), mediaUrl: z.string().url() }))
+          .min(2)
+          .max(10)
+          .optional(),
+        postId: z.string().uuid(),
+        assetIds: z.array(z.string().uuid()).min(1).max(10),
+        claimIds: z.array(z.string().uuid()).default([]),
+        disclosure,
+      })
+      .refine((p) => (p.mediaType === 'CAROUSEL' ? p.items?.length === p.assetIds.length && p.assetIds.length >= 2 : !p.items && p.assetIds.length === 1), 'a carousel lists one item per asset (2–10); an image or reel has exactly one asset'),
   },
   {
     type: 'social.tiktok.publish_video',

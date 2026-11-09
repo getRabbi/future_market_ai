@@ -1,5 +1,5 @@
 import { type AnalyticsFetch, fetchInstagramAnalytics, fetchLinkedinAnalytics, fetchTiktokAnalytics, fetchYoutubeAnalytics, PLATFORM_METRICS, type SocialAnalyticsPlatform } from '@futuregrow/connectors';
-import { brandChannels, connections, type DbOrTx, socialAnalyticsRuns, socialMetricObservations, socialPosts, withTenant } from '@futuregrow/db';
+import { brandChannels, connections, type DbOrTx, socialAnalyticsRuns, socialMetricObservations, socialPosts, type Tx, withTenant } from '@futuregrow/db';
 import { invalid, notFound } from '@futuregrow/observability';
 import { and, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
@@ -242,4 +242,60 @@ export async function syncAllSocialAnalytics(deps: CoreDeps, tenantId: string): 
   const out: AnalyticsSyncResult[] = [];
   for (const c of conns.filter((x) => analyticsPlatformOf(x))) out.push(await syncSocialAnalytics(deps, tenantId, c.id));
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* CSV export                                                          */
+/* ------------------------------------------------------------------ */
+
+const EXPORT_ROLES = ['owner', 'admin', 'growth_operator', 'analyst'] as const;
+
+/** One CSV cell: quoted, and a leading = + - @ (or tab/CR) is neutralised so spreadsheets never run it as a formula. */
+export function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  let s = String(v);
+  if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\r\n]/.test(s) || s !== s.trim() ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * Per-day social metric observations as CSV, in each platform's own metric names (one row per
+ * observation; no cross-platform totals). A value the platform did not return is an empty cell
+ * with status not_returned, never 0. Readers only; the export is audited.
+ */
+export async function socialAnalyticsCsv(t: Tx, tenantId: string, actor: Actor, now: Date, opts: { brandId?: string; platform?: SocialAnalyticsPlatform; days?: number } = {}) {
+  requireRole(actor, [...EXPORT_ROLES], 'exporting social analytics');
+  const days = Math.min(Math.max(opts.days ?? LOOKBACK_DAYS, 1), 365);
+  let conns = await t.select({ id: connections.id, displayName: connections.displayName }).from(connections);
+  if (opts.brandId) {
+    const bound = new Set((await t.select({ id: brandChannels.connectionId }).from(brandChannels).where(eq(brandChannels.brandId, opts.brandId))).map((r) => r.id));
+    conns = conns.filter((c) => bound.has(c.id));
+  }
+  const name = new Map(conns.map((c) => [c.id, c.displayName]));
+  const rows = conns.length
+    ? await t
+        .select({ o: socialMetricObservations, url: socialPosts.externalUrl })
+        .from(socialMetricObservations)
+        .leftJoin(socialPosts, eq(socialPosts.id, socialMetricObservations.postId))
+        .where(
+          and(
+            inArray(
+              socialMetricObservations.connectionId,
+              conns.map((c) => c.id),
+            ),
+            gte(socialMetricObservations.observedOn, new Date(now.getTime() - days * DAY).toISOString().slice(0, 10)),
+            opts.platform ? eq(socialMetricObservations.platform, opts.platform) : undefined,
+          ),
+        )
+        .orderBy(socialMetricObservations.platform, socialMetricObservations.observedOn, socialMetricObservations.scope, socialMetricObservations.objectRef, socialMetricObservations.metricKey)
+        .limit(100_000)
+    : [];
+  const header = ['platform', 'account', 'scope', 'object_ref', 'post_url', 'metric_key', 'metric_label', 'unit', 'value', 'status', 'observed_on', 'revision'];
+  const lines = [header.join(',')];
+  for (const { o, url } of rows) {
+    const def = (METRIC_DEFINITIONS as Record<string, Record<string, { label: string; unit: string }>>)[o.platform]?.[o.metricKey];
+    lines.push([o.platform, name.get(o.connectionId) ?? '', o.scope, o.objectRef, url ?? '', o.metricKey, def?.label ?? o.metricKey, def?.unit ?? '', o.value, o.status, o.observedOn, o.revision].map(csvCell).join(','));
+  }
+  await audit(t, tenantId, actor, 'social.analytics.exported', { type: 'tenant', id: tenantId }, { rows: rows.length, days, platform: opts.platform ?? null, brandId: opts.brandId ?? null });
+  return { csv: `${lines.join('\r\n')}\r\n`, rows: rows.length, filename: `social-analytics-${opts.platform ?? 'all'}-${now.toISOString().slice(0, 10)}.csv` };
 }
