@@ -73,7 +73,7 @@ screens keep their forms, row actions and permission checks.
 ## Global search
 
 `Ctrl+K` / `Cmd+K` or the header search opens a combobox dialog (arrow keys, Enter, Escape,
-focus returned on close). Static: 38 pages (titles, summaries, keywords, module ids such as
+focus returned on close). Static: 42 pages (titles, summaries, keywords, module ids such as
 "M17"), role-filtered quick actions, journey tasks and "how it works" guides. Records (fetched
 on first open, per organization, from existing endpoints that the API already scopes to the
 tenant and role): goals, apps, brands, connections, posts, actions waiting for approval. A list
@@ -102,7 +102,7 @@ targets on phones, light and dark tokens.
 | 8 | Optional provider API is not a failure | `autopilot.spec` (Blockers drawer: Optional enhancement, not Critical) |
 | 9 | Approval from the notification bell | `autopilot.spec` (fixture action → bell → exact drawer) |
 | 10 | Forecast, decision, audit evidence via navigation | `control-plane.spec` (every page renders) + goal details |
-| 11 | All advanced modules in the same shell | `control-plane.spec` (38 pages, same nav/search) and `/app/advanced` redirect |
+| 11 | All advanced modules in the same shell | `control-plane.spec` (42 pages, same nav/search) and `/app/advanced` redirect |
 | 12 | 390 px phone, no hidden actions or overflow | `autopilot.spec` and `control-plane.spec` phone tests (390 and 320 px) |
 | 13 | No restricted actions via search or deep links | `control-plane.spec` (approver: quick actions, search, deep links, 403) |
 | 14 | Switching organization leaks nothing | `control-plane.spec` (second organization: no goals, no search records) |
