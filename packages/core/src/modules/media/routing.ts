@@ -30,6 +30,44 @@ export const isVideoMode = (m: string): m is VideoMode => (VIDEO_MODES as readon
 export const GOOGLE_FLOW_URL = 'https://labs.google/fx/tools/flow';
 
 const usd = (max: number) => z.number().finite().min(0).max(max);
+
+const PRESET_KEYS = Object.keys(VIDEO_PRESETS) as [VideoPreset, ...VideoPreset[]];
+
+/**
+ * Daily automation per brand (D-053): how many videos a brand may get per day, which content
+ * categories (pillar keys, curriculum unit kinds, or "approved_claims") and formats it uses, and
+ * which library assets (cleared, owner-chosen) its scenes may show. Nothing here enables a mode.
+ */
+export const VideoAutomationBrandSchema = z
+  .object({
+    brandId: z.string().uuid(),
+    enabled: z.boolean().default(true),
+    dailyQuota: z.number().int().min(1).max(10).default(2),
+    /** Empty = every category the brand's content program offers. */
+    categories: z
+      .array(z.string().regex(/^[a-z0-9_]{2,32}$/))
+      .max(16)
+      .default([]),
+    presets: z.array(z.enum(PRESET_KEYS)).min(1).max(3).default(['vertical_9x16']),
+    assetIds: z.array(z.string().uuid()).max(20).default([]),
+  })
+  .strict();
+export type VideoAutomationBrand = z.infer<typeof VideoAutomationBrandSchema>;
+
+export const VideoAutomationSchema = z
+  .object({
+    brands: z.array(VideoAutomationBrandSchema).max(20).default([]),
+    /** smart = the router (template storyboards go to Remotion); a mode name asks for that mode. */
+    preferredMode: z.enum(['smart', ...VIDEO_MODES]).default('smart'),
+    /** OFF = curriculum and approved-content templates only (no model calls, no AI spend). */
+    useAi: z.boolean().default(true),
+    /** Bounded work per run: at most this many scripts are written per tick. */
+    maxScriptsPerRun: z.number().int().min(1).max(5).default(3),
+  })
+  .strict();
+export type VideoAutomation = z.infer<typeof VideoAutomationSchema>;
+export const DEFAULT_VIDEO_AUTOMATION: VideoAutomation = Object.freeze({ brands: [], preferredMode: 'smart', useAi: true, maxScriptsPerRun: 3 }) as VideoAutomation;
+
 export const VideoRoutingSchema = z
   .object({
     enabled: z.object({ remotion: z.boolean(), google_flow: z.boolean(), wan_cloud: z.boolean(), higgsfield: z.boolean() }).strict(),
@@ -48,9 +86,12 @@ export const VideoRoutingSchema = z
     requirePaidApproval: z.boolean(),
     /** Global kill switch for every paid video provider. */
     paidGenerationDisabled: z.boolean(),
+    automation: VideoAutomationSchema.prefault({}),
   })
   .strict()
   .superRefine((s, ctx) => {
+    const brandIds = s.automation.brands.map((b) => b.brandId);
+    if (new Set(brandIds).size !== brandIds.length) ctx.addIssue({ code: 'custom', path: ['automation', 'brands'], message: 'list each brand once' });
     if (new Set(s.providerPriority).size !== VIDEO_MODES.length) ctx.addIssue({ code: 'custom', path: ['providerPriority'], message: 'list each mode exactly once' });
     if (s.dailyPaidBudgetUsd > s.monthlyPaidBudgetUsd) ctx.addIssue({ code: 'custom', path: ['dailyPaidBudgetUsd'], message: 'the daily paid budget cannot exceed the monthly paid budget' });
     if (s.maxPaidUsdPerVideo > s.dailyPaidBudgetUsd) ctx.addIssue({ code: 'custom', path: ['maxPaidUsdPerVideo'], message: 'the per-video maximum cannot exceed the daily paid budget' });
@@ -71,6 +112,7 @@ export const DEFAULT_VIDEO_ROUTING: VideoRouting = Object.freeze({
   monthlyPaidBudgetUsd: 0,
   requirePaidApproval: true,
   paidGenerationDisabled: true,
+  automation: DEFAULT_VIDEO_AUTOMATION,
 }) as VideoRouting;
 
 /** A stored record that no longer validates fails closed: every mode OFF and paid disabled. */
@@ -439,8 +481,10 @@ export async function updateVideoRouting(tx: Tx, deps: Pick<CoreDeps, 'videos' |
   requireRole(actor, ['owner', 'admin'], 'changing video generation settings');
   requireMfa(actor, 'changing video generation settings');
   const { settings: rawSettings, expectedVersion } = VideoRoutingUpdateSchema.parse(raw);
-  const settings = VideoRoutingSchema.parse(rawSettings);
   const before = await storedVideoRouting(tx, tenantId);
+  // A client that only knows the switchboard fields keeps the stored automation configuration.
+  const withAutomation = rawSettings && typeof rawSettings === 'object' && !('automation' in rawSettings) ? { ...rawSettings, automation: before.settings.automation } : rawSettings;
+  const settings = VideoRoutingSchema.parse(withAutomation);
   if (before.version !== expectedVersion) throw conflict(`video settings changed in the meantime (version ${before.version}); reload and try again`);
   const next = expectedVersion + 1;
   const updated = await tx

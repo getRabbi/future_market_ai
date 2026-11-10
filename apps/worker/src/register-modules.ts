@@ -87,11 +87,21 @@ registerTasks((deps) => ({
     }
   },
 
-  /** Optional daily video automation: queues QA-passed, non-duplicate storyboards up to the tenant's daily target; pauses on any blocker. */
+  /**
+   * Optional daily video automation (D-052/D-053): renders hand-made QA-passed storyboards, then
+   * writes scripts and storyboards for the selected brands and routes them (Remotion renders,
+   * Google Flow hand-offs, paid routes wait for authorization) up to the daily target. Idempotent
+   * per row; a restarted worker resumes. Pauses on any blocker; never publishes or spends.
+   */
   video_daily_tick: async () => {
     await forEachTenant(deps, async (tenantId) => {
       const r = await media.videoJobs.runDailyVideoAutomation(deps, tenantId);
-      if (r.queued.length || r.skipped.length) deps.logger.info({ tenantId, queued: r.queued.length, skipped: r.skipped.length, remaining: r.plan.remaining }, 'daily video automation');
+      const a = r.automation;
+      if (r.queued.length || r.skipped.length || (a && (a.created || a.scripted || a.routed || a.synced || a.skipped.length)))
+        deps.logger.info(
+          { tenantId, queued: r.queued.length, skipped: r.skipped.length, remaining: r.plan.remaining, automation: a && { created: a.created, scripted: a.scripted, routed: a.routed, synced: a.synced, skipped: a.skipped.length, retrying: a.retrying.length, blockers: a.blockers } },
+          'daily video automation',
+        );
     });
   },
 
@@ -194,7 +204,7 @@ export const MODULE_CRONTAB = [
   '* * * * * media_jobs_tick',
   '*/5 * * * * posthog_forward',
   '*/2 * * * * video_projects_sync',
-  '17 * * * * video_daily_tick',
+  '7,27,47 * * * * video_daily_tick',
   '33 4 * * * stock_licence_sweep',
   '53 3 * * * retention_sweep',
   '27 6 * * * brain_cycle',

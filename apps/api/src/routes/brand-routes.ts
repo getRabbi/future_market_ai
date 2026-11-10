@@ -35,6 +35,13 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: ApiContext): void
     }),
   );
   r.get('/v1/media/video-routing/daily-plan', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => VJ.dailyVideoPlan(tx, ctx.deps, tenantOf(req))));
+  /* Daily Video Automation (D-053): topic → script → storyboard → route → render → review. Never publishes or spends. */
+  const VA = media.videoAutomation;
+  r.get('/v1/media/video-automation', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => VA.automationOverview(tx, ctx.deps, tenantOf(req))));
+  r.put('/v1/media/video-automation/settings', { schema: { tags: ['assets'], body: VA.AutomationSettingsUpdateSchema } }, async (req) => tenantTx(ctx, req, (tx) => VA.updateAutomationSettings(tx, ctx.deps, tenantOf(req), actorOf(req), req.body)));
+  r.post('/v1/media/video-automation/run', { schema: { tags: ['assets'] } }, async (req) => VA.runVideoAutomationNow(ctx.deps, tenantOf(req), actorOf(req)));
+  r.post('/v1/media/video-automation/items/:id/retry', { schema: { tags: ['assets'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => VA.retryAutomationItem(tx, ctx.deps, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/media/video-automation/items/:id/review', { schema: { tags: ['assets'], params: Id, body: VA.ReviewSchema } }, async (req) => tenantTx(ctx, req, (tx) => VA.reviewAutomationItem(tx, ctx.deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
   r.get('/v1/media/video-generations', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => VJ.videoJobHistory(tx, ctx.deps, tenantOf(req))));
   r.post('/v1/media/video-generations', { schema: { tags: ['assets'], body: VJ.VideoGenerationQueueSchema } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => VJ.queueVideoGeneration(tx, ctx.deps, tenantOf(req), actorOf(req), req.body))));
   r.post('/v1/media/video-generations/:id/approve', { schema: { tags: ['assets'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => GV.approveVideoGeneration(tx, ctx.deps, tenantOf(req), actorOf(req), req.params.id)));

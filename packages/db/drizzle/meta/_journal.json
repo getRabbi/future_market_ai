@@ -204,6 +204,13 @@
       "when": 1794334479161,
       "tag": "0028_video_mode_switchboard",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794337902645,
+      "tag": "0029_video_automation",
+      "breakpoints": true
     }
   ]
 }

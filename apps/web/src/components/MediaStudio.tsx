@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { relativeTime } from '../lib/format.js';
 import { Badge, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
+import { VideoAutomationPanel } from './VideoAutomationPanel.js';
 import { VideoGenerationSettings } from './VideoGenerationSettings.js';
 
 /** Every API call this screen makes (checked against the API's routes in catalog.test.ts). */
@@ -472,6 +473,7 @@ function VideoStudio() {
   return (
     <>
       <VideoGenerationSettings />
+      <VideoAutomationPanel />
       <section className="card">
         <header className="card-head">
           <h2 className="card-title">Video Studio</h2>

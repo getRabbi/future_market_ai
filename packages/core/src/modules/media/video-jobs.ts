@@ -8,6 +8,9 @@ import { audit, requireRole } from '../../util.js';
 import { requestGenerativeVideo } from './generative-video.js';
 import { GOOGLE_FLOW_URL, paidVideoUsage, previewVideoRoute, storedVideoRouting, VideoRouteRequestSchema } from './routing.js';
 import { queueProjectRender } from './video.js';
+import { AUTOMATION_ACTOR_REF, DAILY_MAX_IN_FLIGHT, dailyUsage, runVideoAutomation } from './video-automation.js';
+
+export { DAILY_MAX_IN_FLIGHT };
 
 /**
  * One entry point for "make this video": the router decides (deterministically, from real
@@ -147,16 +150,13 @@ export async function videoJobHistory(t: DbOrTx, deps: Pick<CoreDeps, 'clock'>, 
 /* Daily automation (optional; a goal, not a guarantee)                */
 /* ------------------------------------------------------------------ */
 
-/** At most this many automated renders are in flight per tenant (CPU media worker). */
-export const DAILY_MAX_IN_FLIGHT = 2;
-
 const storyboardHash = (s: unknown) => sha256Hex(canonicalJson(s));
 
 /**
- * Today's plan: how many template videos are still wanted, what blocks automation, and which
- * QA-passed storyboards would be rendered next. Storyboards identical to one already rendered
- * are skipped, so automation never produces duplicate content. Script and storyboard writing
- * stays with the Content Studio and its approvals; automation only renders what passed QA.
+ * Today's plan for hand-made storyboards: how many template videos are still wanted, what blocks
+ * rendering them, and which QA-passed storyboards would be rendered next. Storyboards identical
+ * to one already rendered are skipped. Storyboards written by the daily automation (D-053) are
+ * routed by their own pipeline and are not candidates here; both share the daily target.
  */
 export async function dailyVideoPlan(t: DbOrTx, deps: Pick<CoreDeps, 'clock'>, tenantId: string) {
   const { settings, remotionLicensed } = await storedVideoRouting(t, tenantId);
@@ -166,6 +166,7 @@ export async function dailyVideoPlan(t: DbOrTx, deps: Pick<CoreDeps, 'clock'>, t
     .select({ id: renderJobs.id, status: renderJobs.status })
     .from(renderJobs)
     .where(and(eq(renderJobs.composition, 'scene_story'), gte(renderJobs.requestedAt, day), notInArray(renderJobs.status, ['failed', 'blocked_license'])));
+  const usage = await dailyUsage(t, day.toISOString().slice(0, 10));
   const inFlight = await t
     .select({ id: renderJobs.id })
     .from(renderJobs)
@@ -181,7 +182,7 @@ export async function dailyVideoPlan(t: DbOrTx, deps: Pick<CoreDeps, 'clock'>, t
   let duplicates = 0;
   for (const p of projects) {
     const qa = p.qa as { storyboard?: { passed?: boolean } };
-    if (p.status !== 'storyboard' || qa.storyboard?.passed !== true) continue;
+    if (p.status !== 'storyboard' || qa.storyboard?.passed !== true || p.createdBy === AUTOMATION_ACTOR_REF) continue;
     const h = storyboardHash(p.storyboard);
     if (rendered.has(h) || seen.has(h)) {
       duplicates++;
@@ -190,14 +191,24 @@ export async function dailyVideoPlan(t: DbOrTx, deps: Pick<CoreDeps, 'clock'>, t
     seen.add(h);
     candidates.push(p.id);
   }
-  const remaining = Math.max(0, settings.dailyTarget - today.length);
+  const remaining = Math.max(0, settings.dailyTarget - usage.used);
   const slots = Math.max(0, Math.min(remaining, DAILY_MAX_IN_FLIGHT - inFlight.length));
-  if (!candidates.length && remaining) blockers.push('No QA-passed storyboard is waiting; create or approve storyboards in the Video Studio.');
+  if (!candidates.length && remaining && !settings.automation.brands.some((b) => b.enabled)) blockers.push('No QA-passed storyboard is waiting; create storyboards in the Video Studio or select brands for automatic scripts.');
   return { target: settings.dailyTarget, renderedToday: today.length, inFlight: inFlight.length, remaining, slots, blockers, candidates: candidates.slice(0, slots), skippedDuplicates: duplicates };
 }
 
-/** Worker step: queues up to the free slots. Pauses (no work) whenever a blocker exists. */
+/**
+ * Worker step: first renders hand-made QA-passed storyboards up to the free slots (paused while
+ * Remotion is blocked), then runs the automatic script → storyboard → route pipeline for the
+ * selected brands within what is left of the daily target.
+ */
 export async function runDailyVideoAutomation(deps: CoreDeps, tenantId: string) {
+  const legacy = await renderHandmadeStoryboards(deps, tenantId);
+  const automation = legacy.plan.blockers.includes('Daily automation is OFF.') ? null : await runVideoAutomation(deps, tenantId);
+  return { ...legacy, automation };
+}
+
+async function renderHandmadeStoryboards(deps: CoreDeps, tenantId: string) {
   return withTenant(deps.db, { tenantId, actor: 'system:video-automation' }, async (t) => {
     const plan = await dailyVideoPlan(t, deps, tenantId);
     const actor = systemActor('video-automation');

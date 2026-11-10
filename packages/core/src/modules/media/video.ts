@@ -126,6 +126,11 @@ async function load(t: DbOrTx, id: string) {
 
 export async function createVideoProject(t: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
   requireRole(actor, [...EDIT_ROLES], 'creating a video');
+  return insertVideoProject(t, deps, tenantId, actor, raw);
+}
+
+/** Stores a storyboard with its QA result (rights, claims lint, disclosures). Shared by editors and the daily automation (D-053). */
+export async function insertVideoProject(t: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
   const input = VideoProjectInputSchema.parse(raw);
   const problems = await storyboardProblems(t, deps, input.storyboard);
   const [row] = await t

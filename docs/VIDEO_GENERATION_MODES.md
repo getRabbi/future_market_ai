@@ -145,14 +145,62 @@ key with MCP, and treat any MCP generation as external spend.
 | POST | `/v1/media/video-generations/:id/approve` · `/cancel` · `/reconcile` | approval, cancellation, billing reconciliation |
 | POST | `/v1/media/google-flow/import` | binary MP4, metadata in `x-fg-asset-meta` |
 
-## Daily automation
+## Daily automation (D-053)
 
-Optional (`dailyAutomation`, target 1–10, default 5). The hourly worker task `video_daily_tick`
-renders QA-passed storyboards with Remotion up to the target, at most two in flight per tenant,
-skipping storyboards identical to one already rendered. It pauses when automation, Remotion or
-its licence is missing. It does not write scripts or storyboards (those stay with the Content
-Studio and its approvals) and it never uses paid providers. The target is a goal, not a guarantee.
-Publishing still goes through M23 approval and verification.
+Optional (`dailyAutomation`, tenant target 1–10, default 5), configured in **Media Studio › Daily
+Video Automation** (`PUT /v1/media/video-automation/settings`, owner/admin with MFA, same versioned
+record as the switchboard). Per brand: ON/OFF, a daily quota (1–10), content categories, formats
+(9:16, 1:1, 16:9) and the library assets its scenes may use. Tenant-wide: the preferred mode
+(`smart` by default), whether the approved AI model may write scripts (`useAi`), and how many
+scripts one run may write (1–5).
+
+The worker task `video_daily_tick` (minutes 7, 27, 47) first renders hand-made QA-passed storyboards
+(as before), then runs the pipeline for the selected brands:
+
+**Topic → Script → Storyboard → Validation → Routing → Render → QA → Asset Library → Review.**
+
+1. **Topic.** From the brand's own verified material only: EPS curriculum units (vocab, hangul,
+   grammar, mistake, dialogue, quiz) not taught by a post in the last 14 days; human-approved Content
+   Studio items; approved, unexpired, non-regulated claims; and, only with AI, the program's
+   pillars. A topic used for the brand in the last 60 days (any outcome) is not picked again.
+   Categories rotate round-robin.
+2. **Script.** Curriculum topics use fixed Bangla templates that quote the verified unit (checked
+   with the same curriculum verifier M23 uses): no model call, no cost. Other topics go to the
+   approved model gateway (prompt `video.script`; registry approval, the AI spending limit and kill
+   switches apply). Output citing an ID that was not provided, repeating a recent title or breaking
+   the limits is dropped, not repaired. If the model is unavailable or its script is dropped, a
+   template quoting approved wording verbatim is used when the material allows; otherwise the row
+   retries (model unavailable: at most 3 attempts with back-off) or is skipped with the reason.
+3. **Storyboard.** The script becomes an ordinary Video Studio storyboard (same schema and limits),
+   with the brand palette (accent/onAccent), the brand logo on the closing scene and the
+   owner-chosen assets on content scenes.
+4. **Validation.** The whole script copy including the voiceover is claim-linted; the storyboard then
+   passes the existing rights, claims-lint and AI-disclosure gates. A failure is recorded, never
+   rendered.
+5. **Routing.** Smart/Remotion: render with Remotion (at most two in flight per tenant; waits without
+   the licence). Google Flow: a prepared prompt as a manual task (Flow is never automated). Wan /
+   Higgsfield: the row waits with the prompt and the maximum charge; the automation never passes a
+   paid authorization, so nothing is submitted or reserved. No route: the run pauses before any work.
+6. **Render, QA, review.** A row is complete only when the render QA passed; it then waits in
+   **Pending approvals**. Review (owner, admin or approver; human only) approves or rejects. Approval
+   does not publish: publishing still goes through M16/M23 policy, approvals and verification.
+
+Safety: each row has the idempotency key `va:<day>:<brand>:<slot>` (unique per tenant), planning
+holds a per-tenant advisory lock, work is claimed with a 10-minute lease and model calls run outside
+database transactions, so a restarted or concurrent worker resumes rows instead of generating twice.
+Per day a brand gets at most twice its quota of rows. Unfinished pre-render rows older than three
+days are skipped. **Retry** re-renders a failed render from the same storyboard (no new script) or
+starts a failed/skipped/waiting row over from its topic. The target is a goal, not a guarantee.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/v1/media/video-automation` | settings, blockers, today's progress, pending approvals, recent rows with script and storyboard, 14-day history, AI and paid cost |
+| PUT | `/v1/media/video-automation/settings` | `{ dailyAutomation, dailyTarget, automation, expectedVersion }` |
+| POST | `/v1/media/video-automation/run` | run now (owner/admin with MFA) |
+| POST | `/v1/media/video-automation/items/:id/review` | `{ decision: "approve" or "reject", note }` |
+| POST | `/v1/media/video-automation/items/:id/retry` | safe retry |
+
+Migration `0029_video_automation` is additive (one new table; RLS is applied by `fg_apply_security()`).
 
 ## Limitations
 
@@ -164,5 +212,9 @@ Publishing still goes through M23 approval and verification.
   start-up), so reconcile with the host's invoice.
 - Google Flow terms and plan limits are the uploader's responsibility; FUTUREGROW records the
   attestation, it cannot verify it.
+- Automatic scripts are text-scene videos: no voiceover audio is generated (the voiceover text is
+  stored in the storyboard script for a later, separately approved speech step), and only the brand
+  logo and owner-chosen assets are used as media (assets are not brand-scoped, so nothing else is
+  picked automatically). Suggested licensed media are listed for a person to add.
 - Settings migration `0028_video_mode_switchboard` is additive (two columns, one partial unique
   index, two widened checks). A previous binary ignores them; rollback needs no schema change.

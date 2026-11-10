@@ -319,4 +319,25 @@ describe('video switchboard API', () => {
     expect((await owner.req('GET', '/v1/media/video-generations', h1)).json).toMatchObject({ jobs: [], usage: { reservedUsd: 0 } });
     expect((await owner.req('POST', '/v1/media/google-flow/import', { ...write(), body: { title: 'x' } })).status).toBe(422);
   });
+
+  it('serves the Daily Video Automation dashboard and keeps its settings on the same versioned record', async () => {
+    const h1 = { headers: { 'x-fg-tenant': tenantId } };
+    const write = () => ({ headers: { 'x-fg-tenant': tenantId, 'idempotency-key': `va-${randomUUID()}` } });
+    expect((await new Client(app).req('GET', '/v1/media/video-automation', h1)).status).toBe(401);
+    const ov = await owner.req('GET', '/v1/media/video-automation', h1);
+    expect(ov.status).toBe(200);
+    expect(ov.json).toMatchObject({ settings: { dailyAutomation: false, dailyTarget: 5, automation: { brands: [], preferredMode: 'smart', useAi: true } }, today: { completed: 0 }, items: [], pendingApprovals: [] });
+    expect(ov.json.blockers).toContain('Daily automation is OFF.');
+    const saved = await owner.req('PUT', '/v1/media/video-automation/settings', { ...write(), body: { dailyAutomation: true, dailyTarget: 7, automation: { ...ov.json.settings.automation, useAi: false }, expectedVersion: ov.json.version } });
+    expect(saved.status).toBe(200);
+    expect(saved.json.settings).toMatchObject({ dailyAutomation: true, dailyTarget: 7, automation: { useAi: false } });
+    expect((await owner.req('PUT', '/v1/media/video-automation/settings', { ...write(), body: { dailyAutomation: true, dailyTarget: 11, automation: ov.json.settings.automation, expectedVersion: saved.json.version } })).status).toBe(422);
+    expect((await owner.req('PUT', '/v1/media/video-automation/settings', { ...write(), body: { dailyAutomation: false, dailyTarget: 5, automation: ov.json.settings.automation, expectedVersion: ov.json.version } })).status).toBe(409);
+    // The switchboard keeps the automation configuration it did not send.
+    expect((await owner.req('GET', '/v1/media/video-routing', h1)).json.settings).toMatchObject({ dailyTarget: 7, automation: { useAi: false } });
+    const run = await owner.req('POST', '/v1/media/video-automation/run', write());
+    expect(run.json).toMatchObject({ ran: false, created: 0 });
+    expect(run.json.blockers.join(' ')).toMatch(/No brand is selected/);
+    expect((await owner.req('POST', `/v1/media/video-automation/items/${randomUUID()}/retry`, write())).status).toBe(404);
+  });
 });
