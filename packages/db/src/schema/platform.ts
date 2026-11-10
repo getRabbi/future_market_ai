@@ -15,6 +15,10 @@ export const tenantSettings = pgTable('tenant_settings', {
   remotionLicense: json<Record<string, unknown> | null>('remotion_license'),
   /** Per-tenant rollout switch for the Autopilot (D-033); off until an owner or admin enables it. */
   autopilotEnabled: boolean('autopilot_enabled').notNull().default(false),
+  /** Four-mode video switchboard (Remotion, Google Flow, Wan cloud GPU, Higgsfield); null = free-first defaults. */
+  videoRouting: json<Record<string, unknown> | null>('video_routing'),
+  /** Optimistic-concurrency version of video_routing; every accepted change increments it. */
+  videoRoutingVersion: integer('video_routing_version').notNull().default(0),
   updatedBy: text('updated_by'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),

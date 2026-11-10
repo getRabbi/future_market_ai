@@ -9,6 +9,7 @@ import { audit, record, requireMfa, requireRole } from '../../util.js';
 import { lintCopy } from '../m03-knowledge/index.js';
 import { personaContentCheck } from '../m15-personas/index.js';
 import { getTenantSettingsRow } from '../m24-governance/index.js';
+import { assertVideoModeEnabled } from '../media/routing.js';
 
 /* ------------------------------------------------------------------ */
 /* Media sniffing (uploads)                                            */
@@ -217,6 +218,7 @@ export const RenderRequestSchema = z.object({
 });
 
 export async function requestRender(tx: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
+  await assertVideoModeEnabled(tx, tenantId, 'remotion');
   const req = RenderRequestSchema.parse(raw);
   const inputs = await tx.select().from(assets).where(inArray(assets.id, req.inputAssetIds));
   if (inputs.length !== new Set(req.inputAssetIds).size) throw invalid('input asset not found');

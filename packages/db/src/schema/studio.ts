@@ -3,7 +3,7 @@ import { date, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-
 import { createdAt, dbl, json, oneOf, pk, rawCheck, tenantId, ts, updatedAt } from './_common.js';
 import { growthGoals } from './autopilot.js';
 import { brands } from './brands.js';
-import { assets, socialPosts } from './growth.js';
+import { assets, socialPosts, videoProjects } from './growth.js';
 import { connections } from './platform.js';
 
 /* ------------------------------------------------------------------ */
@@ -196,4 +196,63 @@ export const studioContentItems = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [index('studio_content_items_program_idx').on(t.tenantId, t.programId, t.stage), uniqueIndex('studio_content_items_post_uq').on(t.tenantId, t.postId), oneOf('studio_content_items_stage_chk', t.stage, CONTENT_ITEM_STAGES), oneOf('studio_content_items_origin_chk', t.origin, ['ai', 'manual'])],
+);
+
+/* ------------------------------------------------------------------ */
+/* Daily video automation (D-053)                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * planned → scripted → storyboarded → rendering → awaiting_approval → approved | rejected, or a
+ * hand-off: manual_task (Google Flow) / waiting (paid authorization, render slot, licence).
+ * failed and skipped are terminal until a person asks for a retry.
+ */
+export const VIDEO_AUTOMATION_STATUSES = ['planned', 'scripted', 'storyboarded', 'rendering', 'awaiting_approval', 'approved', 'rejected', 'manual_task', 'waiting', 'failed', 'skipped'] as const;
+
+/** One automatically prepared video for one brand and day. The idempotency key makes a restarted worker reuse the row instead of generating twice. */
+export const videoAutomationItems = pgTable(
+  'video_automation_items',
+  {
+    id: pk(),
+    tenantId: tenantId(),
+    brandId: uuid('brand_id')
+      .notNull()
+      .references(() => brands.id, { onDelete: 'cascade' }),
+    day: date('day', { mode: 'string' }).notNull(),
+    slot: integer('slot').notNull(),
+    /** `va:<day>:<brandId>:<slot>` — stable across restarts. */
+    idempotencyKey: text('idempotency_key').notNull(),
+    /** Stable topic identity (curriculum unit, content item, claim or pillar) for duplicate prevention. */
+    topicKey: text('topic_key').notNull(),
+    topic: json<Record<string, unknown>>('topic').notNull(),
+    category: text('category').notNull(),
+    preset: text('preset').notNull(),
+    platform: text('platform').notNull(),
+    status: text('status').notNull().default('planned'),
+    statusReason: text('status_reason'),
+    /** ai | template | curriculum: where the script came from. */
+    origin: text('origin'),
+    script: json<Record<string, unknown>>('script'),
+    mode: text('mode'),
+    /** Google Flow hand-off or paid-authorization request: the prepared prompt and steps. */
+    manualTask: json<Record<string, unknown>>('manual_task'),
+    videoProjectId: uuid('video_project_id').references(() => videoProjects.id, { onDelete: 'set null' }),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: ts('next_attempt_at'),
+    leaseToken: text('lease_token'),
+    leaseUntil: ts('lease_until'),
+    provenance: json<Record<string, unknown>>('provenance').notNull().default({}),
+    reviewedBy: text('reviewed_by'),
+    reviewedAt: ts('reviewed_at'),
+    version: integer('version').notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('video_automation_items_key_uq').on(t.tenantId, t.idempotencyKey),
+    index('video_automation_items_day_idx').on(t.tenantId, t.day, t.brandId),
+    index('video_automation_items_topic_idx').on(t.tenantId, t.brandId, t.topicKey),
+    oneOf('video_automation_items_status_chk', t.status, VIDEO_AUTOMATION_STATUSES),
+    oneOf('video_automation_items_preset_chk', t.preset, ['vertical_9x16', 'square_1x1', 'landscape_16x9']),
+  ],
 );

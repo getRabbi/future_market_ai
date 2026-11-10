@@ -52,6 +52,19 @@ export const EnvSchema = z
     GEMINI_API_KEY: z.string().optional(),
     OPENROUTER_API_KEY: z.string().optional(),
     OPENAI_COMPATIBLE_BASE_URL: z.string().url().optional(),
+    // Video switchboard (docs/VIDEO_GENERATION_MODES.md). Each adapter is built only when fully configured;
+    // tenants still need an approved priced model, a licence, budgets and per-request authorization.
+    FG_WAN_COMFYUI_URL: z.string().url().startsWith('https://').optional(),
+    FG_WAN_COMFYUI_TOKEN: z.string().min(16).optional(),
+    FG_WAN_T2V_WORKFLOW_PATH: z.string().optional(),
+    FG_WAN_I2V_WORKFLOW_PATH: z.string().optional(),
+    FG_WAN_USD_PER_GPU_HOUR: z.coerce.number().min(0).max(100).optional(),
+    FG_WAN_SIZES: z.string().optional(),
+    FG_WAN_MAX_RUN_SECONDS: z.coerce.number().int().min(60).max(21_600).optional(),
+    HF_API_KEY_ID: z.string().optional(),
+    HF_API_KEY_SECRET: z.string().optional(),
+    FG_HIGGSFIELD_MODELS_JSON: z.string().optional(),
+    FG_HIGGSFIELD_OUTPUT_HOSTS: z.string().optional(),
     OPENAI_COMPATIBLE_API_KEY: z.string().optional(),
     // Optional embeddings endpoint (D-007); full-text retrieval works without it.
     EMBEDDINGS_BASE_URL: z.string().url().optional(),

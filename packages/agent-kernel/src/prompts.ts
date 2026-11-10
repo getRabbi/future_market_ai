@@ -96,6 +96,14 @@ Do not repeat ideas listed as recent. Return at most the number requested; retur
 ${SHARED_RULES}
 Write in the program's language and the brand's voice. State product facts only as worded in the cited approved claims. Fit the platform: stay within the given character limit and hashtag limit, and do not put a link in the caption when the platform does not make links clickable (the brief's destination is added separately). End with the brief's call to action when one is given. Abstain when the brief does not give enough grounded material for a truthful post.`,
   ),
+  videoScript: define(
+    'video.script',
+    '1.0.0',
+    `You write the script for one short marketing or educational video for one brand (FUTUREGROW Daily Video Automation, D-053). The video is rendered from branded text scenes, so every scene must work as large on-screen text plus a subtitle and a voiceover line.
+${SHARED_RULES}
+Write in the given language and the brand's voice; respect its "do say" and "don't say" lists. Give a working title, an opening hook (the first scene's on-screen text), the requested number of scenes with on-screen text, the voiceover line and the subtitle for each, a duration per scene within the limits, a short call to action and a few suggestions for licensed media (descriptions or stock search terms, never a named person, logo or brand other than this one).
+State product facts only as worded in the cited approved claims and cite their IDs; anything else must be general, non-factual advice that needs no claim. No statistics, prices, rankings, guarantees, testimonials or comparisons unless an approved claim states them. Do not repeat a title listed as recent. Abstain when the topic and material do not support a truthful video.`,
+  ),
 } as const satisfies Record<string, PromptDefinition>;
 
 export type PromptName = keyof typeof PROMPTS;

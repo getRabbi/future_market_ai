@@ -268,7 +268,7 @@ export async function processNextMediaJob(deps: CoreDeps, workerId = `media-sour
   const actor = systemActor('media-sources');
   const tctx = { tenantId, actor: 'system:media-sources' };
   const [row] = await withTenant(deps.db, tctx, (t) => t.select().from(mediaJobs).where(eq(mediaJobs.id, job.id)));
-  const finish = async (status: 'succeeded' | 'failed' | 'refused' | 'blocked' | 'queued', reason: string | null, patch: Partial<typeof mediaJobs.$inferInsert> = {}) => {
+  const finish = async (status: 'succeeded' | 'failed' | 'refused' | 'blocked' | 'queued' | 'cancelled', reason: string | null, patch: Partial<typeof mediaJobs.$inferInsert> = {}) => {
     await withTenant(deps.db, tctx, async (t) => {
       await t
         .update(mediaJobs)
@@ -289,6 +289,11 @@ export async function processNextMediaJob(deps: CoreDeps, workerId = `media-sour
   if (row!.kind === 'ai_video') {
     const { runGenerativeVideo } = await import('./generative-video.js');
     return runGenerativeVideo(deps, row!, finish);
+  }
+
+  if (row!.kind === 'video_import') {
+    const { runVideoImport } = await import('./flow-import.js');
+    return runVideoImport(deps, row!, finish);
   }
 
   if (row!.kind === 'voiceover') {

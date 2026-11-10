@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { AnthropicProvider, HOSTED_PROVIDERS, type HostedProvider, type ModelProvider, OpenAICompatibleEmbedder, OpenAICompatibleProvider, OpenAIImageProvider, OpenAISpeechProvider } from '@futuregrow/agent-kernel';
 import { HttpClient } from '@futuregrow/connectors';
-import { buildCoreConfig, type CoreDeps, createModelGateway, DeprecationRecorder, type JobQueue, type knowledge, ops, systemClock } from '@futuregrow/core';
+import { buildCoreConfig, type CoreDeps, createModelGateway, DeprecationRecorder, type JobQueue, type knowledge, media, ops, systemClock } from '@futuregrow/core';
 import { configureTenantRole, createDb, probeDatabase } from '@futuregrow/db';
 import { createLogger } from '@futuregrow/observability';
 import { createObjectStore } from '@futuregrow/storage';
@@ -60,6 +61,8 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
     env.GEMINI_API_KEY,
     env.OPENROUTER_API_KEY,
     env.OPENAI_COMPATIBLE_API_KEY,
+    env.FG_WAN_COMFYUI_TOKEN,
+    env.HF_API_KEY_SECRET,
     env.BETTER_AUTH_SECRET,
     env.FG_SECRETS_KEY,
     env.FG_IDENTIFIER_PEPPER,
@@ -98,6 +101,10 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
   if (env.OPENAI_API_KEY) deps.images = { openai: new OpenAIImageProvider({ apiKey: env.OPENAI_API_KEY }) };
   // Never called unless a speech model is approved and priced in the registry and a licence record exists.
   if (env.OPENAI_API_KEY) deps.speech = { openai: new OpenAISpeechProvider({ apiKey: env.OPENAI_API_KEY }) };
+  // Video switchboard adapters (Wan/ComfyUI, Higgsfield): never provision GPUs, never active without tenant approval.
+  const workflow = (p: string | undefined) => (p ? (JSON.parse(readFileSync(p, 'utf8')) as Record<string, unknown>) : null);
+  const videos = media.videoAdapters.videoProvidersFromEnv(env, { textToVideo: workflow(env.FG_WAN_T2V_WORKFLOW_PATH), imageToVideo: workflow(env.FG_WAN_I2V_WORKFLOW_PATH) });
+  if (Object.keys(videos).length) deps.videos = videos;
   if (Object.keys(providers).length) {
     deps.models = createModelGateway(deps, providers, secrets);
   } else {
@@ -105,7 +112,16 @@ export async function createRuntime(env: Env, service: string): Promise<Runtime>
   }
   const embedder = env.EMBEDDINGS_BASE_URL && env.EMBEDDINGS_MODEL ? new OpenAICompatibleEmbedder({ baseUrl: env.EMBEDDINGS_BASE_URL, model: env.EMBEDDINGS_MODEL, ...(env.EMBEDDINGS_API_KEY ? { apiKey: env.EMBEDDINGS_API_KEY } : {}) }) : undefined;
   logger.info(
-    { alerts: notifier.configured ? 'webhook' : 'log', pg: caps.serverVersion, dbTls: { ...handle.tls, encrypted: caps.ssl, version: caps.sslVersion }, pgvector: caps.pgvectorInstalled || caps.pgvectorAvailable, storage: deps.store.kind, models: Object.keys(providers), embeddings: Boolean(embedder) },
+    {
+      alerts: notifier.configured ? 'webhook' : 'log',
+      pg: caps.serverVersion,
+      dbTls: { ...handle.tls, encrypted: caps.ssl, version: caps.sslVersion },
+      pgvector: caps.pgvectorInstalled || caps.pgvectorAvailable,
+      storage: deps.store.kind,
+      models: Object.keys(providers),
+      videoAdapters: Object.keys(deps.videos ?? {}),
+      embeddings: Boolean(embedder),
+    },
     'runtime ready',
   );
   return {

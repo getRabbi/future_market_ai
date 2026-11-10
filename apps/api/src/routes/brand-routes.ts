@@ -1,4 +1,5 @@
 import { brandsModule, media } from '@futuregrow/core';
+import { FgError } from '@futuregrow/observability';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -19,6 +20,48 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: ApiContext): void
   r.post('/v1/media/voiceovers', { schema: { tags: ['assets'], body: Body } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => media.voice.requestVoiceover(tx, ctx.deps, tenantOf(req), actorOf(req), req.body))));
   r.get('/v1/media/generative-video/readiness', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => media.generativeVideo.generativeVideoReadiness(tx, ctx.deps)));
   r.post('/v1/media/generative-video', { schema: { tags: ['assets'], body: media.generativeVideo.GenerativeVideoRequest } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => media.generativeVideo.requestGenerativeVideo(tx, ctx.deps, tenantOf(req), actorOf(req), req.body))));
+  /* Video switchboard: four independent modes, persistent switches, Smart routing, paid budgets. */
+  const VR = media.videoRouting;
+  const VJ = media.videoJobs;
+  const GV = media.generativeVideo;
+  r.get('/v1/media/video-routing', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => VR.videoRoutingOverview(tx, ctx.deps, tenantOf(req))));
+  r.put('/v1/media/video-routing', { schema: { tags: ['assets'], body: VR.VideoRoutingUpdateSchema } }, async (req) => tenantTx(ctx, req, (tx) => VR.updateVideoRouting(tx, ctx.deps, tenantOf(req), actorOf(req), req.body)));
+  r.get('/v1/media/video-routing/readiness', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, async (tx) => (await VR.videoRoutingOverview(tx, ctx.deps, tenantOf(req))).modes));
+  r.post('/v1/media/video-routing/preview', { schema: { tags: ['assets'], body: VR.VideoRouteRequestSchema } }, async (req) => tenantTx(ctx, req, (tx) => VR.previewVideoRoute(tx, ctx.deps, tenantOf(req), req.body)));
+  r.post('/v1/media/video-routing/estimate', { schema: { tags: ['assets'], body: VR.VideoRouteRequestSchema } }, async (req) =>
+    tenantTx(ctx, req, async (tx) => {
+      const d = await VR.previewVideoRoute(tx, ctx.deps, tenantOf(req), req.body);
+      return { mode: d.mode, execution: d.execution, estimateUsd: d.estimateUsd, candidates: d.candidates.map((c) => ({ mode: c.mode, estimateUsd: c.estimateUsd, eligible: c.eligible })), usage: d.usage };
+    }),
+  );
+  r.get('/v1/media/video-routing/daily-plan', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => VJ.dailyVideoPlan(tx, ctx.deps, tenantOf(req))));
+  /* Daily Video Automation (D-053): topic → script → storyboard → route → render → review. Never publishes or spends. */
+  const VA = media.videoAutomation;
+  r.get('/v1/media/video-automation', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => VA.automationOverview(tx, ctx.deps, tenantOf(req))));
+  r.put('/v1/media/video-automation/settings', { schema: { tags: ['assets'], body: VA.AutomationSettingsUpdateSchema } }, async (req) => tenantTx(ctx, req, (tx) => VA.updateAutomationSettings(tx, ctx.deps, tenantOf(req), actorOf(req), req.body)));
+  r.post('/v1/media/video-automation/run', { schema: { tags: ['assets'] } }, async (req) => VA.runVideoAutomationNow(ctx.deps, tenantOf(req), actorOf(req)));
+  r.post('/v1/media/video-automation/items/:id/retry', { schema: { tags: ['assets'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => VA.retryAutomationItem(tx, ctx.deps, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/media/video-automation/items/:id/review', { schema: { tags: ['assets'], params: Id, body: VA.ReviewSchema } }, async (req) => tenantTx(ctx, req, (tx) => VA.reviewAutomationItem(tx, ctx.deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
+  r.get('/v1/media/video-generations', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => VJ.videoJobHistory(tx, ctx.deps, tenantOf(req))));
+  r.post('/v1/media/video-generations', { schema: { tags: ['assets'], body: VJ.VideoGenerationQueueSchema } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => VJ.queueVideoGeneration(tx, ctx.deps, tenantOf(req), actorOf(req), req.body))));
+  r.post('/v1/media/video-generations/:id/approve', { schema: { tags: ['assets'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => GV.approveVideoGeneration(tx, ctx.deps, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/media/video-generations/:id/cancel', { schema: { tags: ['assets'], params: Id } }, async (req) => tenantTx(ctx, req, (tx) => GV.cancelVideoGeneration(tx, ctx.deps, tenantOf(req), actorOf(req), req.params.id)));
+  r.post('/v1/media/video-generations/:id/reconcile', { schema: { tags: ['assets'], params: Id, body: GV.ReconcileSchema } }, async (req) => tenantTx(ctx, req, (tx) => GV.reconcileVideoCharge(tx, ctx.deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
+  /* Google Flow (manual): the owner uploads the MP4 they generated in Flow; the worker runs QA and stores the asset. */
+  app.post('/v1/media/google-flow/import', async (req, reply) => {
+    const raw = req.headers['x-fg-asset-meta'];
+    if (typeof raw !== 'string') throw new FgError('INVALID', 'x-fg-asset-meta header (JSON) is required', 422);
+    let meta: unknown;
+    try {
+      meta = JSON.parse(decodeURIComponent(raw));
+    } catch {
+      throw new FgError('INVALID', 'x-fg-asset-meta must be URI-encoded JSON', 422);
+    }
+    const body = req.body;
+    if (!(body instanceof Buffer)) throw new FgError('INVALID', 'binary MP4 body required', 422);
+    const out = await tenantTx(ctx, req, (tx) => media.flowImport.requestFlowImport(tx, ctx.deps, tenantOf(req), actorOf(req), meta, new Uint8Array(body)));
+    return reply.status(out.duplicate ? 200 : 202).send(out);
+  });
   r.post('/v1/media/stock/search', { schema: { tags: ['assets'], body: Body } }, async (req) => S.searchStock(ctx.deps, tenantOf(req), actorOf(req), req.body));
   r.post('/v1/media/stock/import', { schema: { tags: ['assets'], body: Body } }, async (req, reply) => reply.status(202).send(await tenantTx(ctx, req, (tx) => S.requestStockImport(tx, tenantOf(req), actorOf(req), req.body))));
   r.get('/v1/media/stock/assets', { schema: { tags: ['assets'] } }, async (req) => tenantTx(ctx, req, (tx) => S.listStockAssets(tx)));

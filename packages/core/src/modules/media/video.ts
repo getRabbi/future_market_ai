@@ -7,6 +7,10 @@ import { type Actor, actorRef, type CoreDeps } from '../../deps.js';
 import { audit, clipText, record, requireRole } from '../../util.js';
 import { lintCopy } from '../m03-knowledge/index.js';
 import { getTenantSettingsRow } from '../m24-governance/index.js';
+import { VIDEO_PRESETS, type VideoPreset } from './formats.js';
+import { assertVideoModeEnabled } from './routing.js';
+
+export { VIDEO_PRESETS, type VideoPreset };
 
 /**
  * Video Studio (P3-04): template-based short videos with the existing Remotion/FFmpeg media job,
@@ -18,12 +22,6 @@ import { getTenantSettingsRow } from '../m24-governance/index.js';
 
 const EDIT_ROLES = ['owner', 'admin', 'growth_operator'] as const;
 
-export const VIDEO_PRESETS = {
-  vertical_9x16: { width: 1080, height: 1920, label: 'Vertical 9:16 (TikTok, Reels, Shorts)' },
-  square_1x1: { width: 1080, height: 1080, label: 'Square 1:1 (feeds)' },
-  landscape_16x9: { width: 1920, height: 1080, label: 'Landscape 16:9 (YouTube)' },
-} as const;
-export type VideoPreset = keyof typeof VIDEO_PRESETS;
 export const VIDEO_FPS = 30;
 export const MAX_VIDEO_SECONDS = 90;
 
@@ -128,6 +126,11 @@ async function load(t: DbOrTx, id: string) {
 
 export async function createVideoProject(t: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
   requireRole(actor, [...EDIT_ROLES], 'creating a video');
+  return insertVideoProject(t, deps, tenantId, actor, raw);
+}
+
+/** Stores a storyboard with its QA result (rights, claims lint, disclosures). Shared by editors and the daily automation (D-053). */
+export async function insertVideoProject(t: Tx, deps: CoreDeps, tenantId: string, actor: Actor, raw: unknown) {
   const input = VideoProjectInputSchema.parse(raw);
   const problems = await storyboardProblems(t, deps, input.storyboard);
   const [row] = await t
@@ -175,6 +178,16 @@ export async function updateStoryboard(t: Tx, deps: CoreDeps, tenantId: string, 
  */
 export async function renderVideoProject(t: Tx, deps: CoreDeps, tenantId: string, actor: Actor, id: string) {
   requireRole(actor, [...EDIT_ROLES], 'rendering a video');
+  return queueProjectRender(t, deps, tenantId, actor, id);
+}
+
+/**
+ * The render itself, shared by an editor's request and the daily automation (which runs as a
+ * system actor only after an owner or admin turned automation on). The Remotion switch is
+ * enforced here, server-side, for both.
+ */
+export async function queueProjectRender(t: Tx, deps: CoreDeps, tenantId: string, actor: Actor, id: string) {
+  await assertVideoModeEnabled(t, tenantId, 'remotion');
   const p = await load(t, id);
   if (p.status === 'rendering') throw conflict('already rendering');
   const s = StoryboardSchema.parse(p.storyboard);

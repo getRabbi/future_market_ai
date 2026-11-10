@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { api } from '../lib/api.js';
 import { relativeTime } from '../lib/format.js';
 import { Badge, EmptyState, ErrorNotice, LoadingRows, useApi } from './ui.js';
+import { VideoAutomationPanel } from './VideoAutomationPanel.js';
+import { VideoGenerationSettings } from './VideoGenerationSettings.js';
 
 /** Every API call this screen makes (checked against the API's routes in catalog.test.ts). */
 export const MEDIA_CALLS = [
@@ -22,6 +24,14 @@ export const MEDIA_CALLS = [
   { method: 'POST', path: '/v1/media/videos/:id/render' },
   { method: 'GET', path: '/v1/assets' },
   { method: 'GET', path: '/v1/assets/:id/download-url' },
+  { method: 'GET', path: '/v1/media/video-routing' },
+  { method: 'PUT', path: '/v1/media/video-routing' },
+  { method: 'POST', path: '/v1/media/video-routing/preview' },
+  { method: 'GET', path: '/v1/media/video-generations' },
+  { method: 'POST', path: '/v1/media/video-generations/:id/approve' },
+  { method: 'POST', path: '/v1/media/video-generations/:id/cancel' },
+  { method: 'POST', path: '/v1/media/video-generations/:id/reconcile' },
+  { method: 'POST', path: '/v1/media/google-flow/import' },
 ] as const;
 
 const FORMATS = [
@@ -461,84 +471,88 @@ function VideoStudio() {
     }
   };
   return (
-    <section className="card">
-      <header className="card-head">
-        <h2 className="card-title">Video Studio</h2>
-        <button type="button" className="btn" onClick={() => setEditing(editing ? null : 'new')}>
-          {editing ? 'Close' : 'New video'}
-        </button>
-      </header>
-      <GenerativeVideo />
-      <p className="small muted">Short branded videos from scenes: on-screen text, subtitles, your cleared images or clips and transitions, rendered to MP4 with a thumbnail and SRT subtitles. Publish them to TikTok or YouTube from the studio; every upload still goes through your publishing policy.</p>
-      <ErrorNotice error={error} />
-      {editing ? (
-        <StoryboardEditor
-          video={editing === 'new' ? null : editing}
-          assets={usable}
-          onSaved={() => {
-            setEditing(null);
-            void list.reload();
-          }}
-        />
-      ) : null}
-      {!list.data ? (
-        <LoadingRows />
-      ) : list.data.length ? (
-        <ul className="row-list">
-          {list.data.map((v) => (
-            <li key={v.id} className="row-item">
-              <div className="row">
-                <div>
-                  <strong>{v.title}</strong>{' '}
-                  <span className="small muted">
-                    {v.storyboard.scenes.length} scenes · {v.storyboard.scenes.reduce((a, s) => a + s.durationSeconds, 0)}s · {v.preset.replaceAll('_', ' ')} · {relativeTime(v.updatedAt)}
-                  </span>
-                  {v.statusReason ? <div className="small muted">{v.statusReason}</div> : null}
-                  {v.qa.storyboard?.problems.length ? (
-                    <ul className="small findings">
-                      {v.qa.storyboard.problems.map((p) => (
-                        <li key={p}>{p}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-                <div className="row-actions">
-                  <Badge value={v.status} />
-                  {v.status === 'storyboard' || v.status === 'failed' || v.status === 'qa_failed' ? (
-                    <>
-                      <button type="button" className="small-btn" onClick={() => setEditing(v)}>
-                        Edit
+    <>
+      <VideoGenerationSettings />
+      <VideoAutomationPanel />
+      <section className="card">
+        <header className="card-head">
+          <h2 className="card-title">Video Studio</h2>
+          <button type="button" className="btn" onClick={() => setEditing(editing ? null : 'new')}>
+            {editing ? 'Close' : 'New video'}
+          </button>
+        </header>
+        <GenerativeVideo />
+        <p className="small muted">Short branded videos from scenes: on-screen text, subtitles, your cleared images or clips and transitions, rendered to MP4 with a thumbnail and SRT subtitles. Publish them to TikTok or YouTube from the studio; every upload still goes through your publishing policy.</p>
+        <ErrorNotice error={error} />
+        {editing ? (
+          <StoryboardEditor
+            video={editing === 'new' ? null : editing}
+            assets={usable}
+            onSaved={() => {
+              setEditing(null);
+              void list.reload();
+            }}
+          />
+        ) : null}
+        {!list.data ? (
+          <LoadingRows />
+        ) : list.data.length ? (
+          <ul className="row-list">
+            {list.data.map((v) => (
+              <li key={v.id} className="row-item">
+                <div className="row">
+                  <div>
+                    <strong>{v.title}</strong>{' '}
+                    <span className="small muted">
+                      {v.storyboard.scenes.length} scenes · {v.storyboard.scenes.reduce((a, s) => a + s.durationSeconds, 0)}s · {v.preset.replaceAll('_', ' ')} · {relativeTime(v.updatedAt)}
+                    </span>
+                    {v.statusReason ? <div className="small muted">{v.statusReason}</div> : null}
+                    {v.qa.storyboard?.problems.length ? (
+                      <ul className="small findings">
+                        {v.qa.storyboard.problems.map((p) => (
+                          <li key={p}>{p}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                  <div className="row-actions">
+                    <Badge value={v.status} />
+                    {v.status === 'storyboard' || v.status === 'failed' || v.status === 'qa_failed' ? (
+                      <>
+                        <button type="button" className="small-btn" onClick={() => setEditing(v)}>
+                          Edit
+                        </button>
+                        <button type="button" className="small-btn" disabled={!v.qa.storyboard?.passed} onClick={() => void render(v)}>
+                          Render
+                        </button>
+                      </>
+                    ) : null}
+                    {v.status === 'rendering' ? (
+                      <button type="button" className="small-btn" onClick={() => void list.reload()}>
+                        Check progress
                       </button>
-                      <button type="button" className="small-btn" disabled={!v.qa.storyboard?.passed} onClick={() => void render(v)}>
-                        Render
+                    ) : null}
+                    {v.status === 'ready' && v.outputAssetId ? (
+                      <button type="button" className="small-btn" onClick={() => void show(v)}>
+                        Preview
                       </button>
-                    </>
-                  ) : null}
-                  {v.status === 'rendering' ? (
-                    <button type="button" className="small-btn" onClick={() => void list.reload()}>
-                      Check progress
-                    </button>
-                  ) : null}
-                  {v.status === 'ready' && v.outputAssetId ? (
-                    <button type="button" className="small-btn" onClick={() => void show(v)}>
-                      Preview
-                    </button>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-              {preview?.id === v.id ? (
-                // A signed object-storage link (15 minutes); opened in a new tab because the app's CSP does not embed media from storage.
-                <a className="small" href={preview.url} target="_blank" rel="noreferrer noopener">
-                  Open the MP4 (link valid for 15 minutes)
-                </a>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <EmptyState title="No videos yet">Create a storyboard with a few scenes, then render it.</EmptyState>
-      )}
-    </section>
+                {preview?.id === v.id ? (
+                  // A signed object-storage link (15 minutes); opened in a new tab because the app's CSP does not embed media from storage.
+                  <a className="small" href={preview.url} target="_blank" rel="noreferrer noopener">
+                    Open the MP4 (link valid for 15 minutes)
+                  </a>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState title="No videos yet">Create a storyboard with a few scenes, then render it.</EmptyState>
+        )}
+      </section>
+    </>
   );
 }
 
