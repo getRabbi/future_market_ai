@@ -297,3 +297,26 @@ describe('gap-closure read endpoints (P2/P3 screens)', () => {
     expect(providers.json.find((p: { id: string }) => p.id === 'ai-video-model')).toMatchObject({ enabled: false, adapter: 'not_built' });
   });
 });
+
+describe('video switchboard API', () => {
+  it('serves tenant-scoped settings, enforces versioned updates and previews routes without side effects', async () => {
+    const h1 = { headers: { 'x-fg-tenant': tenantId } };
+    const write = () => ({ headers: { 'x-fg-tenant': tenantId, 'idempotency-key': `v-${randomUUID()}` } });
+    expect((await new Client(app).req('GET', '/v1/media/video-routing', h1)).status).toBe(401);
+    const ov = await owner.req('GET', '/v1/media/video-routing', h1);
+    expect(ov.status).toBe(200);
+    expect(ov.json).toMatchObject({ version: 0, settings: { paidGenerationDisabled: true, dailyPaidBudgetUsd: 0, enabled: { remotion: true, google_flow: false, wan_cloud: false, higgsfield: false } } });
+    const put = (expectedVersion: number) => owner.req('PUT', '/v1/media/video-routing', { ...write(), body: { settings: { ...ov.json.settings, enabled: { ...ov.json.settings.enabled, google_flow: true } }, expectedVersion } });
+    const saved = await put(0);
+    expect(saved.status).toBe(200);
+    expect(saved.json.version).toBe(1);
+    expect((await put(0)).status).toBe(409);
+    const preview = await owner.req('POST', '/v1/media/video-routing/preview', { ...write(), body: { quality: 'cinematic' } });
+    expect(preview.json).toMatchObject({ mode: 'google_flow', execution: 'manual' });
+    const estimate = await owner.req('POST', '/v1/media/video-routing/estimate', { ...write(), body: { quality: 'cinematic', allowPaid: true } });
+    expect(estimate.json.candidates.find((c: { mode: string }) => c.mode === 'wan_cloud')).toMatchObject({ eligible: false, estimateUsd: null });
+    expect((await owner.req('GET', '/v1/media/video-routing/readiness', h1)).json.map((m: { state: string }) => m.state)).toEqual(['setup_required', 'ready', 'disabled', 'disabled']);
+    expect((await owner.req('GET', '/v1/media/video-generations', h1)).json).toMatchObject({ jobs: [], usage: { reservedUsd: 0 } });
+    expect((await owner.req('POST', '/v1/media/google-flow/import', { ...write(), body: { title: 'x' } })).status).toBe(422);
+  });
+});
