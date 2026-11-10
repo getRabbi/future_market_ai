@@ -6,9 +6,13 @@ import { generativeVideoReadiness } from './generative-video.js';
 import { imageModelReadiness, stockLicence } from './sources.js';
 import { speechReadiness } from './voice.js';
 
+export * as flowImport from './flow-import.js';
 export * as generativeVideo from './generative-video.js';
+export * as videoRouting from './routing.js';
 export * as sources from './sources.js';
 export * as video from './video.js';
+export * as videoAdapters from './video-adapters.js';
+export * as videoJobs from './video-jobs.js';
 export * as voice from './voice.js';
 
 /**
