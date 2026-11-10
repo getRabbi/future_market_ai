@@ -1,5 +1,7 @@
 const OK = new Set(['VERIFIED', 'ROLLED_BACK', 'approved', 'active', 'admitted', 'completed', 'delivered', 'published_verified', 'live_verified', 'sent_verified', 'healthy', 'ok', 'confirmed', 'qualified', 'running', 'current', 'granted', 'ready', 'passed', 'Ready', 'connected']);
 const WARN = new Set([
+  'setup_required',
+  'awaiting_approval',
   'APPROVAL_REQUIRED',
   'PROPOSED',
   'EVIDENCE_READY',
