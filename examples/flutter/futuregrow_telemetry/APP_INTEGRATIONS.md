@@ -1,9 +1,13 @@
 # EPS TOPIK Bangla and Ecoms BD readiness
 
-Neither mobile application repository is present in this workspace. No files in those repositories
-have been modified, and their existing source filenames, identifiers and backend frameworks have
-not been inferred. The paths below are **new files to create** or exact interfaces to wire after
-opening each repository; they are not claims about its current layout.
+Initial readiness instructions below were written before either mobile repository was available.
+The incremental PR #32 pass subsequently accessed both repositories: Ecoms BD now has a separate
+`feat/futuregrow-telemetry-integration` branch; EPS already had telemetry and has a documentation-only
+`feat/futuregrow-telemetry-readiness` branch. See `docs/REMAINING_DEVELOPMENT_CHECKPOINT.md` for
+commits and validation. Do not install a duplicate client into EPS. Ecoms is a seller app: its
+actual integration measures completed seller onboarding and verified Ecoms subscription payments,
+not carts or the seller's customer orders. The original generic examples below remain contracts,
+not a description of either application's current layout.
 
 ## Files to integrate in each external repository
 
