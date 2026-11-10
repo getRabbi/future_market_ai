@@ -210,12 +210,15 @@ export const mediaJobs = pgTable(
     requestedBy: text('requested_by').notNull(),
     requestedAt: ts('requested_at').notNull().defaultNow(),
     finishedAt: ts('finished_at'),
+    /** Client-supplied key: a repeated request returns the original job instead of a second (billable) one. */
+    idempotencyKey: text('idempotency_key'),
   },
   (t) => [
     index('media_jobs_queue_idx').on(t.status, t.nextAttemptAt),
     index('media_jobs_tenant_idx').on(t.tenantId, t.requestedAt),
-    oneOf('media_jobs_kind_chk', t.kind, ['ai_image', 'stock_import', 'voiceover', 'ai_video']),
-    oneOf('media_jobs_status_chk', t.status, ['queued', 'running', 'succeeded', 'failed', 'blocked', 'refused']),
+    uniqueIndex('media_jobs_idempotency_uq').on(t.tenantId, t.idempotencyKey).where(sql`${t.idempotencyKey} is not null`),
+    oneOf('media_jobs_kind_chk', t.kind, ['ai_image', 'stock_import', 'voiceover', 'ai_video', 'video_import']),
+    oneOf('media_jobs_status_chk', t.status, ['queued', 'running', 'succeeded', 'failed', 'blocked', 'refused', 'awaiting_approval', 'cancelled']),
   ],
 );
 
