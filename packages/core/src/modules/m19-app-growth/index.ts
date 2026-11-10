@@ -622,4 +622,5 @@ export async function syncDownloadsSeries(tx: Tx, tenantId: string): Promise<{ s
 }
 
 export * as appleAds from './apple-ads.js';
+export * as appleAdsReporting from './apple-ads-reporting.js';
 export * as attribution from './attribution.js';

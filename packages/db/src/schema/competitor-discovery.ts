@@ -13,6 +13,8 @@ export const competitorDiscoverySettings = pgTable(
       .references(() => brands.id),
     enabled: boolean('enabled').notNull().default(false),
     country: text('country').notNull(),
+    provider: text('provider').notNull().default('app_store'),
+    connectionId: uuid('connection_id'),
     intervalHours: integer('interval_hours').notNull().default(168),
     lawfulBasisNote: text('lawful_basis_note').notNull(),
     approvedBy: text('approved_by').notNull(),

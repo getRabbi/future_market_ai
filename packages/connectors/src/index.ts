@@ -1,4 +1,7 @@
 import type { Provider } from '@futuregrow/contracts';
+
+export * from './providers/apple-ads.js';
+
 import { appStoreRead, appStoreUpdateLocalization } from './providers/apple.js';
 import { googleAdsRead, googleCreateCampaign, googleSetCampaignStatus, googleUpdateCampaignBudget } from './providers/google.js';
 import { googlePlayRead } from './providers/google-play.js';

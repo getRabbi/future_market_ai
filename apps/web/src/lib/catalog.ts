@@ -375,8 +375,8 @@ export const SECTIONS: Section[] = [
         title: 'Competitor discovery',
         list: '/v1/competitors/discovery',
         rows: (r) => (Array.isArray((r as Row).settings) ? ((r as Row).settings as Row[]).map((s: Row) => ({ ...s, id: s.brandId })) : []),
-        columns: ['brandId', 'enabled', 'country', 'intervalHours', 'lastAttemptAt'],
-        empty: 'Discovery is off. An owner or legal approver with two-factor must approve App Store API metadata use. Google Play and web search have no approved adapter.',
+        columns: ['brandId', 'enabled', 'provider', 'country', 'intervalHours', 'lastAttemptAt'],
+        empty: 'Discovery is off. An owner or legal approver with two-factor must approve API use and evidence storage. Brave requires a separately provisioned plan/key; indexed Play results are not verified listings.',
         create: {
           label: 'Configure discovery (legal)',
           path: '/v1/competitors/discovery',
@@ -385,9 +385,11 @@ export const SECTIONS: Section[] = [
             fields: [
               { key: 'brandId', type: 'record', label: 'Brand', required: true, source: { list: '/v1/brands', label: (r) => String(r.name), empty: 'Create a brand first.', href: '/app/brands' } },
               { key: 'enabled', type: 'toggle', label: 'Enable recurring discovery', initial: false },
+              { key: 'provider', type: 'select', label: 'Search provider', options: opts(['app_store', 'Apple App Store'], ['brave_web', 'Brave web index'], ['brave_google_play', 'Brave index of Google Play listings']), initial: 'app_store' },
+              { key: 'connectionId', type: 'record', label: 'Brave account (required for Brave)', emptyAsNull: true, source: SOURCES.connections(['brave_search']) },
               { key: 'country', type: 'text', label: 'Store country (two uppercase letters)', required: true, initial: 'US' },
               { key: 'intervalHours', type: 'number', label: 'Interval (hours, 24-720)', initial: 168 },
-              { key: 'lawfulBasisNote', type: 'textarea', label: 'Legal review of Apple Search API terms and metadata use', required: true, minLength: 20, maxLength: 2000 },
+              { key: 'lawfulBasisNote', type: 'textarea', label: 'Legal approval of selected provider terms, metadata use and evidence storage', required: true, minLength: 20, maxLength: 2000 },
             ],
           },
           success: () => ok('Discovery settings saved.', 'Monitoring pages still require separate source approval.'),

@@ -165,7 +165,12 @@ export async function attributionReport(t: DbOrTx, raw: unknown, now: Date) {
     missingData: missingDataNotes(q.platform, list, coverage),
     incrementality: incrementality.length ? { basis: 'completed experiments', experiments: incrementality } : { basis: 'none', experiments: [], note: 'No completed experiment measures installs or activation: the numbers above describe what was observed, not what the campaigns caused.' },
     windows: { telemetryFirstOpen: '7 days after install (reconciled)', telemetryActivation: '7 days after install (reconciled)', storeReport: 'Google Play acquisition day; campaign = utm_campaign of the store listing visit' },
-    appleAds: { method: 'apple_ads_adservices', campaignIdentity: 'apple_ads:<orgId>:<campaignId>', note: 'Official AdServices responses enrich consented iOS telemetry. Campaign names, spend and impressions require a separate authorized Apple Ads reporting integration; App Store aggregates never supply them.' },
+    appleAds: {
+      method: 'apple_ads_adservices',
+      campaignIdentity: 'apple_ads:<orgId>:<campaignId>',
+      reportingEndpoint: '/v1/app/apple-ads/reports',
+      note: 'Official AdServices responses enrich consented iOS telemetry. Authorized Apple Ads reports provide separate campaign names, spend and impressions; App Store aggregates never supply them.',
+    },
     notes: ['Store-reported acquisitions and consented telemetry installs are different measurements of overlapping people; they are shown side by side and never added.', 'A Google Play install increase is not attributed to social posting without a campaign link in the report or an experiment.', ...telemetry.notes],
   };
 }

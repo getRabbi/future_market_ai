@@ -1,7 +1,9 @@
+import { HttpClient } from '@futuregrow/connectors';
 import { brandApps, brands, competitorCandidates, competitorDiscoverySettings, competitorSources, competitors, withTenant } from '@futuregrow/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
+import { createConnection } from '../src/modules/connections.js';
 import { configureDiscovery, discoveryOverview, rankCandidate, reviewCandidate, runDiscovery } from '../src/modules/m05-competitors/discovery.js';
 import { crawlSource } from '../src/modules/m05-competitors/index.js';
 
@@ -13,6 +15,25 @@ afterAll(async () => {
   await h?.close();
 });
 const fixture = { trackId: 123456789, trackName: 'Korean Lessons', bundleId: 'com.example.korean', sellerName: 'Example', trackViewUrl: 'https://apps.apple.com/us/app/korean-lessons/id123456789', description: 'Korean lessons practice', releaseDate: '2020-01-01' };
+
+it('runs configured Brave discovery with tenant credentials and keeps secondary evidence in review', async () => {
+  const tx = <T>(f: Parameters<typeof withTenant<T>>[2]) => withTenant(h.deps.db, { tenantId: h.tenantId, actor: 'test' }, f);
+  const connection = await createConnection(h.deps, h.tenantId, h.users.owner, { provider: 'brave_search', displayName: 'Fixture search', externalAccountId: 'fixture-brave', credentials: { apiKey: 'fixture-key' } });
+  const [brand] = await tx((t) => t.insert(brands).values({ tenantId: h.tenantId, slug: 'brave-fixture', name: 'Practice English', createdBy: 'test', updatedBy: 'test' }).returning());
+  await tx((t) => configureDiscovery(t, h.tenantId, h.users.owner, { brandId: brand!.id, provider: 'brave_google_play', connectionId: connection.id, enabled: true, country: 'BD', lawfulBasisNote: 'Fixture approval of Brave search and evidence storage.' }, h.clock.now()));
+  const deps = { ...h.deps, http: new HttpClient({ fetchImpl: async () => Response.json({ web: { results: [{ title: 'Practice English', url: 'https://play.google.com/store/apps/details?id=com.example.english', description: 'Practice English daily' }] } }), maxRetries: 0 }) };
+  expect(await runDiscovery(deps, h.tenantId, brand!.id)).toMatchObject({ status: 'succeeded', count: 1 });
+  const overview = await tx(discoveryOverview);
+  const candidate = overview.candidates.find((c) => c.brandId === brand!.id)!;
+  expect(candidate).toMatchObject({ status: 'review', confidence: 0.5, identity: 'google_play:com.example.english' });
+  expect(overview.runs.find((r) => r.brandId === brand!.id)?.provider).toBe('brave_google_play');
+  await tx((t) => reviewCandidate(t, h.tenantId, h.users.owner, candidate.id, 'enroll'));
+  expect((await tx((t) => t.select().from(competitorSources))).find((s) => s.url === candidate.url)?.status).toBe('pending');
+  // Keep this fixture independent of the existing App Store assertions below.
+  await tx((t) => t.delete(competitorSources).where(eq(competitorSources.url, candidate.url)));
+  await tx((t) => t.delete(competitorCandidates).where(eq(competitorCandidates.id, candidate.id)));
+  await tx((t) => t.delete(competitors).where(eq(competitors.name, `${candidate.name} (${candidate.identity})`)));
+});
 
 it('scores evidence conservatively and rejects spoofed identity URLs', () => {
   const now = new Date('2026-11-09');

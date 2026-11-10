@@ -13,6 +13,8 @@ const Geos = z.array(z.string().min(2)).default([]);
 export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): void {
   const r = app.withTypeProvider<ZodTypeProvider>();
   const { deps } = ctx;
+  r.get('/v1/app/apple-ads/reports', { schema: { tags: ['app-growth'] } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.appleAdsReporting.appleAdsReports(tx)));
+  r.post('/v1/app/apple-ads/reports', { config: { rateLimit: { max: 2, timeWindow: '1 minute' } }, schema: { tags: ['app-growth'], body: appGrowth.appleAdsReporting.AppleAdsReportRequest } }, async (req) => appGrowth.appleAdsReporting.syncAppleAdsReport(deps, tenantOf(req), actorOf(req), req.body));
 
   /* ---------------- M16 Organic social ---------------- */
   r.get('/v1/social/posts', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.listPosts(tx)));

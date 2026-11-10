@@ -18,4 +18,55 @@ The server exchanges the token at Apple's documented plain-text endpoint, retrie
 
 Official specification checked: [Apple AdServices attributionToken](https://developer.apple.com/documentation/AdServices/AAAttribution/attributionToken()). A token has a 24-hour lifetime; fresh device tokens and real campaign traffic are required for live validation.
 
-Campaign names, spend, impressions and Apple Ads management/report reconciliation are **not implemented**: an authorized account, current reporting API contract and credentials are still needed. AdServices campaign identifiers are supported; aggregate App Store reports are never repurposed as campaign attribution. Existing consented downstream first-open/activation/conversion observations remain separate from causal incrementality.
+Campaign reporting is now implemented separately through Apple's documented Campaign Management API v5. See configuration below. AdServices remains unchanged; aggregate App Store reports are never repurposed as campaign attribution.
+
+## Incremental provider work (PR #32)
+
+### Apple Ads reporting
+
+Create an encrypted `apple_ads` connection through the existing owner/MFA Connections API.
+Use the organization's numeric ID as `externalAccountId`, credentials `{clientId, teamId, keyId,
+privateKeyPem}`, and owner-approved metadata `{reportingTermsApproved:true}`. The adapter generates
+a short-lived ES256 client secret, exchanges it for an OAuth token, and reads campaign reports.
+No campaign/budget mutation endpoint is implemented. Report import is manual, never a new live schedule.
+
+`POST /v1/app/apple-ads/reports` accepts `{connectionId,start,end}` for completed UTC days in the
+past 90 days. `GET` at that path returns evidence-backed revisions; repeated identical reports reuse
+evidence. Bounded pagination, organization checks, preserved decimal spend/currency, null missing
+metrics and connection revocation protect the read path. Campaign keys match AdServices
+`apple_ads:<orgId>:<campaignId>`. The Attribution page displays reports separately, filtered to their
+provider-reported app ID, without summing overlapping intervals. Credentials/account permissions and
+real-provider validation are still external requirements. Tests use fixtures only.
+
+Verified official contracts: [OAuth](https://developer.apple.com/documentation/apple_ads/implementing-oauth-for-the-apple-search-ads-api),
+[campaign reports](https://developer.apple.com/documentation/apple_ads/get-campaign-level-reports),
+[request](https://developer.apple.com/documentation/apple_ads/reportingrequest),
+[response](https://developer.apple.com/documentation/apple_ads/reportingresponse).
+
+### Discovery
+
+The provider interface now supports provider identity, terms and conservative result normalization.
+Brave's [documented Web Search API](https://api-dashboard.search.brave.com/api-reference/web/search/get)
+is implemented using an encrypted `brave_search` connection with `{apiKey}`. An owner must provision
+the plan/key separately; no subscription or billing was activated. Legal approval must explicitly
+cover the selected provider's result use **and storage as evidence**, under the owner's actual plan.
+
+Discovery settings accept `provider: app_store | brave_web | brave_google_play` and `connectionId`.
+The last option queries Brave's index with a Play listing restriction; it is **not** Google's app
+catalogue. Google's [publishing API](https://developers.google.com/android-publisher) does not supply
+a public competitor-search contract. Direct Google Play search remains unavailable. No scraping fallback.
+Brave results are secondary evidence, confidence-capped and review-only; package/domain identities
+deduplicate runs. Enrollment proposes pending sources and never approves crawling. Worker pacing and
+bounded retry/backoff honor rate limits; long Retry-After defers to a later run. Country selection applies
+to Apple search; Brave queries deliberately use provider-default geographic coverage.
+
+### Video investigation: still disabled
+
+Investigated Google's Veo via the official [video guide](https://ai.google.dev/gemini-api/docs/video)
+and [pricing](https://ai.google.dev/gemini-api/docs/pricing). Current guide redirects prevented verification
+of a complete stable submit/poll/download contract in this session. No verified replay/idempotency
+guarantee, request charge-cap enforcement or authoritative per-job actual-billing contract was established.
+Those are required by `GenerativeVideoProvider`; a public price estimate cannot replace actual billing.
+The registry remains empty. Owner-approved paid-tier access, exact model/output licence, current API
+contract, billing reconciliation and compatibility with silent H.264 QA are required before implementing
+or enabling this adapter. No fake API endpoint, dependency, billing activation or relaxed reservation was added.

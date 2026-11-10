@@ -1,0 +1,6 @@
+ALTER TABLE "connections" DROP CONSTRAINT "connections_provider_chk";--> statement-breakpoint
+ALTER TABLE "webhook_inbox" DROP CONSTRAINT "webhook_inbox_provider_chk";--> statement-breakpoint
+ALTER TABLE "competitor_discovery_settings" ADD COLUMN "provider" text DEFAULT 'app_store' NOT NULL;--> statement-breakpoint
+ALTER TABLE "competitor_discovery_settings" ADD COLUMN "connection_id" uuid;--> statement-breakpoint
+ALTER TABLE "connections" ADD CONSTRAINT "connections_provider_chk" CHECK ("connections"."provider" in ('internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'linkedin', 'x', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console', 'pexels', 'paypal', 'brave_search', 'apple_ads'));--> statement-breakpoint
+ALTER TABLE "webhook_inbox" ADD CONSTRAINT "webhook_inbox_provider_chk" CHECK ("webhook_inbox"."provider" in ('internal', 'meta', 'google_ads', 'tiktok', 'youtube', 'linkedin', 'x', 'shopify', 'app_store_connect', 'google_play', 'resend', 'posthog', 'chatwoot', 'search_console', 'pexels', 'paypal', 'brave_search', 'apple_ads'));

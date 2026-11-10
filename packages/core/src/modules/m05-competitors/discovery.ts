@@ -1,12 +1,14 @@
 import { publicFetch } from '@futuregrow/connectors';
-import { brandApps, brands, competitorCandidates, competitorDiscoveryRuns, competitorDiscoverySettings, competitorSources, competitors, type DbOrTx, type Tx, withTenant } from '@futuregrow/db';
+import { brandApps, brands, competitorCandidates, competitorDiscoveryRuns, competitorDiscoverySettings, competitorSources, competitors, connections, type DbOrTx, type Tx, withTenant } from '@futuregrow/db';
 import { invalid, notFound } from '@futuregrow/observability';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, requireMfa, requireRole } from '../../util.js';
+import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { raiseAlert } from '../m24-governance/index.js';
+import { BRAVE_TERMS, braveSearchProvider } from './search-providers.js';
 
 const ACTOR = systemActor('competitor-discovery');
 const TERMS = 'https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/index.html';
@@ -16,6 +18,8 @@ export const DiscoverySettingsSchema = z.object({
   brandId: z.string().uuid(),
   enabled: z.boolean(),
   country: z.string().regex(/^[A-Z]{2}$/),
+  provider: z.enum(['app_store', 'brave_web', 'brave_google_play']).default('app_store'),
+  connectionId: z.string().uuid().nullable().default(null),
   intervalHours: z.number().int().min(24).max(720).default(168),
   lawfulBasisNote: z.string().min(20).max(2000),
 });
@@ -32,6 +36,9 @@ export const StoreCandidateSchema = z.object({
 });
 export type StoreCandidate = z.infer<typeof StoreCandidateSchema>;
 export interface CompetitorSearchProvider {
+  id?: string;
+  terms?: string;
+  rank?: (query: string, raw: unknown, now: Date) => { item: unknown; identity: string; url: string; score: number; confidence: number; category: string; reasons: string[] } | null;
   search(query: string, country: string): Promise<unknown[]>;
 }
 
@@ -85,6 +92,11 @@ export async function configureDiscovery(tx: Tx, tenantId: string, actor: Actor,
   requireRole(actor, ['owner', 'legal_approver'], 'approving discovery API use');
   requireMfa(actor, 'approving discovery API use');
   const input = DiscoverySettingsSchema.parse(raw);
+  if (input.provider !== 'app_store') {
+    if (!input.connectionId) throw invalid('Select an approved Brave Search connection');
+    const [connection] = await tx.select().from(connections).where(eq(connections.id, input.connectionId));
+    if (connection?.provider !== 'brave_search' || !['active', 'read_only'].includes(connection.status)) throw invalid('Brave Search connection unavailable');
+  }
   const [b] = await tx.select().from(brands).where(eq(brands.id, input.brandId));
   if (!b) throw notFound('brand');
   const values = { ...input, tenantId, approvedBy: actorRef(actor), approvedAt: now };
@@ -93,7 +105,7 @@ export async function configureDiscovery(tx: Tx, tenantId: string, actor: Actor,
     .values(values)
     .onConflictDoUpdate({ target: [competitorDiscoverySettings.tenantId, competitorDiscoverySettings.brandId], set: values })
     .returning();
-  await audit(tx, tenantId, actor, 'competitor.discovery.configured', { type: 'brand', id: b.id }, { enabled: input.enabled, terms: TERMS });
+  await audit(tx, tenantId, actor, 'competitor.discovery.configured', { type: 'brand', id: b.id }, { enabled: input.enabled, provider: input.provider, terms: input.provider === 'app_store' ? TERMS : BRAVE_TERMS });
   return row!;
 }
 
@@ -106,12 +118,15 @@ async function enroll(tx: Tx, tenantId: string, candidate: typeof competitorCand
     ? await tx.select().from(competitors).where(eq(competitors.id, source.competitorId))
     : await tx
         .insert(competitors)
-        .values({ tenantId, name, domains: ['apps.apple.com'], notes: `Discovered identity; relevance is inferred. Evidence ${candidate.evidenceId}` })
+        .values({ tenantId, name, domains: [new URL(candidate.url).hostname], notes: `Discovered identity; relevance is inferred. Evidence ${candidate.evidenceId}` })
         .onConflictDoUpdate({ target: [competitors.tenantId, competitors.name], set: { name } })
         .returning();
   if (!c) throw notFound('competitor');
   // Never approve a discovered source. Existing revoked sources are left revoked.
-  await tx.insert(competitorSources).values({ tenantId, competitorId: c.id, url: candidate.url, kind: 'app_listing', lawfulBasisNote: 'Proposed from the official App Store search result. Legal must review page monitoring separately.', status: 'pending' }).onConflictDoNothing();
+  await tx
+    .insert(competitorSources)
+    .values({ tenantId, competitorId: c.id, url: candidate.url, kind: candidate.identity.startsWith('web:') ? 'other' : 'app_listing', lawfulBasisNote: 'Proposed from discovery evidence. Legal must review page monitoring separately.', status: 'pending' })
+    .onConflictDoNothing();
   await tx.update(competitorCandidates).set({ status: 'enrolled', competitorId: c.id }).where(eq(competitorCandidates.id, candidate.id));
   await raiseAlert(tx, tenantId, { kind: 'competitor.discovered', severity: 'info', message: `New competitor candidate enrolled: ${candidate.name}. Monitoring awaits source approval.`, refs: { competitorId: c.id, evidenceId: candidate.evidenceId }, dedupKey: `competitor-discovered:${candidate.identity}` });
 }
@@ -128,7 +143,7 @@ export async function reviewCandidate(tx: Tx, tenantId: string, actor: Actor, id
 }
 
 /** One bounded search per brand per interval. The worker uses one global queue for provider rate control. */
-export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: string, provider: CompetitorSearchProvider = appStoreSearch) {
+export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: string, provider?: CompetitorSearchProvider) {
   const now = deps.clock.now();
   const claim = await withTenant(deps.db, { tenantId, actor: actorRef(ACTOR) }, async (tx) => {
     const [s] = await tx.select().from(competitorDiscoverySettings).where(eq(competitorDiscoverySettings.brandId, brandId)).for('update');
@@ -142,11 +157,21 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
     // Brand name is bounded owner-authored product context; connected apps exclude our own identities.
     const query = b.name;
     await tx.update(competitorDiscoverySettings).set({ lastAttemptAt: now }).where(eq(competitorDiscoverySettings.id, s.id));
-    const [run] = await tx.insert(competitorDiscoveryRuns).values({ tenantId, brandId, query, provider: 'app_store', status: 'running' }).returning();
+    const [run] = await tx.insert(competitorDiscoveryRuns).values({ tenantId, brandId, query, provider: s.provider, status: 'running' }).returning();
     return { s, query, apps, run: run! };
   });
   if (!claim) return { status: 'skipped' };
   try {
+    if (!provider) {
+      if (claim.s.provider === 'app_store') provider = appStoreSearch;
+      else {
+        if (!['brave_web', 'brave_google_play'].includes(claim.s.provider) || !claim.s.connectionId) throw invalid('Discovery provider unavailable');
+        const { ctx } = await readContext(deps, tenantId, claim.s.connectionId, 'brave_search');
+        if (ctx.credentials.provider !== 'brave_search') throw invalid('Brave credentials unavailable');
+        provider = braveSearchProvider(deps.http, ctx.credentials.apiKey, claim.s.provider === 'brave_google_play', deps.sleep);
+      }
+    }
+    const activeProvider = provider;
     const results = (await provider.search(claim.query, claim.s.country)).slice(0, 25);
     return await withTenant(deps.db, { tenantId, actor: actorRef(ACTOR) }, async (tx) => {
       const [current] = await tx.select().from(competitorDiscoverySettings).where(eq(competitorDiscoverySettings.id, claim.s.id)).for('update');
@@ -157,24 +182,25 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
       let count = 0;
       const seen = new Set<string>();
       for (const raw of results) {
-        const ranked = rankCandidate(claim.query, raw, now);
-        if (!ranked || seen.has(ranked.identity) || claim.apps.some((a) => a.appId === String(ranked.item.trackId) || a.appId === ranked.item.bundleId)) continue;
+        const ranked = activeProvider.rank ? activeProvider.rank(claim.query, raw, now) : rankCandidate(claim.query, raw, now);
+        if (!ranked || seen.has(ranked.identity) || claim.apps.some((a) => ranked.identity === `google_play:${a.appId}` || ranked.identity === `app_store:${a.appId}` || (ranked.item as { bundleId?: string }).bundleId === a.appId || a.listingUrl === ranked.url)) continue;
+        const name = String((ranked.item as { trackName?: string; title?: string }).trackName ?? (ranked.item as { title?: string }).title ?? '').slice(0, 200);
         seen.add(ranked.identity);
         const ev = await admitInternalEvidence(tx, tenantId, ACTOR, {
           kind: 'snapshot',
-          sourceType: 'primary',
-          owner: 'Apple App Store',
+          sourceType: activeProvider.rank ? 'secondary' : 'primary',
+          owner: activeProvider.id ?? 'Apple App Store',
           uri: ranked.url,
           content: ranked.item,
-          summary: `Official store metadata for ${ranked.item.trackName}`,
-          confidence: 1,
+          summary: `Discovery result for ${name}; ${activeProvider.rank ? 'unverified search index evidence' : 'official store metadata'}`,
+          confidence: activeProvider.rank ? 0.5 : 1,
           license: claim.s.lawfulBasisNote,
-          externalPlatformTerms: TERMS,
+          externalPlatformTerms: activeProvider.terms ?? TERMS,
           permittedUses: ['competitive_analysis', 'analytics'],
           freshnessSlaHours: claim.s.intervalHours * 2,
           now,
         });
-        const values = { tenantId, brandId, identity: ranked.identity, name: ranked.item.trackName, url: ranked.url, category: ranked.category, score: ranked.score, confidence: ranked.confidence, reasons: ranked.reasons, evidenceId: ev.evidenceId, runId: claim.run.id, lastSeenAt: now };
+        const values = { tenantId, brandId, identity: ranked.identity, name, url: ranked.url, category: ranked.category, score: ranked.score, confidence: ranked.confidence, reasons: ranked.reasons, evidenceId: ev.evidenceId, runId: claim.run.id, lastSeenAt: now };
         const [c] = await tx
           .insert(competitorCandidates)
           .values(values)
@@ -202,6 +228,10 @@ export async function discoveryOverview(tx: DbOrTx) {
     settings: await tx.select().from(competitorDiscoverySettings),
     candidates: await tx.select().from(competitorCandidates).orderBy(desc(competitorCandidates.score)).limit(200),
     runs: await tx.select().from(competitorDiscoveryRuns).orderBy(desc(competitorDiscoveryRuns.createdAt)).limit(50),
-    availability: { app_store: 'Requires tenant legal approval of API metadata use', google_play: 'Unavailable: no approved public search adapter', web: 'Unavailable: no configured approved web-search provider' },
+    availability: {
+      app_store: 'Requires tenant legal approval of API metadata use',
+      google_play: 'Brave index discovery only; not a Google Play catalogue API. Requires connection and storage/use approval.',
+      web: 'Brave adapter available; requires owner-provisioned plan/key and legal approval. Search results always need review.',
+    },
   };
 }
