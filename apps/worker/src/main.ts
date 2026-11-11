@@ -1,6 +1,7 @@
 import { createRuntime, installCrashAlerts, loadEnv } from '@futuregrow/runtime';
 import { run } from 'graphile-worker';
 import { CHANNEL_CRONTAB } from './register-channels.js';
+import { GROWTH_WARFARE_CRONTAB } from './register-growth-warfare.js';
 import { MODULE_CRONTAB } from './register-modules.js';
 import { buildTaskList, CRONTAB } from './tasks.js';
 
@@ -13,7 +14,7 @@ const runner = await run({
   pgPool: runtime.pool,
   concurrency,
   taskList: buildTaskList(runtime.deps, { environment: runtime.environment }),
-  crontab: process.env.WORKER_CRONTAB ?? [CRONTAB, ...MODULE_CRONTAB, ...CHANNEL_CRONTAB].join('\n'),
+  crontab: process.env.WORKER_CRONTAB ?? [CRONTAB, ...MODULE_CRONTAB, ...CHANNEL_CRONTAB, ...GROWTH_WARFARE_CRONTAB].join('\n'),
   noHandleSignals: false,
   pollInterval: 2000,
 });

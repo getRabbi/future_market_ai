@@ -10,6 +10,7 @@ import { registerAutopilotRoutes } from './autopilot-routes.js';
 import { registerBrandRoutes } from './brand-routes.js';
 import { registerChannelRoutes } from './channel-routes.js';
 import { registerContentRoutes } from './content-routes.js';
+import { registerGrowthWarfareRoutes } from './growth-warfare-routes.js';
 import { registerIntelligenceRoutes } from './intelligence-routes.js';
 import { registerStudioRoutes } from './studio-routes.js';
 
@@ -83,6 +84,7 @@ export function registerModuleRoutes(app: FastifyInstance, ctx: ApiContext): voi
   registerIntelligenceRoutes(app, ctx);
   registerAutopilotRoutes(app, ctx);
   registerStudioRoutes(app, ctx);
+  registerGrowthWarfareRoutes(app, ctx);
   registerContentRoutes(app, ctx);
   registerBrandRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
