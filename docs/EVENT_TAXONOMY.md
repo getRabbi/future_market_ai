@@ -170,6 +170,17 @@ Envelope: `{ id, tenantId, eventType, version, aggregateType, aggregateId, actor
 | `autopilot.cycle.started` | 1 |
 | `autopilot.cycle.finished` | 1 |
 
+## growth
+
+| Event type | Version |
+| --- | --- |
+| `growth.opportunity.detected` | 1 |
+| `growth.campaign.prepared` | 1 |
+| `growth.campaign.approved` | 1 |
+| `growth.task.submitted` | 1 |
+| `growth.experiment.proposed` | 1 |
+| `growth.learning.recorded` | 1 |
+
 ## governance
 
 | Event type | Version |
