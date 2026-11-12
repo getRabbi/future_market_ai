@@ -106,7 +106,7 @@ def cluster_texts(items: list[dict], k_range=(2, 8), seed: int = 5, top_terms: i
         if not len(idx):
             continue
         # Stable sort: equal weights keep vocab order (higher df, then alphabetical) on every CPU/SIMD path.
-        terms = [vocab[t] for t in np.argsort(-C[j], kind="stable")[:top_terms]]
+        terms = [vocab[t] for t in np.argsort(-C[j], kind="stable") if C[j, t] > 0][:top_terms]
         clusters.append({"label": " / ".join(terms[:3]), "terms": terms, "size": int(len(idx)), "sampleRefs": [items[keep[i]]["id"] for i in idx[:10]]})
     clusters.sort(key=lambda c: -c["size"])
     return {"status": "ok", "k": k, "silhouette": best[0], "n": len(keep), "clusters": clusters}

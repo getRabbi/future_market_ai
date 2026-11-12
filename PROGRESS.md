@@ -223,3 +223,9 @@ All 24 modules are implemented and tested against real PostgreSQL with provider 
 - [ ] Owner: authorize the single rollout (docs/P1_P2_P3_FINAL_RELEASE.md §7) and the activation steps (§8).
 
 **Capability status (2026-11-09):** everything new is IMPLEMENTED — TESTED against fixtures (real render for video); nothing new is live-verified. Paid or consequential capabilities (X, paid campaign creation, payouts, AI images, research execution, Meridian) ship disabled with their blockers (B-019, B-026, B-015, B-011, B-012, B-010). Since D-051 the earlier gaps are closed (carousels, CSV export, attribution and three other screens, optimisation suggestions, voiceover — disabled until approved). Not implemented: generative video (no approved provider), unprompted automated campaign optimisation, iOS campaign attribution from store reports (no campaign dimension).
+
+### Growth Warfare OS F1–F6 (2026-11-12) — ◐ (implemented and tested on branch `feat/growth-warfare-os`; draft PR into `feat/remaining-development`; not merged or deployed)
+
+- D-054: Market Signal Hunter, Competitor Conquest Forge, Growth Blitz & Distribution Mesh, Search & Utility Capture Engine, Conversion Rescue & Viral Loops, Campaign Darwin Engine; Control Room `/app/growth-warfare`; public tool page `/t/?id=…`; Autopilot research/ideas/decide/learn hand-off; durable multi-process AI spend reservations.
+- Migration `0030_growth_warfare` (additive, 12 tables) — must follow PR #33's 0028/0029. Worker `growth_warfare_tick` (*/15). Every feature and every external or paid operation defaults OFF.
+- Tests: `packages/core/test/growth-warfare.test.ts` (20), `apps/api/test/growth-warfare-api.test.ts` (5), web catalog covers every Control Room and public-tool call. Blockers: B-028 (plus B-026 for paid creation). Details: docs/GROWTH_WARFARE_OS.md.

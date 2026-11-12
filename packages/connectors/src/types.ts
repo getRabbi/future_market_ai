@@ -3,6 +3,8 @@ import type { HttpClient } from './http.js';
 
 /** Decrypted credentials. Exist only inside connector code at the execution boundary. */
 export type ProviderCredentials =
+  | { provider: 'brave_search'; apiKey: string }
+  | { provider: 'apple_ads'; clientId: string; teamId: string; keyId: string; privateKeyPem: string }
   | { provider: 'meta'; accessToken: string; appSecret?: string; adsAccessToken?: string }
   | { provider: 'google_ads'; clientId: string; clientSecret: string; refreshToken: string; loginCustomerId?: string; developerToken?: string }
   | { provider: 'tiktok'; accessToken: string; openId?: string }

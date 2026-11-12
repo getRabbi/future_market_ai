@@ -200,6 +200,7 @@ export const modelRegistry = pgTable(
     usdPerImage: dbl('usd_per_image'),
     /** Speech models: price per million input characters; speech models without a price are never used. */
     usdPerMillionChars: dbl('usd_per_million_chars'),
+    usdPerVideoSecond: dbl('usd_per_video_second'),
     status: text('status').notNull().default('active'),
     eolAt: ts('eol_at'),
     createdAt: createdAt(),
@@ -561,7 +562,7 @@ export const costLedger = pgTable(
     metadata: json<Record<string, unknown>>('metadata').notNull().default({}),
     occurredAt: ts('occurred_at').notNull().defaultNow(),
   },
-  (t) => [oneOf('cost_ledger_category_chk', t.category, ['llm', 'embedding', 'image_generation', 'speech_generation', 'media_render', 'api', 'analytics', 'storage']), index('cost_ledger_tenant_time_idx').on(t.tenantId, t.occurredAt)],
+  (t) => [oneOf('cost_ledger_category_chk', t.category, ['llm', 'embedding', 'image_generation', 'speech_generation', 'video_generation', 'media_render', 'api', 'analytics', 'storage']), index('cost_ledger_tenant_time_idx').on(t.tenantId, t.occurredAt)],
 );
 
 /**

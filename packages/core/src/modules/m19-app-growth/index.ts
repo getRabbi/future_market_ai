@@ -472,7 +472,7 @@ function reconciledWindow(eligibleInstalls: number, reconciledInstalls: number, 
 }
 
 /** Payload consent cannot override a recorded withdrawal or expired grant. */
-async function analyticsStateAllowsProcessing(tx: Tx, profileId: string, now: Date) {
+export async function analyticsStateAllowsProcessing(tx: Tx, profileId: string, now: Date) {
   const [state] = await tx
     .select()
     .from(consentState)
@@ -621,4 +621,6 @@ export async function syncDownloadsSeries(tx: Tx, tenantId: string): Promise<{ s
   return { seriesId: series.id, points: pts.length };
 }
 
+export * as appleAds from './apple-ads.js';
+export * as appleAdsReporting from './apple-ads-reporting.js';
 export * as attribution from './attribution.js';

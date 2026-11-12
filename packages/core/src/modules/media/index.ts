@@ -2,9 +2,11 @@ import { assets, connections, type DbOrTx } from '@futuregrow/db';
 import { sha256Hex } from '@futuregrow/observability';
 import { and, eq } from 'drizzle-orm';
 import type { CoreDeps } from '../../deps.js';
+import { generativeVideoReadiness } from './generative-video.js';
 import { imageModelReadiness, stockLicence } from './sources.js';
 import { speechReadiness } from './voice.js';
 
+export * as generativeVideo from './generative-video.js';
 export * as sources from './sources.js';
 export * as video from './video.js';
 export * as voice from './voice.js';
@@ -184,15 +186,16 @@ export const aiVoice: MediaProvider = {
 export const aiVideo: MediaProvider = {
   id: 'ai-video-model',
   kind: 'ai_video',
-  async status() {
+  async status(ctx) {
+    const ready = await generativeVideoReadiness(ctx.t, ctx.deps);
     return {
       id: this.id,
       kind: this.kind,
-      enabled: false,
-      reason: 'Generative video is not available: no provider with reviewed commercial, likeness and disclosure terms is approved. The Video Studio renders licensed scenes instead.',
-      requires: ['an approved generative video provider and model (vendor and legal review)', 'an approved licence record for its output terms', 'counsel review of AI-generated media (Governance › Legal & licensing readiness)', 'a FUTUREGROW adapter for that provider'],
-      adapter: 'not_built',
-      prerequisitesMet: false,
+      enabled: ready.missing.length === 0,
+      reason: ready.missing.length ? 'Generative video is unavailable until a verified adapter, model pricing and output licence are approved.' : 'Approved adapter configured. Generated silent clips require technical QA and likeness-rights review before use.',
+      requires: ready.missing,
+      adapter: ready.providerConfigured ? 'available' : 'not_built',
+      prerequisitesMet: ready.missing.length === 0,
     };
   },
 };

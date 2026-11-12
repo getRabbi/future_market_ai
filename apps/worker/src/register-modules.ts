@@ -1,11 +1,30 @@
 import { autopilot, brain, competitorsModule, contentStudio, customers, eventForwarding, governance, knowledge, media, registerEventHandlers, systemActor } from '@futuregrow/core';
-import { competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
+import { competitorDiscoverySettings, competitorSources, growthDecisions, growthIdeas, withTenant } from '@futuregrow/db';
 import { loadEnv, triggerNorthflankJob } from '@futuregrow/runtime';
 import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { forEachTenant, registerTasks } from './tasks.js';
 
 /** Module tasks registered with the worker. Each is idempotent and tenant-scoped. */
 registerTasks((deps) => ({
+  competitor_discovery_tick: async () => {
+    await forEachTenant(deps, async (tenantId) => {
+      const settings = await withTenant(deps.db, { tenantId, actor: 'system:competitor-discovery' }, (tx) =>
+        tx
+          .select()
+          .from(competitorDiscoverySettings)
+          .where(and(eq(competitorDiscoverySettings.enabled, true), or(isNull(competitorDiscoverySettings.lastAttemptAt), lte(competitorDiscoverySettings.lastAttemptAt, sql`now() - make_interval(hours => ${competitorDiscoverySettings.intervalHours})`)))),
+      );
+      for (const s of settings) await deps.jobs.add('competitor_discovery', { tenantId, brandId: s.brandId }, { jobKey: `competitor-discovery:${tenantId}:${s.brandId}`, queueName: 'competitor-discovery-provider', maxAttempts: 1 });
+    });
+  },
+  competitor_discovery: async (payload) => {
+    const { tenantId, brandId } = payload as { tenantId: string; brandId: string };
+    try {
+      await competitorsModule.discovery.runDiscovery(deps, tenantId, brandId);
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 3500));
+    }
+  },
   competitor_crawl: async () => {
     await forEachTenant(deps, async (tenantId) => {
       const due = await withTenant(deps.db, { tenantId, actor: 'system:competitor-collector' }, (tx) =>
@@ -160,6 +179,7 @@ registerEventHandlers((bus, deps) => {
 export const MODULE_CRONTAB = [
   '* * * * * autopilot_tick',
   '13 * * * * competitor_crawl',
+  '7 * * * * competitor_discovery_tick',
   '41 2 * * * claims_sweep',
   '19 * * * * studio_drafts_sweep',
   '*/15 * * * * studio_items_sync',

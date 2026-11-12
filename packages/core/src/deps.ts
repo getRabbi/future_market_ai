@@ -64,6 +64,10 @@ export interface CoreDeps {
   images?: Record<string, ImageModelProvider>;
   /** Speech (TTS) providers; called only for registry-approved, priced speech models (P3-04 voiceover). */
   speech?: Record<string, SpeechModelProvider>;
+  /** Approved generative-video adapters; none are bundled or activated by default. */
+  videos?: Record<string, import('./modules/media/generative-video.js').GenerativeVideoProvider>;
+  /** Local media probe override for fixture tests. Production uses ffprobe. */
+  videoProbe?: typeof import('./modules/media/video-probe.js').probeGeneratedVideo;
   /** Operator alerts (ALERT_WEBHOOK_URL); absent = log only. */
   notifier?: Notifier;
 }

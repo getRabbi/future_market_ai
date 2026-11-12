@@ -66,6 +66,13 @@ export const EVENT_TYPES = {
   'autopilot.goal.status_changed': 1,
   'autopilot.cycle.started': 1,
   'autopilot.cycle.finished': 1,
+  // Growth Warfare OS (D-054)
+  'growth.opportunity.detected': 1,
+  'growth.campaign.prepared': 1,
+  'growth.campaign.approved': 1,
+  'growth.task.submitted': 1,
+  'growth.experiment.proposed': 1,
+  'growth.learning.recorded': 1,
   'governance.kill_switch.engaged': 1,
   'governance.kill_switch.released': 1,
   'governance.incident.opened': 1,

@@ -14,6 +14,9 @@ export function registerEventHandlers(r: HandlerRegistrar): void {
 }
 
 export function wireEventHandlers(bus: EventBus, deps: CoreDeps): EventBus {
+  bus.on('ads.spend.synced', 'campaign-optimization', async (ev) => {
+    await deps.jobs.add('campaign_optimization', { tenantId: ev.tenantId }, { jobKey: `campaign-optimization:${ev.tenantId}`, maxAttempts: 3 });
+  });
   bus.on('action.request.transitioned', 'execution-scheduler', async (ev) => {
     const to = ev.payload.to as string;
     const actionId = ev.aggregateId;

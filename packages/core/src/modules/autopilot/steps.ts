@@ -28,6 +28,7 @@ import {
 } from '@futuregrow/db';
 import { and, desc, eq, gte, inArray, isNull, lt, max, min, ne, or, sql } from 'drizzle-orm';
 import { type CoreDeps, systemActor } from '../../deps.js';
+import { autopilotContext, autopilotLearn, brandForGoal, contextLines } from '../growth-warfare/index.js';
 import { generateIdeas, rankedIdeas } from '../m06-ideas/index.js';
 import { autoAcceptDecision, proposeDecision, riskFromParams } from '../m07-brain/index.js';
 import { requestAnalytics } from '../m08-analytics/index.js';
@@ -451,8 +452,12 @@ const research: StepExecutor = async (c) =>
       }
     }
     const organic = organicObservations(c);
-    const detail = `Market inputs from the last 30 days: ${tr?.n ?? 0} trends, ${ob?.n ?? 0} competitor observations, ${keywords.length} keyword opportunities.${notes.length ? ` Also ${notes.join('; ')}.` : ''}${organic.length ? ` Organic Facebook activity: ${organic.join(' ')}` : ''}`;
-    return { kind: 'completed', detail, refs, output: { trends: tr?.n ?? 0, competitorObservations: ob?.n ?? 0, keywordOpportunities: keywords.length, organicObservations: organic } };
+    // Growth Warfare (D-054): open market opportunities (F1) and recorded findings (F6) for the goal's brand, when switched on.
+    const gwBrand = await brandForGoal(t, (c.prior.observe?.output.brand as BrandScope | null | undefined)?.pageIds ?? []);
+    const gw = await autopilotContext(t, c.tenantId, gwBrand);
+    const gwNote = gw.lines.length ? ` Growth Warfare: ${gw.opportunities.length} open opportunit${gw.opportunities.length === 1 ? 'y' : 'ies'}, ${gw.memory.length ? 'recorded findings available' : 'no recorded findings'}.` : '';
+    const detail = `Market inputs from the last 30 days: ${tr?.n ?? 0} trends, ${ob?.n ?? 0} competitor observations, ${keywords.length} keyword opportunities.${notes.length ? ` Also ${notes.join('; ')}.` : ''}${organic.length ? ` Organic Facebook activity: ${organic.join(' ')}` : ''}${gwNote}`;
+    return { kind: 'completed', detail, refs, output: { trends: tr?.n ?? 0, competitorObservations: ob?.n ?? 0, keywordOpportunities: keywords.length, organicObservations: organic, ...(gw.active ? { growthWarfare: { brandId: gwBrand, lines: gw.lines, opportunities: gw.opportunities } } : {}) } };
   });
 
 /** What the Page's own recent posts show, as plain observations (no recommendation, no forecast). */
@@ -513,7 +518,8 @@ const ideas: StepExecutor = async (c) => {
         constraints: `${goalConstraints(c.goal, c.now)}\nBootstrap (exploratory): ${boot.reason}. No forecast or measured result supports any idea yet. Propose low-effort organic Facebook content tests for this Page and its product only, using only the evidence given, without expected numbers.${observations.length ? `\nObserved Page activity: ${observations.join(' ')}` : ''}${storeTrendLines(c.prior)}`,
       }
     : { constraints: `${goalConstraints(c.goal, c.now)}${storeTrendLines(c.prior)}` };
-  const r = await generateIdeas(c.deps, c.tenantId, AUTOPILOT, { maxIdeas: 3, focus: { objective: c.goal.title, targetMetric: kpi.metricKey, channels: c.goal.channels, ...focus } });
+  // Growth Warfare context (D-054) is appended only when F1/F6 produced lines for the goal's brand.
+  const r = await generateIdeas(c.deps, c.tenantId, AUTOPILOT, { maxIdeas: 3, focus: { objective: c.goal.title, targetMetric: kpi.metricKey, channels: c.goal.channels, ...focus, constraints: `${focus.constraints}${contextLines(c.prior.research)}` } });
   if (r.status === 'abstained') return { kind: 'blocked', needs: r.reason === 'MODEL_UNAVAILABLE' ? 'model' : 'evidence', detail: `The Idea Lab abstained (${r.reason}).`, aiCalls: 1, refs: { agentRunId: r.runId } };
   if (r.status === 'failed') return { kind: 'retry', detail: 'The Idea Lab failed; will retry.', error: r.error, aiCalls: 1 };
   const created = (r.result as { created: string[]; abstained?: string; rejected?: { title: string; reason: string }[] }).created ?? [];
@@ -555,7 +561,7 @@ const decide: StepExecutor = async (c) => {
     market: c.goal.market,
     horizon: { value: Math.min(52, daysLeft(c)), unit: 'day' },
     ...(seriesId ? { seriesId } : {}),
-    goal: { id: c.goal.id, constraints: `${goalConstraints(c.goal, c.now)}${storeTrendLines(c.prior)}`, allowedCategories: goalCategories(c.goal.channels, c.goal.adBudgetMicros) },
+    goal: { id: c.goal.id, constraints: `${goalConstraints(c.goal, c.now)}${storeTrendLines(c.prior)}${contextLines(c.prior.research)}`, allowedCategories: goalCategories(c.goal.channels, c.goal.adBudgetMicros) },
   });
   if (r.status === 'abstained')
     return { kind: 'blocked', needs: r.reason === 'MODEL_UNAVAILABLE' ? 'model' : 'evidence', detail: `The Growth Brain abstained on "${idea.title}" (${r.reason}); the next cycle tries another idea.`, aiCalls: 2, refs: { agentRunId: r.runId }, output: { ideaId: idea.id, abstained: r.reason } };
@@ -1043,6 +1049,15 @@ const learn: StepExecutor = async (c) => {
     const history = await tx(c, (t) => programHistory(t, studio.programId));
     studioLearning = learnFrom(history);
     lessons.push(...studioLearning.notes.map((n) => `Content studio: ${n}`));
+  }
+  // Growth Warfare (D-054): F6 memory refresh and package preparation for accepted opportunities (never submitted).
+  const gwBrandId = (c.prior.research?.output.growthWarfare as { brandId?: string | null } | undefined)?.brandId ?? null;
+  if (gwBrandId) {
+    try {
+      lessons.push(...(await autopilotLearn(c.deps, c.tenantId, gwBrandId)));
+    } catch (err) {
+      lessons.push(`Growth Warfare learning was skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   const detail = [...lessons, replanReason ? `Next cycle brought forward to ${sooner} h because ${replanReason}.` : `Next cycle in ${cadence} h.`].join(' ');
   return { kind: 'completed', detail, output: { lessons, replanHours, replanReason, ideaId: ideaId ?? null, actionStatus: actionStatus ?? null, experimentAnalyses: analyses, studioLearning } };

@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { buildApp } from '../../api/src/app.js';
+import { ACQUISITION_TOOL_CALLS } from '../src/components/AcquisitionTool.js';
 import { APP_CONVERSION_CALLS } from '../src/components/AppConversions.js';
 import { APP_INTELLIGENCE_CALLS } from '../src/components/AppIntelligence.js';
 import { ATTRIBUTION_CALLS } from '../src/components/AttributionReport.js';
@@ -15,6 +16,7 @@ import { CONTENT_CALLS } from '../src/components/ContentStudio.js';
 import { PAYOUT_CALLS } from '../src/components/CreatorPayouts.js';
 import { REGISTRIES } from '../src/components/Governance.js';
 import { GROUND_TRUTH_CALLS } from '../src/components/GroundTruth.js';
+import { GROWTH_WARFARE_CALLS } from '../src/components/GrowthWarfare.js';
 import { MEDIA_CALLS } from '../src/components/MediaStudio.js';
 import { CATALOG_CALLS } from '../src/components/ProductCatalog.js';
 import { READINESS_CALLS } from '../src/components/Readiness.js';
@@ -93,6 +95,8 @@ function calls() {
   for (const c of PAYOUT_CALLS) out.push({ where: 'creator payouts screen', method: c.method, path: c.path });
   for (const c of ATTRIBUTION_CALLS) out.push({ where: 'attribution report screen', method: c.method, path: c.path });
   for (const c of SEARCH_CONSOLE_CALLS) out.push({ where: 'search console screen', method: c.method, path: c.path });
+  for (const c of GROWTH_WARFARE_CALLS) out.push({ where: 'growth warfare control room', method: c.method, path: c.path });
+  for (const c of ACQUISITION_TOOL_CALLS) out.push({ where: 'public acquisition tool page', method: c.method, path: c.path });
   return out;
 }
 

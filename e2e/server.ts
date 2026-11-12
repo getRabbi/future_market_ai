@@ -17,6 +17,7 @@ import { run as runWorker } from 'graphile-worker';
 import pg from 'pg';
 import { buildApp } from '../apps/api/src/app.js';
 import '../apps/worker/src/register-modules.js';
+import '../apps/worker/src/register-growth-warfare.js';
 import { createAuth } from '../apps/api/src/auth.js';
 import { buildTaskList } from '../apps/worker/src/tasks.js';
 import { runAllMigrations } from '../packages/db/src/migrate.js';

@@ -169,6 +169,41 @@
       "when": 1794170430040,
       "tag": "0023_voiceover",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794217787629,
+      "tag": "0024_competitor_discovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794244848731,
+      "tag": "0025_generative_video",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794245897439,
+      "tag": "0026_apple_ads_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794293430749,
+      "tag": "0027_discovery_reporting_providers",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794425286527,
+      "tag": "0030_growth_warfare",
+      "breakpoints": true
     }
   ]
 }

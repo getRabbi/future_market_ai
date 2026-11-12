@@ -311,7 +311,7 @@ export async function seedModelRegistry(db: Db): Promise<void> {
 export async function approveModel(
   db: Db,
   actor: { userId: string },
-  input: { provider: string; modelId: string; trainingOnCustomerData: 'no' | 'yes' | 'unknown'; dataRetentionTerms: string; inputUsdPerMtok: number | null; outputUsdPerMtok: number | null; usdPerImage?: number | null; usdPerMillionChars?: number | null },
+  input: { provider: string; modelId: string; trainingOnCustomerData: 'no' | 'yes' | 'unknown'; dataRetentionTerms: string; inputUsdPerMtok: number | null; outputUsdPerMtok: number | null; usdPerImage?: number | null; usdPerMillionChars?: number | null; usdPerVideoSecond?: number | null },
 ): Promise<void> {
   await withSystem(db, `user:${actor.userId}`, async (tx) => {
     const [u] = await tx.select().from(authUser).where(eq(authUser.id, actor.userId));
@@ -331,6 +331,7 @@ export async function approveModel(
         outputUsdPerMtok: input.outputUsdPerMtok,
         ...(input.usdPerImage === undefined ? {} : { usdPerImage: input.usdPerImage }),
         ...(input.usdPerMillionChars === undefined ? {} : { usdPerMillionChars: input.usdPerMillionChars }),
+        ...(input.usdPerVideoSecond === undefined ? {} : { usdPerVideoSecond: input.usdPerVideoSecond }),
       })
       .where(and(eq(modelRegistry.provider, input.provider), eq(modelRegistry.modelId, input.modelId)))
       .returning({ id: modelRegistry.id });
@@ -548,7 +549,7 @@ export async function acknowledgeAlert(tx: Tx, actor: Actor, id: string) {
 export async function recordCost(
   tx: Tx,
   tenantId: string,
-  input: { category: 'llm' | 'embedding' | 'image_generation' | 'speech_generation' | 'media_render' | 'api' | 'analytics' | 'storage'; provider: string; unit: string; quantity: number; unitCostUsd: number | null; refType?: string; refId?: string; metadata?: Record<string, unknown> },
+  input: { category: 'llm' | 'embedding' | 'image_generation' | 'speech_generation' | 'video_generation' | 'media_render' | 'api' | 'analytics' | 'storage'; provider: string; unit: string; quantity: number; unitCostUsd: number | null; refType?: string; refId?: string; metadata?: Record<string, unknown> },
 ) {
   await tx.insert(costLedger).values({
     tenantId,

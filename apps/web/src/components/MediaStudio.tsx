@@ -375,6 +375,64 @@ interface VideoRow {
 
 const newScene = (n: number): SceneDraft => ({ id: `scene-${n}`, durationSeconds: 3, text: '', subtitle: '', assetId: null, transition: 'fade', textPosition: 'center' });
 
+function GenerativeVideo() {
+  const ready = useApi<{ model: { modelId: string; usdPerVideoSecond: number } | null; missing: string[] }>('/v1/media/generative-video/readiness');
+  const jobs = useApi<{ id: string; kind: string; status: string; statusReason: string | null; assetId: string | null }[]>('/v1/media/jobs');
+  const [prompt, setPrompt] = useState('');
+  const [seconds, setSeconds] = useState(5);
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const enabled = ready.data?.missing.length === 0;
+  return (
+    <details>
+      <summary>Generative AI clips</summary>
+      <p className="small muted">Silent generated clips enter the asset library after technical QA. Review their content and record likeness rights before use. Existing storyboard rendering is separate.</p>
+      <ErrorNotice error={ready.error ?? jobs.error ?? error} />
+      {ready.data?.missing.map((m) => (
+        <p key={m} className="small">
+          Required: {m}
+        </p>
+      ))}
+      {enabled ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setBusy(true);
+            setError(null);
+            void api('POST', '/v1/media/generative-video', { modelId: ready.data!.model!.modelId, prompt, seconds, width: 1080, height: 1920, title: prompt.slice(0, 100) })
+              .then(() => jobs.reload())
+              .catch(setError)
+              .finally(() => setBusy(false));
+          }}
+        >
+          <label>
+            Describe the clip
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} required minLength={5} maxLength={2000} />
+          </label>
+          <label>
+            Duration in seconds
+            <input type="number" min={1} max={15} value={seconds} onChange={(e) => setSeconds(Number(e.target.value))} />
+          </label>
+          <p className="small">Maximum charge: ${(seconds * (ready.data?.model?.usdPerVideoSecond ?? 0)).toFixed(2)}. Format: vertical 1080 × 1920.</p>
+          <button type="submit" className="small-btn" disabled={busy}>
+            Queue generation
+          </button>
+        </form>
+      ) : null}
+      <button type="button" className="small-btn" onClick={() => void jobs.reload()}>
+        Refresh generation jobs
+      </button>
+      {(jobs.data ?? [])
+        .filter((j) => j.kind === 'ai_video')
+        .map((j) => (
+          <p key={j.id} className="small">
+            <Badge value={j.status} /> {j.statusReason ?? (j.assetId ? `Asset ${j.assetId}; review in Assets.` : j.id)}
+          </p>
+        ))}
+    </details>
+  );
+}
+
 function VideoStudio() {
   const list = useApi<VideoRow[]>('/v1/media/videos');
   const media = useApi<{ id: string; kind: string; title: string; publishEligible: boolean }[]>('/v1/assets');
@@ -410,6 +468,7 @@ function VideoStudio() {
           {editing ? 'Close' : 'New video'}
         </button>
       </header>
+      <GenerativeVideo />
       <p className="small muted">Short branded videos from scenes: on-screen text, subtitles, your cleared images or clips and transitions, rendered to MP4 with a thumbnail and SRT subtitles. Publish them to TikTok or YouTube from the studio; every upload still goes through your publishing policy.</p>
       <ErrorNotice error={error} />
       {editing ? (

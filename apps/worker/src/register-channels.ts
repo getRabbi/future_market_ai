@@ -18,6 +18,11 @@ async function activeConnections(deps: Parameters<Parameters<typeof registerTask
 
 /** Channel tasks (M16–M22). All are idempotent: re-running a tick never duplicates a send. */
 registerTasks((deps) => ({
+  campaign_optimization: async (payload) => {
+    const { tenantId } = payload as { tenantId?: string };
+    if (tenantId) await paidMedia.proactive.evaluateCampaigns(deps, tenantId);
+    else await forEachTenant(deps, (id) => paidMedia.proactive.evaluateCampaigns(deps, id).then(() => {}));
+  },
   /** M16: due scheduled posts become M23 actions. */
   social_dispatch: async () => {
     await forEachTenant(deps, async (tenantId) => {
@@ -181,6 +186,7 @@ export const CHANNEL_CRONTAB = [
   '55 11 * * * social_analytics_sync',
   '*/10 * * * * campaign_drafts_sync',
   '37 */6 * * * ads_sync',
+  '57 */6 * * * campaign_optimization',
   '15 7 * * * spend_reconcile',
   '45 5 * * * search_console_sync',
   '20 6 * * * shopify_catalog_sync',

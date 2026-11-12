@@ -1,4 +1,4 @@
-import { brain, competitorsModule, ideas } from '@futuregrow/core';
+import { brain, competitorsModule, ideas, requireRole } from '@futuregrow/core';
 import { agentRuns } from '@futuregrow/db';
 import { desc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -15,6 +15,16 @@ export function registerBrainRoutes(app: FastifyInstance, ctx: ApiContext): void
   const { deps } = ctx;
 
   /* ---------------- M05 ---------------- */
+  r.get('/v1/competitors/comparison', { schema: { tags: ['competitors'] } }, async (req) => tenantTx(ctx, req, (tx) => competitorsModule.comparison(tx)));
+  r.get('/v1/competitors/discovery', { schema: { tags: ['competitors'] } }, async (req) => tenantTx(ctx, req, (tx) => competitorsModule.discovery.discoveryOverview(tx)));
+  r.put('/v1/competitors/discovery', { schema: { tags: ['competitors'], body: competitorsModule.discovery.DiscoverySettingsSchema } }, async (req) => tenantTx(ctx, req, (tx) => competitorsModule.discovery.configureDiscovery(tx, tenantOf(req), actorOf(req), req.body, deps.clock.now())));
+  r.post('/v1/competitors/discovery/:id/run', { schema: { tags: ['competitors'], params: Id } }, async (req, reply) => {
+    requireRole(actorOf(req), ['owner', 'admin', 'growth_operator', 'analyst'], 'requesting discovery');
+    // The worker rechecks approval, tenant ownership and cooldown before any provider call.
+    await deps.jobs.add('competitor_discovery', { tenantId: tenantOf(req), brandId: req.params.id }, { jobKey: `competitor-discovery:${tenantOf(req)}:${req.params.id}`, queueName: 'competitor-discovery-provider', maxAttempts: 1 });
+    return reply.status(202).send({ status: 'queued' });
+  });
+  r.post('/v1/competitors/candidates/:id/review', { schema: { tags: ['competitors'], params: Id, body: z.object({ decision: z.enum(['enroll', 'reject']) }) } }, async (req) => tenantTx(ctx, req, (tx) => competitorsModule.discovery.reviewCandidate(tx, tenantOf(req), actorOf(req), req.params.id, req.body.decision)));
   r.get('/v1/competitors', { schema: { tags: ['competitors'] } }, async (req) => tenantTx(ctx, req, (tx) => competitorsModule.listCompetitors(tx)));
   r.post('/v1/competitors', { schema: { tags: ['competitors'], body: z.object({ name: z.string().min(1).max(200), domains: z.array(z.string()).min(1).max(20), notes: z.string().max(2000).optional() }) } }, async (req, reply) =>
     reply.status(201).send(await tenantTx(ctx, req, (tx) => competitorsModule.addCompetitor(tx, tenantOf(req), actorOf(req), req.body))),

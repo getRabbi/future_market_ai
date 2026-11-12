@@ -13,6 +13,8 @@ const Geos = z.array(z.string().min(2)).default([]);
 export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): void {
   const r = app.withTypeProvider<ZodTypeProvider>();
   const { deps } = ctx;
+  r.get('/v1/app/apple-ads/reports', { schema: { tags: ['app-growth'] } }, async (req) => tenantTx(ctx, req, (tx) => appGrowth.appleAdsReporting.appleAdsReports(tx)));
+  r.post('/v1/app/apple-ads/reports', { config: { rateLimit: { max: 2, timeWindow: '1 minute' } }, schema: { tags: ['app-growth'], body: appGrowth.appleAdsReporting.AppleAdsReportRequest } }, async (req) => appGrowth.appleAdsReporting.syncAppleAdsReport(deps, tenantOf(req), actorOf(req), req.body));
 
   /* ---------------- M16 Organic social ---------------- */
   r.get('/v1/social/posts', { schema: { tags: ['social'] } }, async (req) => tenantTx(ctx, req, (tx) => social.listPosts(tx)));
@@ -45,6 +47,23 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ApiContext): vo
   r.post('/v1/social/interactions/:id/reply', { schema: { tags: ['social'], params: Id, body: z.object({ message: z.string().min(1).max(8000).optional(), geographies: Geos }) } }, async (req, reply) => reply.status(201).send(await social.proposeReply(deps, tenantOf(req), actorOf(req), req.params.id, req.body)));
 
   /* ---------------- M17 Paid media ---------------- */
+  r.get('/v1/ads/optimizations', { schema: { tags: ['ads'] } }, async (req) => tenantTx(ctx, req, paidMedia.proactive.listOptimizationReviews));
+  r.post(
+    '/v1/ads/optimizations/:id/propose',
+    {
+      schema: {
+        tags: ['ads'],
+        params: Id,
+        body: z.object({
+          geographies: z
+            .array(z.string().regex(/^[A-Z]{2}$/))
+            .min(1)
+            .max(50),
+        }),
+      },
+    },
+    async (req, reply) => reply.status(201).send(await paidMedia.proactive.submitOptimizationReview(deps, tenantOf(req), actorOf(req), req.params.id, req.body.geographies)),
+  );
   r.get('/v1/ads/campaigns', { schema: { tags: ['ads'] } }, async (req) => tenantTx(ctx, req, (tx) => paidMedia.listCampaigns(tx)));
   r.get('/v1/ads/campaigns/:id/performance', { schema: { tags: ['ads'], params: Id, querystring: z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }) } }, async (req) => tenantTx(ctx, req, (tx) => paidMedia.campaignPerformance(tx, req.params.id, req.query.days)));
   r.post('/v1/ads/connections/:id/sync', { schema: { tags: ['ads'], params: Id, body: z.object({ from: Day.optional(), to: Day.optional() }).default({}) } }, async (req) => {

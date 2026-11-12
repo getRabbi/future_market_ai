@@ -59,7 +59,7 @@ export interface GatewayOptions {
   /** Called before every provider attempt; throw (e.g. AbstainError BUDGET_EXCEEDED) to stop it. */
   beforeCall?: (call: PlannedCall) => Promise<void>;
   /** Called after an attempt finished (released reservations etc.), successful or not. */
-  afterCall?: (call: PlannedCall) => void;
+  afterCall?: (call: PlannedCall) => void | Promise<void>;
   onProviderFailure?: (f: ProviderFailure) => void;
 }
 
@@ -163,7 +163,7 @@ export class ModelGateway {
       try {
         outcome = await provider.generateStructured({ ...req, messages, effort: req.effort ?? EFFORT_BY_PURPOSE[req.purpose] }, { model: primary.modelId, fallbackModels: fallbacks.map((f) => f.modelId) });
       } catch (err) {
-        this.opts.afterCall?.(planned);
+        await this.opts.afterCall?.(planned);
         throw err;
       }
       this.breakers.set(primary.provider, { failures: 0, openUntil: 0 });
@@ -180,7 +180,7 @@ export class ModelGateway {
           outcome: outcome.kind,
         });
       } finally {
-        this.opts.afterCall?.(planned);
+        await this.opts.afterCall?.(planned);
       }
       if (!served) throw new AbstainError('UNAPPROVED_SERVING_MODEL', `response served by ${outcome.servedBy}, which is not approved`);
       if (outcome.kind === 'refusal') throw new AbstainError('MODEL_REFUSAL', `model declined (${outcome.category ?? 'unspecified'})`);

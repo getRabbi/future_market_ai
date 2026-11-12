@@ -9,6 +9,7 @@ export const ATTRIBUTION_CALLS = [
   { method: 'GET', path: '/v1/app/attribution/apps' },
   { method: 'GET', path: '/v1/app/attribution' },
   { method: 'GET', path: '/v1/brands' },
+  { method: 'GET', path: '/v1/app/apple-ads/reports' },
 ] as const;
 
 interface AppRow {
@@ -60,6 +61,8 @@ const IDENTITY: Record<Campaign['identity']['status'], string> = { post: 'One po
 export function AttributionReport() {
   const apps = useApi<AppRow[]>('/v1/app/attribution/apps');
   const brands = useApi<{ id: string; name: string }[]>('/v1/brands');
+  const ads =
+    useApi<{ evidenceId: string; retrievedAt: string; start: string; end: string; campaigns: { campaignRef: string; appId: string | null; name: string; days: { date: string; impressions: number | null; taps: number | null; spend: { amount: string; currency: string } | null }[] }[] }[]>('/v1/app/apple-ads/reports');
   const [brand, setBrand] = useState('');
   const [selection, setSelection] = useState('');
   const [period, setPeriod] = useState('28');
@@ -83,6 +86,50 @@ export function AttributionReport() {
     );
   return (
     <div className="stack">
+      {selected?.platform === 'ios' ? (
+        <section className="card" aria-label="Apple Ads reporting">
+          <h3>Apple Ads campaign reports</h3>
+          <p>Provider-reported spend and impressions, separate from consented attribution and store acquisitions. Intervals may overlap and are not added together.</p>
+          {ads.error ? <ErrorNotice error={ads.error} /> : null}
+          {!(ads.data ?? []).some((report) => report.campaigns.some((c) => c.appId === selected.appId)) ? <p>No authorized report for this app. Connect an Apple Ads account and import a completed UTC date range through the reporting API.</p> : null}
+          {(ads.data ?? []).map((report) => (
+            <div key={report.evidenceId}>
+              {report.campaigns
+                .filter((c) => c.appId === selected.appId)
+                .map((c) => (
+                  <details key={c.campaignRef}>
+                    <summary>
+                      {c.name} — {report.start} to {report.end} UTC
+                    </summary>
+                    <p>
+                      {c.campaignRef} · Evidence {report.evidenceId} · Retrieved {report.retrievedAt}
+                    </p>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Day</th>
+                          <th>Impressions</th>
+                          <th>Taps</th>
+                          <th>Spend</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {c.days.map((d) => (
+                          <tr key={d.date}>
+                            <td>{d.date}</td>
+                            <td>{n(d.impressions)}</td>
+                            <td>{n(d.taps)}</td>
+                            <td>{d.spend ? `${d.spend.amount} ${d.spend.currency}` : 'Not reported'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                ))}
+            </div>
+          ))}
+        </section>
+      ) : null}
       <section className="card" aria-label="Report filters">
         <div className="form-grid">
           <div className="field">

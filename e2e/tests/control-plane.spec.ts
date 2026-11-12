@@ -97,7 +97,7 @@ test('the owner signs in, returns to the requested section, and every page of th
   await expect(page.locator('#org')).toHaveValue(/.+/);
   await expect(page.locator('#org option:checked')).toHaveText(ORG.name);
 
-  expect(PAGES.length).toBe(42);
+  expect(PAGES.length).toBe(43);
   for (const p of PAGES) {
     await page.goto(p.slug ? `/app/${p.slug}` : '/app/');
     await expect(page.getByRole('heading', { level: 1, name: p.slug ? p.title : 'Your growth at a glance', exact: true })).toBeVisible();
@@ -328,7 +328,7 @@ test('on a phone the guided screens fit the screen width', async ({ browser }) =
   await expect(knowledge).toBeInViewport();
   // Every tool stays reachable on a phone (All tools lists all 37), and the narrowest phones do not scroll sideways.
   await phone.goto('/app/tools');
-  await expect(phone.locator('.tool-card')).toHaveCount(41);
+  await expect(phone.locator('.tool-card')).toHaveCount(42);
   await phone.setViewportSize({ width: 320, height: 700 });
   for (const path of ['/app/', '/app/goals', '/app/approvals', '/app/tools']) {
     await phone.goto(path);
