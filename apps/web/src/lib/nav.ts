@@ -127,6 +127,17 @@ export const PAGES: NavPage[] = [
     keywords: ['engine', 'cycles', 'ai activity', 'run now', 'pause', 'resume', 'blocked'],
     badge: 'auto',
   },
+  {
+    slug: 'growth-warfare',
+    title: 'Growth Warfare',
+    summary: 'One control room for market signals, competitor conquest, growth blitzes, acquisition tools, conversion rescue, experiments and learning — every switch starts off.',
+    group: 'goals',
+    icon: 'target',
+    // Under "More" in Goals so the approved sidebar (D-048) is unchanged; reachable from All tools and search.
+    primary: false,
+    modules: ['M05', 'M07', 'M10', 'M18', 'M20', 'M22', 'M23'],
+    keywords: ['growth warfare', 'control room', 'opportunities', 'signals', 'competitor conquest', 'blitz', 'acquisition tools', 'conversion rescue', 'referrals', 'darwin', 'experiments', 'emergency stop', 'aggression'],
+  },
 
   {
     slug: 'content',

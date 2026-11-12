@@ -15,6 +15,7 @@ import { ContentStudioView } from './ContentStudio.js';
 import { CreatorPayouts } from './CreatorPayouts.js';
 import { Governance } from './Governance.js';
 import { GroundTruth } from './GroundTruth.js';
+import { GrowthWarfare } from './GrowthWarfare.js';
 import { Home } from './Home.js';
 import { JourneyProvider } from './Journey.js';
 import { MediaStudio } from './MediaStudio.js';
@@ -178,6 +179,8 @@ function PageContent({ slug, onBoot }: { slug: string; onBoot: () => void }) {
       return <InsightsPage />;
     case 'catalog':
       return <ProductCatalog me={me} />;
+    case 'growth-warfare':
+      return <GrowthWarfare me={me} />;
     case 'payouts':
       return <CreatorPayouts me={me} />;
     case 'attribution':

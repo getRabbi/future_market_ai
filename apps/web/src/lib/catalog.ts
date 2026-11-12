@@ -374,7 +374,7 @@ export const SECTIONS: Section[] = [
       {
         title: 'Competitor discovery',
         list: '/v1/competitors/discovery',
-        rows: (r) => (Array.isArray((r as Row).settings) ? ((r as Row).settings as Row[]).map((s: Row) => ({ ...s, id: s.brandId })) : []),
+        rows: (r) => (Array.isArray((r as Row | null)?.settings) ? ((r as Row).settings as Row[]).map((s: Row) => ({ ...s, id: s.brandId })) : []),
         columns: ['brandId', 'enabled', 'provider', 'country', 'intervalHours', 'lastAttemptAt'],
         empty: 'Discovery is off. An owner or legal approver with two-factor must approve API use and evidence storage. Brave requires a separately provisioned plan/key; indexed Play results are not verified listings.',
         create: {
@@ -399,7 +399,7 @@ export const SECTIONS: Section[] = [
       {
         title: 'Discovery rankings and review',
         list: '/v1/competitors/discovery',
-        rows: (r) => (Array.isArray((r as Row).candidates) ? ((r as Row).candidates as Row[]) : []),
+        rows: (r) => (Array.isArray((r as Row | null)?.candidates) ? ((r as Row).candidates as Row[]) : []),
         columns: ['name', 'category', 'score', 'confidence', 'reasons', 'status', 'url', 'evidenceId'],
         empty: 'No discovered candidates. Scores are relevance heuristics, not store rank or market share.',
         rowActions: [
@@ -407,7 +407,7 @@ export const SECTIONS: Section[] = [
           { label: 'Reject', path: '/v1/competitors/candidates/:id/review', body: { decision: 'reject' }, when: { field: 'status', values: ['review'] }, done: 'Candidate rejected.' },
         ],
       },
-      { title: 'Discovery history', list: '/v1/competitors/discovery', rows: (r) => (Array.isArray((r as Row).runs) ? ((r as Row).runs as Row[]) : []), columns: ['createdAt', 'query', 'provider', 'status', 'resultCount', 'note'], empty: 'No discovery runs yet.' },
+      { title: 'Discovery history', list: '/v1/competitors/discovery', rows: (r) => (Array.isArray((r as Row | null)?.runs) ? ((r as Row).runs as Row[]) : []), columns: ['createdAt', 'query', 'provider', 'status', 'resultCount', 'note'], empty: 'No discovery runs yet.' },
       {
         title: 'Ideas',
         list: '/v1/ideas',
