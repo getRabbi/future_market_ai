@@ -107,17 +107,18 @@ Events added: `growth.opportunity.detected`, `growth.campaign.prepared`, `growth
 | --- | --- |
 | Implemented and tested (fixture/integration) | F1–F6 services, settings/switches/aggression/emergency stop, durable AI reservations, Autopilot hand-off, API (incl. public tool runtime), worker tick, Control Room and public tool page (type-checked, unit-tested catalog). |
 | Fixture-tested only | Everything above runs against a real PostgreSQL in tests; no live provider was called. |
-| Live verified | Nothing (not deployed; production untouched). |
+| Live verified | Release checks only (2026-11-12, `5cddfa8`): routes, migration, empty tables, every feature OFF, worker tick with no work (see Release record). No feature has run for a real tenant or provider yet. |
 | Externally blocked | AI-visibility provider API (none approved → manual imports); paid campaign creation (B-026); e-mail sending needs Resend + sender identity in the tenant; Instagram needs `instagram_content_publish`; real outcomes need real traffic. See B-028. |
 | Not implemented | Automatic copy generation by default (the optional model step needs Growth Warfare AI budgets > 0 and an approved model); automatic M20 journey creation (a person creates the journey from the approved template); iframe embedding on brand sites (the web app's CSP frame policy is unchanged — link to `/t/?id=…` instead). |
 
-## Deployment (one coordinated release; owner-authorized only)
+## Release record (2026-11-12, owner-authorized)
 
-1. Merge PR #33 into `feat/remaining-development` first (migration order), or regenerate its migrations.
-2. Merge this PR into `feat/remaining-development`; full CI (typecheck, lint, docs check, vitest, py, E2E, images) must be green.
-3. Merge `feat/remaining-development` → `main` only with the owner's go-ahead (PR #32 path).
-4. Before the push to `main` (it auto-deploys api/worker on Northflank): take and verify a backup (`analytics-job` backup run + RUNBOOK §9 restore drill), confirm the production schema version is ≤ 0027, and that no paid operation can start: Growth Warfare settings rows do not exist in production, so every feature reads OFF.
-5. After deploy: `/statusz`, `/v1/system/status`, api migrate log `{ok:true}`, `GET /v1/growth-warfare/settings` → all OFF, worker log shows `growth_warfare_tick` with no work, `ai_spend_reservations` empty after AI calls, Pages deploy for `/app/growth-warfare` and `/t/`.
-6. Rollback: api/worker/jobs to the previous commit (no schema change needed), Pages to the previous deployment.
+1. Before the merge: encrypted backup `backups/2026/11/12/20261112T065525Z-analytics-job-6af562.fgb` created and verified; production schema at 0023 (0024–0030 arrived with this release); no Growth Warfare settings row existed, so every feature read OFF.
+2. PR #34 merged into `feat/remaining-development` (`6880bf4`), then PR #32 into `main` (`5cddfa8`, same tree as the tested `8d4d865`). PR #33 (video switchboard) was left out.
+3. Northflank rebuilt api, worker, analytics-job and media-job from `5cddfa8`; api `migrate {ok:true}`; 29 migrations applied, newest 0030. Pages deployment `eec2fb77`.
+4. Verification: local TypeScript 628/628, Python 45/45, browser E2E 22/22 and web/service builds before the merge; GitHub CI green on the merge commit. Live: `/statusz` ok; `/app/growth-warfare/` and `/t/` 200; OpenAPI 355 paths (38 under `/v1/growth-warfare`, 4 public tool routes); every Growth Warfare table empty; `ai_spend_reservations` empty; worker `growth_warfare_tick` ran at 07:00 UTC with no work; smoke organization settings all OFF.
+5. Rollback: api/worker/jobs to `b204935`, Pages to `6ba3b1db`; no schema change needed (0024–0030 are additive).
 
-Nothing paid, no outreach and no video feature is activated by this release.
+**Migration order for PR #33:** production's newest applied migration is now 0030, and Drizzle skips any migration older than the last applied one. PR #33 must rebase on `main` and regenerate its 0028/0029 as 0031/0032 with newer journal `when` values before it merges.
+
+Nothing paid, no outreach and no video feature was activated by this release.
