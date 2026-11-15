@@ -20,7 +20,7 @@ it('runs configured Brave discovery with tenant credentials and keeps secondary 
   const tx = <T>(f: Parameters<typeof withTenant<T>>[2]) => withTenant(h.deps.db, { tenantId: h.tenantId, actor: 'test' }, f);
   const connection = await createConnection(h.deps, h.tenantId, h.users.owner, { provider: 'brave_search', displayName: 'Fixture search', externalAccountId: 'fixture-brave', credentials: { apiKey: 'fixture-key' } });
   const [brand] = await tx((t) => t.insert(brands).values({ tenantId: h.tenantId, slug: 'brave-fixture', name: 'Practice English', createdBy: 'test', updatedBy: 'test' }).returning());
-  await tx((t) => configureDiscovery(t, h.tenantId, h.users.owner, { brandId: brand!.id, provider: 'brave_google_play', connectionId: connection.id, enabled: true, country: 'BD', lawfulBasisNote: 'Fixture approval of Brave search and evidence storage.' }, h.clock.now()));
+  await tx((t) => configureDiscovery(t, h.tenantId, h.users.owner, { brandId: brand!.id, provider: 'brave_google_play', connectionId: connection.id, enabled: true, country: 'BD', includeAppStore: false, lawfulBasisNote: 'Fixture approval of Brave search and evidence storage.' }, h.clock.now()));
   const deps = { ...h.deps, http: new HttpClient({ fetchImpl: async () => Response.json({ web: { results: [{ title: 'Practice English', url: 'https://play.google.com/store/apps/details?id=com.example.english', description: 'Practice English daily' }] } }), maxRetries: 0 }) };
   expect(await runDiscovery(deps, h.tenantId, brand!.id)).toMatchObject({ status: 'succeeded', count: 1 });
   const overview = await tx(discoveryOverview);

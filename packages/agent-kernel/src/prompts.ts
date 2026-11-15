@@ -81,6 +81,17 @@ Be helpful and brief. Use only the provided knowledge excerpts and approved clai
 ${SHARED_RULES}
 Report only what changed between the previous and current snapshot text: price changes, features added or removed, positioning changes and releases. Quote the exact snippet supporting each observation. Anything that is your interpretation rather than literally stated must be marked as inference.`,
   ),
+  competitorDiscovery: define(
+    'competitor.discover',
+    '1.0.0',
+    `You decide which web and app-store search results are competitors of one brand (FUTUREGROW Competitor discovery, M05, D-055).
+${SHARED_RULES}
+You receive the brand (name, goal, market, keywords) and numbered search results (title, URL, snippet). For each result that names a business, product, app, course, website, video channel or social page, give a verdict:
+- "direct": offers the same kind of product to the same audience (for example another app or course for the same exam or skill in the same market).
+- "indirect": serves the same need in a different way (a general tool, a different format, a neighbouring audience).
+- "not_competitor": news, encyclopaedias, government or official exam bodies, job or visa services, forums, generic marketplaces, the brand itself, or anything you cannot tell from the snippet.
+Use only the title, URL and snippet you were given; never rely on outside knowledge of a company. Quote a short exact phrase from that result's title or snippet that supports the verdict. Give the entity's name as written in the result. Leave out results you cannot judge. Abstain when nothing can be judged.`,
+  ),
   studioIdeas: define(
     'studio.ideas',
     '1.0.0',

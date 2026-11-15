@@ -15,7 +15,7 @@ export interface ConnectionField {
 }
 
 export interface ProviderForm {
-  provider: 'meta' | 'google_ads' | 'tiktok' | 'youtube' | 'linkedin' | 'x' | 'shopify' | 'app_store_connect' | 'resend' | 'posthog' | 'chatwoot' | 'search_console' | 'pexels' | 'paypal';
+  provider: 'meta' | 'google_ads' | 'tiktok' | 'youtube' | 'linkedin' | 'x' | 'shopify' | 'app_store_connect' | 'resend' | 'posthog' | 'chatwoot' | 'search_console' | 'pexels' | 'paypal' | 'tavily' | 'brave_search';
   name: string;
   enables: string;
   docsUrl: string;
@@ -162,6 +162,22 @@ export const PROVIDER_FORMS: ProviderForm[] = [
     docsUrl: 'https://www.pexels.com/api/documentation/',
     account: { label: 'Account label', placeholder: 'brand-stock', help: 'Any name for this API key.' },
     fields: [{ key: 'apiKey', label: 'API key', secret: true, help: 'pexels.com/api → Your API key.' }],
+  },
+  {
+    provider: 'tavily',
+    name: 'Tavily (web search for competitor discovery)',
+    enables: 'Automatic competitor discovery across the web: store listings, websites, video channels and social pages. Free plan: 1,000 searches a month, no card.',
+    docsUrl: 'https://docs.tavily.com/documentation/api-reference/endpoint/search',
+    account: { label: 'Account label', placeholder: 'competitor-search', help: 'Any name for this API key.' },
+    fields: [{ key: 'apiKey', label: 'API key', secret: true, placeholder: 'tvly-…', help: 'app.tavily.com → API keys.' }],
+  },
+  {
+    provider: 'brave_search',
+    name: 'Brave Search (web search for competitor discovery)',
+    enables: 'Competitor discovery through the Brave web index. Metered billing (monthly credit included); add a card only by owner decision.',
+    docsUrl: 'https://api-dashboard.search.brave.com/app/documentation/web-search/get-started',
+    account: { label: 'Account label', placeholder: 'brave-search', help: 'Any name for this API key.' },
+    fields: [{ key: 'apiKey', label: 'API key', secret: true, help: 'Brave Search API dashboard → API keys.' }],
   },
   {
     provider: 'paypal',

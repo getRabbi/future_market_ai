@@ -51,7 +51,7 @@ is implemented using an encrypted `brave_search` connection with `{apiKey}`. An 
 the plan/key separately; no subscription or billing was activated. Legal approval must explicitly
 cover the selected provider's result use **and storage as evidence**, under the owner's actual plan.
 
-Discovery settings accept `provider: app_store | brave_web | brave_google_play` and `connectionId`.
+Discovery settings accept `provider: app_store | brave_web | brave_google_play | tavily_web` and `connectionId` (D-055 adds Tavily, an AI judge, keyword-driven queries, a monthly cap and a standing source approval: docs/COMPETITOR_DISCOVERY.md).
 The last option queries Brave's index with a Play listing restriction; it is **not** Google's app
 catalogue. Google's [publishing API](https://developers.google.com/android-publisher) does not supply
 a public competitor-search contract. Direct Google Play search remains unavailable. No scraping fallback.

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { brandChannels, competitorObservations, competitors, connections, type DbOrTx, evidenceRecords, growthOpportunities, growthSignals, growthWarfareSettings, keywordMetrics, type Tx, trends, withTenant } from '@futuregrow/db';
+import { brandChannels, competitorCandidates, competitorObservations, competitors, connections, type DbOrTx, evidenceRecords, growthOpportunities, growthSignals, growthWarfareSettings, keywordMetrics, type Tx, trends, withTenant } from '@futuregrow/db';
 import { invalid, notFound, sha256Canonical, sha256Hex } from '@futuregrow/observability';
-import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { type Actor, type CoreDeps, systemActor } from '../../deps.js';
 import { audit, normalizeText, record, requireRole } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
@@ -448,7 +448,13 @@ export async function scanBrand(deps: CoreDeps, tenantId: string, brandId: strin
   return withTenant(deps.db, { tenantId, actor: ACTOR_REF }, async (t) => {
     const [brand] = (await t.execute<{ id: string; name: string }>(sql`select id, name from brands where id = ${brandId}`)).rows;
     if (!brand) throw notFound('brand');
-    const { config } = await getBrandConfig(t, brandId);
+    const { config: profile } = await getBrandConfig(t, brandId);
+    // D-055: competitors that discovery enrolled for this brand count as well, so the brand profile never needs ids copied by hand.
+    const enrolled = await t
+      .select({ id: competitorCandidates.competitorId })
+      .from(competitorCandidates)
+      .where(and(eq(competitorCandidates.brandId, brandId), eq(competitorCandidates.status, 'enrolled'), isNotNull(competitorCandidates.competitorId)));
+    const config: BrandConfig = { ...profile, competitorIds: [...new Set([...profile.competitorIds, ...enrolled.map((r) => r.id!)])].slice(0, 200) };
     const names = config.competitorIds.length ? (await t.select({ name: competitors.name }).from(competitors).where(inArray(competitors.id, config.competitorIds))).map((r) => r.name) : [];
     const sweep = await sweepSignals(t, tenantId, brandId, now);
     const lists = { competitor: await competitorSignals(t, config, now), trend: await trendSignals(t, config, now), query: await querySignals(t, config, names, now), firstParty: await firstPartySignals(t, tenantId, config, names, now) };
