@@ -2,7 +2,7 @@
 
 Branch: `feat/remaining-development`, based on `b2049359` (main fetched and verified).
 Preserve the pre-existing uncommitted `docs/D040_CONTENT_STUDIO.md`; do not stage it.
-No deployment, production configuration, live schedule changes, or main merge authorized.
+No deployment, production configuration, live schedule changes, or main merge authorized. (Superseded: released on 2026-11-12, see Release at the end.)
 
 ## Batch A
 
@@ -51,3 +51,7 @@ Validation: Dart analysis passed and 14 mocked client/relay tests passed, includ
 
 External branches: [Ecoms integration](https://github.com/getRabbi/ecomsbd/tree/feat/futuregrow-telemetry-integration), [EPS readiness](https://github.com/getRabbi/eps_topik_bangla/tree/feat/futuregrow-telemetry-readiness).
 Continue with external provider/account approvals or the separately authorized coordinated verification phase; do not repeat completed investigations or batches.
+
+## Release (2026-11-12)
+
+PR #32 was merged into `main` as `5cddfa8` together with Growth Warfare OS (PR #34, D-054) and deployed with the owner's authorization; GitHub CI on the merge commit is green. Migrations 0024–0027 (and 0030) are applied in production. No provider credential, tenant approval or configuration was added, so the discovery, Apple Ads, Brave and generative-video paths stay inactive until those external steps are done. Release record: docs/GROWTH_WARFARE_OS.md.

@@ -2,6 +2,8 @@
 
 Branch `feat/p1-p2-p3-complete`, based on the P1 branch `feat/p1-eps-growth` (`2a8f58b`, PR #29) and `main` `d0a546b`. One combined PR; nothing in this release is merged or deployed until the owner authorizes the single rollout below.
 
+**Released 2026-11-09 07:11 UTC:** merged as `90c52a9` (CI 7/7) and deployed per §7; migrations 0017–0023 applied; Pages `6ba3b1db`; live read-only check 98/98. Rollback: api/worker/jobs `d0a546b`, Pages `4590d4df`. §8 lists what still needs the owner.
+
 Status labels: **IMPLEMENTED — TESTED** (code, UI, error handling and automated tests; provider behaviour against fixtures only) · **LIVE VERIFIED** (checked against the real provider in production) · **REQUIRES OWNER CONFIGURATION** · **REQUIRES PROVIDER APPROVAL** · **REQUIRES PAID INFRASTRUCTURE** · **REQUIRES LEGAL REVIEW** · **NOT IMPLEMENTED**. A fixture-tested provider is code complete, not production verified.
 
 ## 1. 33-workstream status
