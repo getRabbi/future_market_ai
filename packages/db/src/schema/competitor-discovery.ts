@@ -20,6 +20,8 @@ export const competitorDiscoverySettings = pgTable(
     approvedBy: text('approved_by').notNull(),
     approvedAt: ts('approved_at').notNull(),
     lastAttemptAt: ts('last_attempt_at'),
+    /** D-055 tuning (query templates, limits, AI judge, standing source approval); see DiscoverySettingsSchema. */
+    options: json<Record<string, unknown>>('options').notNull().default({}),
   },
   (t) => [uniqueIndex('competitor_discovery_brand_uq').on(t.tenantId, t.brandId)],
 );
@@ -35,6 +37,8 @@ export const competitorDiscoveryRuns = pgTable('competitor_discovery_runs', {
   provider: text('provider').notNull(),
   note: text('note'),
   resultCount: integer('result_count').notNull().default(0),
+  /** Provider requests this run made (D-055 monthly search cap). */
+  searchCount: integer('search_count').notNull().default(0),
   createdAt: createdAt(),
   finishedAt: ts('finished_at'),
 });

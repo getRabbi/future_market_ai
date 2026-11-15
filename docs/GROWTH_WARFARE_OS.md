@@ -119,6 +119,6 @@ Events added: `growth.opportunity.detected`, `growth.campaign.prepared`, `growth
 4. Verification: local TypeScript 628/628, Python 45/45, browser E2E 22/22 and web/service builds before the merge; GitHub CI green on the merge commit. Live: `/statusz` ok; `/app/growth-warfare/` and `/t/` 200; OpenAPI 355 paths (38 under `/v1/growth-warfare`, 4 public tool routes); every Growth Warfare table empty; `ai_spend_reservations` empty; worker `growth_warfare_tick` ran at 07:00 UTC with no work; smoke organization settings all OFF.
 5. Rollback: api/worker/jobs to `b204935`, Pages to `6ba3b1db`; no schema change needed (0024–0030 are additive).
 
-**Migration order for PR #33:** production's newest applied migration is now 0030, and Drizzle skips any migration older than the last applied one. PR #33 must rebase on `main` and regenerate its 0028/0029 as 0031/0032 with newer journal `when` values before it merges.
+**Migration order for PR #33:** production's newest applied migration is now 0030, and Drizzle skips any migration older than the last applied one. PR #33 must rebase on `main` and regenerate its 0028/0029 as **0032/0033** (0031 is D-055 competitor discovery) with newer journal `when` values before it merges.
 
 Nothing paid, no outreach and no video feature was activated by this release.
