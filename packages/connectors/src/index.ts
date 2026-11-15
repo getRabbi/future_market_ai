@@ -12,6 +12,7 @@ import { paypalCreatorPayout, paypalRead } from './providers/paypal.js';
 import { pexelsRead } from './providers/pexels.js';
 import { resendRead, resendSendEmail } from './providers/resend.js';
 import { shopifyCreateDiscount, shopifyRead } from './providers/shopify.js';
+import { tavilyRead } from './providers/tavily.js';
 import { tiktokPublishVideo, tiktokRead } from './providers/tiktok.js';
 import { xPublishPost, xRead } from './providers/x.js';
 import { youtubeRead, youtubeUploadVideo } from './providers/youtube.js';
@@ -47,6 +48,7 @@ export { bestVideoFile, PEXELS_LICENSE, pexelsDownload, pexelsGet, pexelsSearch,
 export type { ResolvedEmail } from './providers/resend.js';
 export { type ShopifyProduct, shopifyListProducts } from './providers/shopify.js';
 export * from './providers/social-analytics.js';
+export { TAVILY_USAGE_URL, tavilyRead, tavilyRemaining } from './providers/tavily.js';
 export * from './robots.js';
 export * from './ssrf.js';
 export * from './types.js';
@@ -90,5 +92,6 @@ export const READ_CONNECTORS: Partial<Record<Provider, ReadConnector>> = {
   chatwoot: chatwootRead,
   search_console: searchConsoleRead,
   pexels: pexelsRead,
+  tavily: tavilyRead,
   paypal: paypalRead,
 };
