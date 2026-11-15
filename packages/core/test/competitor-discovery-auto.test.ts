@@ -6,7 +6,7 @@ import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
 import { clearModelCache, createModelGateway } from '../src/agents.js';
-import { createConnection } from '../src/modules/connections.js';
+import { checkConnectionHealth, createConnection, testConnectionCredentials } from '../src/modules/connections.js';
 import * as gw from '../src/modules/growth-warfare/index.js';
 import { configureDiscovery, planQueries, runDiscovery } from '../src/modules/m05-competitors/discovery.js';
 import { countryName, webIdentity } from '../src/modules/m05-competitors/search-providers.js';
@@ -199,5 +199,39 @@ describe('automatic discovery with Tavily and the AI judge (D-055)', () => {
     } finally {
       await h2.close();
     }
+  });
+});
+
+describe('Tavily connection test and health check (D-055)', () => {
+  const usageHttp = (status: number, body: unknown) => {
+    const calls: { url: string; method: string; auth: string | null }[] = [];
+    const http = new HttpClient({
+      maxRetries: 0,
+      fetchImpl: async (input, init) => {
+        calls.push({ url: String(input), method: init?.method ?? 'GET', auth: new Headers(init?.headers).get('authorization') });
+        return Response.json(body, { status });
+      },
+    });
+    return { http, calls };
+  };
+  const usage = { key: { usage: 12, limit: null, search_usage: 12 }, account: { current_plan: 'Researcher', plan_usage: 12, plan_limit: 1000, paygo_usage: 0, paygo_limit: null } };
+
+  it('verifies the key with GET /usage (no search), reports credits, and fails a refused key', async () => {
+    const ok = usageHttp(200, usage);
+    const tested = await testConnectionCredentials({ ...h.deps, http: ok.http }, h.tenantId, h.users.owner, { provider: 'tavily', externalAccountId: 'key-test', credentials: { apiKey: ' tvly-good ' } });
+    expect(tested).toMatchObject({ healthy: true, status: 'healthy', details: { plan: 'Researcher', creditsUsed: 12, creditsLimit: 1000, remainingCredits: 988 } });
+    expect(ok.calls).toEqual([{ url: 'https://api.tavily.com/usage', method: 'GET', auth: 'Bearer tvly-good' }]);
+
+    const refused = usageHttp(401, { detail: { error: 'Unauthorized: missing or invalid API key.' } });
+    const bad = await testConnectionCredentials({ ...h.deps, http: refused.http }, h.tenantId, h.users.owner, { provider: 'tavily', externalAccountId: 'key-test', credentials: { apiKey: 'tvly-wrong' } });
+    expect(bad).toMatchObject({ healthy: false, status: 'failing' });
+    expect(String((bad.details as { error?: string }).error)).toContain('Tavily refused the API key (HTTP 401)');
+
+    // A saved connection is checked by the hourly health task; used-up credits degrade it without reauth.
+    const conn = await createConnection(h.deps, h.tenantId, h.users.owner, { provider: 'tavily', displayName: 'Tavily health', externalAccountId: 'health-test', credentials: { apiKey: 'tvly-good' } });
+    const spent = usageHttp(200, { ...usage, account: { ...usage.account, plan_usage: 1000 } });
+    const health = await checkConnectionHealth({ ...h.deps, http: spent.http }, h.tenantId, conn.id);
+    expect(health.connection).toMatchObject({ status: 'active', healthStatus: 'degraded' });
+    expect(health.result.details).toMatchObject({ remainingCredits: 0 });
   });
 });
