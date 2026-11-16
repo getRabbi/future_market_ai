@@ -221,6 +221,23 @@ export async function configureDiscovery(tx: Tx, tenantId: string, actor: Actor,
 
 type Standing = { by: string; at: Date } | null;
 
+/** Start of the note on every competitor that automatic discovery created (see enroll()). */
+export const DISCOVERED_NOTE = 'Discovered identity';
+
+/**
+ * A competitor that discovery created and self-cleaning later retired: every candidate that
+ * pointed at it was rejected and none of its monitoring sources is approved or awaiting approval.
+ * Competitor lists leave it out; enrolling it again or approving a source brings it back. A
+ * competitor a person added, or one with a source a person approved, is never retired, and nothing
+ * is deleted (its snapshots, observations and audit records stay).
+ */
+export function isRetiredDiscovery(competitor: { id: string; notes: string | null }, candidates: readonly { competitorId: string | null; status: string }[], sources: readonly { competitorId: string; status: string }[]): boolean {
+  if (!competitor.notes?.startsWith(DISCOVERED_NOTE)) return false;
+  const linked = candidates.filter((c) => c.competitorId === competitor.id);
+  if (!linked.length || linked.some((c) => c.status !== 'rejected')) return false;
+  return !sources.some((s) => s.competitorId === competitor.id && (s.status === 'approved' || s.status === 'pending'));
+}
+
 async function standingFor(tx: Tx, brandId: string): Promise<Standing> {
   const [s] = await tx.select().from(competitorDiscoverySettings).where(eq(competitorDiscoverySettings.brandId, brandId));
   if (!s) return null;
@@ -236,7 +253,7 @@ async function enroll(tx: Tx, tenantId: string, candidate: typeof competitorCand
     ? await tx.select().from(competitors).where(eq(competitors.id, source.competitorId))
     : await tx
         .insert(competitors)
-        .values({ tenantId, name, domains: [new URL(candidate.url).hostname], notes: `Discovered identity; relevance is inferred. Evidence ${candidate.evidenceId}` })
+        .values({ tenantId, name, domains: [new URL(candidate.url).hostname], notes: `${DISCOVERED_NOTE}; relevance is inferred. Evidence ${candidate.evidenceId}` })
         .onConflictDoUpdate({ target: [competitors.tenantId, competitors.name], set: { name } })
         .returning();
   if (!c) throw notFound('competitor');

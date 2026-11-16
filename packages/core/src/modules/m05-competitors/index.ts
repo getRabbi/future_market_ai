@@ -1,6 +1,6 @@
 import { PROMPTS, untrustedBlock } from '@futuregrow/agent-kernel';
 import { diffLines, extractPage, type PublicFetchResult, parseRobots, publicFetch } from '@futuregrow/connectors';
-import { competitorObservations, competitorSnapshots, competitorSources, competitors, type DbOrTx, kgEntities, reaJobs, sequential, type Tx, withTenant } from '@futuregrow/db';
+import { competitorCandidates, competitorObservations, competitorSnapshots, competitorSources, competitors, type DbOrTx, kgEntities, reaJobs, sequential, type Tx, withTenant } from '@futuregrow/db';
 import { conflict, invalid, notFound } from '@futuregrow/observability';
 import { tenantKey } from '@futuregrow/storage';
 import { and, desc, eq, sql } from 'drizzle-orm';
@@ -10,6 +10,7 @@ import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js'
 import { audit, normalizeText, record, requireMfa, requireRole } from '../../util.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { raiseAlert } from '../m24-governance/index.js';
+import { isRetiredDiscovery } from './discovery.js';
 
 const USER_AGENT = 'FUTUREGROW-Collector/0.1 (+https://futuregrow.invalid/bot)';
 const LEGAL_ROLES = ['owner', 'legal_approver'] as const;
@@ -357,9 +358,10 @@ export async function listObservations(tx: DbOrTx, competitorId?: string) {
     .limit(500);
 }
 
+/** Competitors in use; ones that discovery created and then retired (excluded host) are left out. */
 export async function listCompetitors(tx: DbOrTx) {
-  const [cs, sources] = await sequential([tx.select().from(competitors).orderBy(competitors.name), tx.select().from(competitorSources)]);
-  return cs.map((c) => ({ ...c, sources: sources.filter((s) => s.competitorId === c.id) }));
+  const [cs, sources, candidates] = await sequential([tx.select().from(competitors).orderBy(competitors.name), tx.select().from(competitorSources), tx.select({ competitorId: competitorCandidates.competitorId, status: competitorCandidates.status }).from(competitorCandidates)]);
+  return cs.filter((c) => !isRetiredDiscovery(c, candidates, sources)).map((c) => ({ ...c, sources: sources.filter((s) => s.competitorId === c.id) }));
 }
 
 /** Side-by-side evidence, including snippet-verified AI inferences; unknowns stay unknown. */

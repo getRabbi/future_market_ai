@@ -1,26 +1,31 @@
-# Implementation checkpoint — 2026-11-08
+# Implementation checkpoint — 2026-11-17
 
 ## Resume here
 
-P1 EPS growth intelligence (D-049) on branch `feat/p1-eps-growth`, from `origin/main` `d0a546b` (P0 complete and live). No migration, no new dependency. Read [APP_INTELLIGENCE.md](APP_INTELLIGENCE.md) › *Per-post store attribution* and [META_READINESS.md](META_READINESS.md) first.
+`main` is live: api, worker and jobs follow `main`. The newest applied migration is 0031 (D-055). Every module, gate and release up to the UX layout repair (PR #40) and the discovery follow-ups (PR #37–#39, #41) is recorded in [PROGRESS.md](../PROGRESS.md). External blockers, each with its unblock step, are in [BLOCKERS.md](../BLOCKERS.md). The code has no open TODO markers and no skipped tests.
 
-- **Live baseline (unchanged until this branch is merged):** api, worker and jobs on `d0a546b`, Pages `4590d4df`, uptime Worker `da1edefb`. The real EPS Page connection, Google Play account, EPS brand, Studio program `42216a51` (shared `eps_daily` campaign) and the active Autopilot goal `fe9be4e0` all live in the organization `FG Smoke Test 20261021`.
-- **Audit findings (read-only, 2026-11-07 ~20:40–21:20 UTC):** Play account `ok`, daily sync healthy, Reporting API `SERVICE_DISABLED`; EPS installs stated as an observed increase (75 vs 12 over two 28-day windows, newest final day 10-31), acquisitions withheld; no UTM campaign rows for EPS yet. Page token PAGE, never expires, data access until 2027-01-25, no `read_insights`; Page insights empty; `feed` webhook active. EPS goal cycle 7 completed with a verified post; forecast unavailable (no `kpi.facebook.*` series) and correctly not counted as a blocked cycle.
-- **Changed (each with regression tests):**
-  - Brain context for organic Page goals from the Page's brand apps only (`appsTrendContext`, `steps.ts` observe; `app-intelligence.test.ts`, worker D-035 test).
-  - Campaign sums final-only with `excludedDays`; `campaignReportDays`; Studio `postStoreAttribution` (14-day window, `awaiting_reports`/`reported`/`not_listed`); report-only learning comparison; Content studio switch to per-post campaigns; App intelligence campaign table shows final/excluded days (`app-intelligence.test.ts`, `studio-learning.test.ts`, worker D-040 test).
-  - Token lifecycle alerts 30/7 days ahead and critical re-authorization alert from the health check (`connections.test.ts`).
-  - Bootstrap lesson names missing `read_insights` (worker D-036 test); Home "not measured yet" copy.
-- **Already correct (verified by existing tests, not rewritten):** Reporting API failures are classified (`SERVICE_DISABLED`, denied, rate-limited, unavailable) and never block bulk reports; app names come from `apps:search` when available, otherwise the brand name or package; Page insights `no_data` never becomes zero and post counters stay a separate fallback; 12-day stale-series forecast guard; 80% baseline coverage; refused publishes are `FAILED`, not retried, and queued actions wait on `reauth_required`.
+- **Live baseline:**
+  - Web: Pages `81343439`, rollback `a6007b80`.
+  - Monitoring: uptime Worker `da1edefb`.
+  - EPS organization (`FG Smoke Test 20261021`): the real EPS Page connection (`read_insights` granted 2026-11-15, data access until 2027-02-13), the Google Play account, the EPS brand and Studio program `42216a51`. Also the active Autopilot goal `fe9be4e0`, Growth Warfare F1–F6 (switched on 2026-11-15) and competitor discovery (Tavily, three enrolled Play listings).
+- **History:** the P1 checkpoint of 2026-11-08 (D-049 audit findings and changes) is in git history and in PROGRESS.md › *P1 EPS growth intelligence*.
 
 ## Remaining work, in order
 
-1. Owner: review and merge the P1 PR (merging to `main` auto-deploys api and worker; Pages needs its usual deploy for the Content studio and App intelligence changes).
-2. Owner (B-023): enable the Google Play Developer Reporting API in Cloud project `futureai-513908`.
-3. Owner (B-005): before 2027-01-25, authorize the app again with `read_insights`, test the new Page token, then rotate it; App Review and Live mode (docs/META_READINESS.md).
-4. Owner: in Content studio, switch the EPS program to one campaign per post if per-post store results are wanted.
-5. Owner (B-022, iOS only): an App Store Connect key.
+1. **Code: PR #33 (draft), video switchboard (D-052/D-053).** This comes last, by the owner's choice.
+   - Regenerate its migrations 0028/0029 as 0032/0033 (newer journal `when`), then run the full CI before merging.
+   - Using it for real also needs B-027, which that branch adds to BLOCKERS.md: credentials, a GPU host, legal review of provider terms and real-provider acceptance tests.
+2. **Owner, Meta (B-005):** App Review and Live mode (posts are visible only to app-role users until then), a System User ads token and the data-deletion URL in the App Dashboard. Authorize the app again before 2027-02-13; the alert comes about 30 days ahead. Steps: [META_READINESS.md](META_READINESS.md).
+3. **Owner, Google Play (B-023):** enable the Google Play Developer Reporting API in Cloud project `futureai-513908` (app names, crash and ANR rates).
+4. **Owner, EPS app:** republish the Privacy Policy and update Data safety. Then upload the 2.2.0+7 AAB to Internal testing and do one real Play-installed telemetry test.
+5. **Owner, optional:**
+   - Remove the two duplicate Tavily connections.
+   - Record the Remotion licence (B-014).
+   - Switch the EPS Studio program to one campaign per post if per-post store results are wanted.
+   - Add an App Store Connect key for iOS reports (B-022).
+6. **Owner decisions with cost or legal review:** see BLOCKERS.md (B-006…B-013, B-015, B-019, B-020, B-026).
+7. **Routine:** a monthly restore drill (RUNBOOK §9); the next one is due in the first week of December 2026.
 
 ## Preserved pre-existing changes
 
-`docs/D040_CONTENT_STUDIO.md` is dirty on entry and is deliberately left uncommitted. The uptime-worker files of the previous checkpoint were merged through PR #25 and deployed (P0).
+`docs/D040_CONTENT_STUDIO.md` is dirty on entry and is deliberately left uncommitted. The uptime-worker files of an earlier checkpoint were merged through PR #25 and deployed (P0).
