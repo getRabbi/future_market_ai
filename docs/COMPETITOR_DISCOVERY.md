@@ -41,6 +41,14 @@ You do this once, signed in with your normal two-factor session. Nothing asks fo
 | Change extraction (model, snippet-verified) | After each captured change |
 | F1 signals and opportunities | Growth Warfare tick (every 15 min; scans per monitoring hours) |
 
+## Re-runs and the judge
+
+- **Run now.** *Queue discovery* (a person) runs immediately instead of waiting for the interval. It never runs within 10 minutes of the last run, and the monthly cap still applies.
+- **Unjudged batches are repeated.** A run where the AI judge was unavailable does not count. The next run repeats the same queries, so those results get a verdict. Its note says why the judge was unavailable.
+- **Verdicts are not overwritten.** A later run without the model only refreshes when a candidate was seen. An earlier candidate the judge now calls not a competitor stays in review at confidence 0.1, under category `not_competitor`.
+- **Hosts that are never competitors:** search providers, reference and document hosts, APK mirrors and government sites (`*.gov`, `*.gov.xx`, `*.go.xx`). Official non-government bodies are left to the judge.
+- **Model call.** The judge sees at most 20 results with 220-character snippets. It is asked for competitors only, and the call runs at low reasoning effort (Groq gpt-oss) with a 6,000-token budget, so the JSON fits.
+
 ## What stays with a person
 
 - **Uncertain candidates.** "Indirect" candidates, below the threshold, wait under *Discovery rankings

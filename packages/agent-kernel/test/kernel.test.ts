@@ -278,6 +278,15 @@ describe('hosted OpenAI-compatible providers (B-003) against a fixture endpoint'
     expect(gemini).toMatchObject({ max_completion_tokens: 8000 });
     expect(gemini).not.toHaveProperty('max_tokens');
     expect(gemini).not.toHaveProperty('provider');
+    expect(gemini).not.toHaveProperty('reasoning_effort');
+
+    // Groq (gpt-oss reasons first): only a low effort is sent, so other purposes keep the host default.
+    server.on('POST', '/openai/v1/chat/completions', { json: completion({ model: 'openai/gpt-oss-120b' }) });
+    const groq = hosted('groq', '/openai/v1/chat/completions');
+    await groq.generateStructured({ ...req, effort: 'low' }, { model: 'openai/gpt-oss-120b', fallbackModels: [] });
+    await groq.generateStructured({ ...req, effort: 'high' }, { model: 'openai/gpt-oss-120b', fallbackModels: [] });
+    expect(server.requests[2]!.json).toMatchObject({ reasoning_effort: 'low', max_completion_tokens: 8000 });
+    expect(server.requests[3]!.json).not.toHaveProperty('reasoning_effort');
   });
 
   it('maps refusals, truncation and outages; exhausted credit is an outage the gateway fails over from', async () => {

@@ -18,9 +18,9 @@ registerTasks((deps) => ({
     });
   },
   competitor_discovery: async (payload) => {
-    const { tenantId, brandId } = payload as { tenantId: string; brandId: string };
+    const { tenantId, brandId, force } = payload as { tenantId: string; brandId: string; force?: boolean };
     try {
-      await competitorsModule.discovery.runDiscovery(deps, tenantId, brandId);
+      await competitorsModule.discovery.runDiscovery(deps, tenantId, brandId, undefined, { force: force === true });
     } finally {
       await new Promise((resolve) => setTimeout(resolve, 3500));
     }

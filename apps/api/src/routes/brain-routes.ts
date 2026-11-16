@@ -21,7 +21,8 @@ export function registerBrainRoutes(app: FastifyInstance, ctx: ApiContext): void
   r.post('/v1/competitors/discovery/:id/run', { schema: { tags: ['competitors'], params: Id } }, async (req, reply) => {
     requireRole(actorOf(req), ['owner', 'admin', 'growth_operator', 'analyst'], 'requesting discovery');
     // The worker rechecks approval, tenant ownership and cooldown before any provider call.
-    await deps.jobs.add('competitor_discovery', { tenantId: tenantOf(req), brandId: req.params.id }, { jobKey: `competitor-discovery:${tenantOf(req)}:${req.params.id}`, queueName: 'competitor-discovery-provider', maxAttempts: 1 });
+    // A person's request skips the interval (not the 10-minute guard or the monthly cap).
+    await deps.jobs.add('competitor_discovery', { tenantId: tenantOf(req), brandId: req.params.id, force: true }, { jobKey: `competitor-discovery:${tenantOf(req)}:${req.params.id}`, queueName: 'competitor-discovery-provider', maxAttempts: 1 });
     return reply.status(202).send({ status: 'queued' });
   });
   r.post('/v1/competitors/candidates/:id/review', { schema: { tags: ['competitors'], params: Id, body: z.object({ decision: z.enum(['enroll', 'reject']) }) } }, async (req) => tenantTx(ctx, req, (tx) => competitorsModule.discovery.reviewCandidate(tx, tenantOf(req), actorOf(req), req.params.id, req.body.decision)));

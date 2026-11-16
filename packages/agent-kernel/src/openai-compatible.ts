@@ -11,6 +11,8 @@ export interface OpenAICompatibleConfig {
   apiKey?: string;
   /** Newer OpenAI models reject `max_tokens` and require `max_completion_tokens`. */
   tokenParam?: 'max_tokens' | 'max_completion_tokens';
+  /** Host accepts `reasoning_effort` for reasoning models; `low` is sent for low-effort purposes (extraction, classification). */
+  reasoningEffort?: boolean;
   /** Provider-specific request fields (e.g. OpenRouter routing and data-collection preferences). */
   extraBody?: Record<string, unknown>;
   headers?: Record<string, string>;
@@ -24,7 +26,8 @@ export interface OpenAICompatibleConfig {
  */
 export const HOSTED_PROVIDERS = {
   openai: { chatUrl: 'https://api.openai.com/v1/chat/completions', tokenParam: 'max_completion_tokens' },
-  groq: { chatUrl: 'https://api.groq.com/openai/v1/chat/completions', tokenParam: 'max_completion_tokens' },
+  // gpt-oss on Groq reasons before answering; a low effort leaves the token budget to the JSON.
+  groq: { chatUrl: 'https://api.groq.com/openai/v1/chat/completions', tokenParam: 'max_completion_tokens', reasoningEffort: true },
   gemini: { chatUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', tokenParam: 'max_completion_tokens' },
   // Only upstream providers that honour the JSON schema and do not collect prompts (no training).
   openrouter: { chatUrl: 'https://openrouter.ai/api/v1/chat/completions', tokenParam: 'max_tokens', extraBody: { provider: { require_parameters: true, data_collection: 'deny' } }, headers: { 'x-title': 'FUTUREGROW' } },
@@ -65,6 +68,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
           ...this.cfg.extraBody,
           model: opts.model,
           [this.cfg.tokenParam ?? 'max_tokens']: req.maxTokens ?? 8000,
+          // Only 'low' is sent: higher efforts keep the host's default, so existing planning/generation calls are unchanged.
+          ...(this.cfg.reasoningEffort && req.effort === 'low' ? { reasoning_effort: 'low' } : {}),
           messages: [{ role: 'system', content: req.system }, ...req.messages],
           response_format: { type: 'json_schema', json_schema: { name: 'output', strict: true, schema: structuredOutputSchema(req.outputSchema) } },
         }),

@@ -40,7 +40,19 @@ export function rankWebCandidate(query: string, raw: unknown, playOnly: boolean)
 
 /** Hosts where the first path segment(s) name the entity (a channel, page or account), not the site. */
 const MULTI_TENANT_HOSTS = new Set(['facebook.com', 'youtube.com', 'instagram.com', 'tiktok.com', 'x.com', 'twitter.com', 'linkedin.com', 'medium.com', 'github.com']);
-const NON_ENTITY_SEGMENTS = new Set(['watch', 'shorts', 'results', 'search', 'hashtag', 'share', 'sharer', 'login', 'posts', 'reel', 'reels', 'explore', 'p', 'status', 'story.php', 'photo', 'photos', 'events', 'help', 'policies', 'legal', 'about', 'feed']);
+const NON_ENTITY_SEGMENTS = new Set(['watch', 'shorts', 'results', 'search', 'hashtag', 'share', 'sharer', 'login', 'posts', 'reel', 'reels', 'explore', 'p', 'status', 'story.php', 'photo', 'photos', 'events', 'help', 'policies', 'legal', 'about', 'feed', 'playlist']);
+
+/**
+ * Hosts that are never a competitor of a brand: search providers, reference and document hosts,
+ * APK mirrors, and government sites (official bodies are not competitors). Store listings are
+ * unaffected; the AI judge decides everything else.
+ */
+const NON_COMPETITOR_HOSTS = ['tavily.com', 'brave.com', 'wikipedia.org', 'wikimedia.org', 'scribd.com', 'pdfcoffee.com', 'studocu.com', 'slideshare.net', 'apkpure.com', 'apkpure.net', 'apkcombo.com', 'apkmirror.com', 'uptodown.com', 'softonic.com', 'aptoide.com', 'apk.support'];
+export function isNonCompetitorHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^www\./, '');
+  if (/(?:^|\.)(?:gov|mil)(?:\.[a-z]{2})?$/.test(h) || /(?:^|\.)go\.[a-z]{2}$/.test(h)) return true;
+  return NON_COMPETITOR_HOSTS.some((d) => h === d || h.endsWith(`.${d}`));
+}
 
 /**
  * The stable identity of what a search result points to: a store listing, a social account or a
