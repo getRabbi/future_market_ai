@@ -1,7 +1,7 @@
 import type { ModelProvider, ProviderOutcome, StructuredRequest } from '@futuregrow/agent-kernel';
 import { PROMPTS } from '@futuregrow/agent-kernel';
 import { HttpClient } from '@futuregrow/connectors';
-import { auditLog, brandApps, brands, competitorCandidates, competitorDiscoveryRuns, competitorObservations, competitorSources, growthSignals, withTenant } from '@futuregrow/db';
+import { auditLog, brandApps, brands, competitorCandidates, competitorDiscoveryRuns, competitorObservations, competitorSources, competitors, growthSignals, withTenant } from '@futuregrow/db';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.js';
@@ -256,6 +256,100 @@ describe('re-judging and manual runs (D-055)', () => {
     const after = await rows();
     expect(after.find((c) => c.identity === 'web:hangul-blog.example')).toMatchObject({ confidence: 0.1, category: 'not_competitor' });
     expect(after.find((c) => c.identity === 'google_play:com.hangul.rival')).toMatchObject({ status: 'enrolled', confidence: 0.85 });
+  });
+});
+
+describe('self-cleaning of excluded hosts (D-055)', () => {
+  it('rejects candidates on never-competitor hosts and revokes only sources the standing approval approved', async () => {
+    const connection = await createConnection(h.deps, h.tenantId, h.users.owner, { provider: 'tavily', displayName: 'Tavily cleanup', externalAccountId: 'cleanup', credentials: { apiKey: 'tvly-cleanup' } });
+    const [brand] = await tx((t) => t.insert(brands).values({ tenantId: h.tenantId, slug: 'cleanup-brand', name: 'Cleanup Brand', createdBy: 'test', updatedBy: 'test' }).returning());
+    await tx((t) =>
+      configureDiscovery(
+        t,
+        h.tenantId,
+        h.users.owner,
+        {
+          brandId: brand!.id,
+          enabled: true,
+          country: 'BD',
+          provider: 'tavily_web',
+          connectionId: connection.id,
+          intervalHours: 24,
+          includeAppStore: false,
+          standingSourceApproval: true,
+          excludeDomains: ['blocked-by-brand.example'],
+          lawfulBasisNote: 'Owner approves Tavily search and evidence storage for the cleanup test.',
+        },
+        h.clock.now(),
+      ),
+    );
+    // Rows left by earlier runs (before these hosts were excluded).
+    const [oldRun] = await tx((t) => t.insert(competitorDiscoveryRuns).values({ tenantId: h.tenantId, brandId: brand!.id, query: 'old', provider: 'tavily_web', status: 'succeeded' }).returning());
+    const seed = async (identity: string, url: string, status: 'review' | 'enrolled', approvedBy?: string) => {
+      const [comp] =
+        status === 'enrolled'
+          ? await tx((t) =>
+              t
+                .insert(competitors)
+                .values({ tenantId: h.tenantId, name: `${identity} (seed)`, domains: [new URL(url).hostname] })
+                .returning(),
+            )
+          : [null];
+      const [src] = comp
+        ? await tx((t) =>
+            t
+              .insert(competitorSources)
+              .values({ tenantId: h.tenantId, competitorId: comp.id, url, kind: identity.startsWith('google_play:') ? 'app_listing' : 'other', lawfulBasisNote: 'seeded for the cleanup test', status: 'approved', approvedBy: approvedBy ?? null, approvedAt: h.clock.now() })
+              .returning(),
+          )
+        : [null];
+      await tx((t) =>
+        t.insert(competitorCandidates).values({ tenantId: h.tenantId, brandId: brand!.id, identity, name: identity, url, category: 'direct', score: 85, confidence: 0.85, reasons: ['seed'], evidenceId: crypto.randomUUID(), status, competitorId: comp?.id ?? null, runId: oldRun!.id, lastSeenAt: h.clock.now() }),
+      );
+      return src;
+    };
+    const appbrain = await seed('web:appbrain.com', 'https://www.appbrain.com/', 'enrolled', 'standing:user:owner');
+    const mirrorByPerson = await seed('web:apkpure.com', 'https://apkpure.com/', 'enrolled', 'user:legal');
+    const play = await seed('google_play:com.rival.keep', 'https://play.google.com/store/apps/details?id=com.rival.keep', 'enrolled', 'standing:user:owner');
+    await seed('web:eps.go.kr', 'https://eps.go.kr/', 'review');
+    await seed('web:youtube.com/playlist', 'https://youtube.com/playlist', 'review');
+    await seed('web:blocked-by-brand.example', 'https://blocked-by-brand.example/', 'review');
+    await seed('web:real-rival.example', 'https://real-rival.example/', 'review');
+
+    const { http } = tavilyHttp([]);
+    expect(await runDiscovery({ ...h.deps, http, models: undefined }, h.tenantId, brand!.id)).toMatchObject({ status: 'succeeded' });
+    const rows = await tx((t) => t.select().from(competitorCandidates).where(eq(competitorCandidates.brandId, brand!.id)));
+    const status = Object.fromEntries(rows.map((r) => [r.identity, r.status]));
+    expect(status).toEqual({
+      'web:appbrain.com': 'rejected',
+      'web:apkpure.com': 'rejected',
+      'google_play:com.rival.keep': 'enrolled',
+      'web:eps.go.kr': 'rejected',
+      'web:youtube.com/playlist': 'rejected',
+      'web:blocked-by-brand.example': 'rejected',
+      'web:real-rival.example': 'review',
+    });
+    const sourceStatus = async (id: string) => (await tx((t) => t.select().from(competitorSources).where(eq(competitorSources.id, id))))[0]?.status;
+    expect(await sourceStatus(appbrain!.id)).toBe('revoked'); // approved only by the standing approval
+    expect(await sourceStatus(mirrorByPerson!.id)).toBe('approved'); // a person approved it: untouched
+    expect(await sourceStatus(play!.id)).toBe('approved'); // store listings are never cleaned
+    const [run] = await tx((t) =>
+      t
+        .select()
+        .from(competitorDiscoveryRuns)
+        .where(and(eq(competitorDiscoveryRuns.brandId, brand!.id), eq(competitorDiscoveryRuns.status, 'succeeded')))
+        .orderBy(competitorDiscoveryRuns.createdAt),
+    );
+    const notes = (await tx((t) => t.select().from(competitorDiscoveryRuns).where(eq(competitorDiscoveryRuns.brandId, brand!.id)))).map((r) => r.note ?? '').join(' ');
+    expect(run).toBeDefined();
+    expect(notes).toContain('5 candidates on excluded hosts removed, 1 standing-approved sources revoked');
+    const audits = await tx((t) =>
+      t
+        .select()
+        .from(auditLog)
+        .where(and(eq(auditLog.action, 'competitor.source.revoked'), eq(auditLog.subjectId, appbrain!.id))),
+    );
+    expect(audits).toHaveLength(1);
   });
 });
 

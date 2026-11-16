@@ -44,10 +44,36 @@ const NON_ENTITY_SEGMENTS = new Set(['watch', 'shorts', 'results', 'search', 'ha
 
 /**
  * Hosts that are never a competitor of a brand: search providers, reference and document hosts,
- * APK mirrors, and government sites (official bodies are not competitors). Store listings are
- * unaffected; the AI judge decides everything else.
+ * APK mirrors and app directories (they list other publishers' apps), and government sites
+ * (official bodies are not competitors). Store listings are unaffected; the AI judge decides
+ * everything else.
  */
-const NON_COMPETITOR_HOSTS = ['tavily.com', 'brave.com', 'wikipedia.org', 'wikimedia.org', 'scribd.com', 'pdfcoffee.com', 'studocu.com', 'slideshare.net', 'apkpure.com', 'apkpure.net', 'apkcombo.com', 'apkmirror.com', 'uptodown.com', 'softonic.com', 'aptoide.com', 'apk.support'];
+const NON_COMPETITOR_HOSTS = [
+  'tavily.com',
+  'brave.com',
+  'wikipedia.org',
+  'wikimedia.org',
+  'scribd.com',
+  'pdfcoffee.com',
+  'studocu.com',
+  'slideshare.net',
+  'apkpure.com',
+  'apkpure.net',
+  'apkcombo.com',
+  'apkmirror.com',
+  'uptodown.com',
+  'softonic.com',
+  'aptoide.com',
+  'apk.support',
+  'appbrain.com',
+  'appagg.com',
+  'apkfab.com',
+  'apkmonk.com',
+  'apkgk.com',
+  '9apps.com',
+  'malavida.com',
+  'filehippo.com',
+];
 export function isNonCompetitorHost(host: string): boolean {
   const h = host.toLowerCase().replace(/^www\./, '');
   if (/(?:^|\.)(?:gov|mil)(?:\.[a-z]{2})?$/.test(h) || /(?:^|\.)go\.[a-z]{2}$/.test(h)) return true;
