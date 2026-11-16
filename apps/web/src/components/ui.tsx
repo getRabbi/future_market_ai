@@ -114,7 +114,11 @@ export function DataTable({
                 {labels?.[c] ?? humanize(c)}
               </th>
             ))}
-            {actions ? <th scope="col">Actions</th> : null}
+            {actions ? (
+              <th scope="col" className="actions-th">
+                Actions
+              </th>
+            ) : null}
           </tr>
         </thead>
         <tbody>

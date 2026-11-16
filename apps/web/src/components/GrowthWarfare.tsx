@@ -270,9 +270,11 @@ function Overview({ r }: { r: Room }) {
     <div className="stack">
       <div className="glance-grid">
         {tiles.map(([label, v]) => (
-          <div key={label} className="glance-tile">
-            <span className="glance-label">{label}</span>
-            <span className="glance-value">{v}</span>
+          <div key={label} className="glance-tile quiet">
+            <span>
+              <span className="glance-label">{label}</span>
+              <span className="glance-value">{v}</span>
+            </span>
           </div>
         ))}
       </div>
