@@ -312,6 +312,6 @@ Each decision lists: context → decision → consequences. `[U]` marks values t
   - Government, mirror, document and provider hosts are excluded.
   - A person's *Queue discovery* skips the interval (10-minute guard, monthly cap kept).
 - **Follow-up (2026-11-16/17):**
-  - Self-cleaning (PR #39). App directories such as AppBrain and APK mirrors are never competitors. Each run rejects earlier web candidates on excluded hosts and revokes a monitoring source only when the standing approval alone approved it. Store listings and sources a person approved are never changed.
+  - Self-cleaning (PR #39). App directories such as AppBrain, APK mirrors and (PR #41) software download sites such as soft112 are never competitors. Each run rejects earlier web candidates on excluded hosts and revokes a monitoring source only when the standing approval alone approved it. Store listings and sources a person approved are never changed.
   - Retirement (PR #41). A competitor that discovery created (its note starts with "Discovered identity") is retired once every candidate that pointed at it is rejected and none of its sources is approved or pending. The Competitors list and comparison leave it out.
   - Retirement is derived, not stored: nothing is deleted, snapshots, observations and audit records stay, and no migration is needed. Enrolling it again or approving a source brings it back. A competitor a person added is never retired.

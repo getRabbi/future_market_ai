@@ -91,6 +91,9 @@ describe('query planning and identities (D-055)', () => {
     // Never competitors: providers, mirrors, document hosts, government; official non-government bodies are left to the judge.
     expect(['eps.go.kr', 'www.bangladesh.gov.bd', 'agency.gov', 'tavily.com', 'apkpure.com', 'www.scribd.com', 'en.wikipedia.org'].every(isNonCompetitorHost)).toBe(true);
     expect(['rival.example', 'epstopik.hrdkorea.or.kr', 'governance-courses.example'].some(isNonCompetitorHost)).toBe(false);
+    // Software download directories list other publishers' apps (soft112 was enrolled live on 2026-11-16).
+    expect(['korean-eps-topik.soft112.com', 'www.softpedia.com', 'download.cnet.com', 'www.appbrain.com'].every(isNonCompetitorHost)).toBe(true);
+    expect(['cnet.com', 'news.cnet.com'].some(isNonCompetitorHost)).toBe(false);
     expect(webIdentity('http://rival.example/')).toBeNull();
     expect(webIdentity('https://10.0.0.1/')).toBeNull();
     expect(webIdentity('https://play.google.com/store/search?q=topik')).toBeNull();
