@@ -9,7 +9,7 @@ import { clearModelCache, createModelGateway } from '../src/agents.js';
 import { checkConnectionHealth, createConnection, testConnectionCredentials } from '../src/modules/connections.js';
 import * as gw from '../src/modules/growth-warfare/index.js';
 import { configureDiscovery, planQueries, runDiscovery } from '../src/modules/m05-competitors/discovery.js';
-import { countryName, webIdentity } from '../src/modules/m05-competitors/search-providers.js';
+import { countryName, isNonCompetitorHost, webIdentity } from '../src/modules/m05-competitors/search-providers.js';
 import { approveModel, seedModelRegistry } from '../src/modules/m24-governance/index.js';
 
 /** Scripted model: answers the discovery judge prompt from a function of the request. */
@@ -86,6 +86,10 @@ describe('query planning and identities (D-055)', () => {
     expect(webIdentity('https://www.korean-coaching.example/courses?x=1')).toMatchObject({ identity: 'web:korean-coaching.example', url: 'https://www.korean-coaching.example/' });
     expect(webIdentity('https://www.youtube.com/watch?v=abc')).toBeNull();
     expect(webIdentity('https://facebook.com/')).toBeNull();
+    expect(webIdentity('https://www.youtube.com/playlist?list=PL123')).toBeNull();
+    // Never competitors: providers, mirrors, document hosts, government; official non-government bodies are left to the judge.
+    expect(['eps.go.kr', 'www.bangladesh.gov.bd', 'agency.gov', 'tavily.com', 'apkpure.com', 'www.scribd.com', 'en.wikipedia.org'].every(isNonCompetitorHost)).toBe(true);
+    expect(['rival.example', 'epstopik.hrdkorea.or.kr', 'governance-courses.example'].some(isNonCompetitorHost)).toBe(false);
     expect(webIdentity('http://rival.example/')).toBeNull();
     expect(webIdentity('https://10.0.0.1/')).toBeNull();
     expect(webIdentity('https://play.google.com/store/search?q=topik')).toBeNull();
@@ -184,7 +188,7 @@ describe('automatic discovery with Tavily and the AI judge (D-055)', () => {
       expect(calls).toHaveLength(10);
       const runs = await tx2((t) => t.select().from(competitorDiscoveryRuns).where(eq(competitorDiscoveryRuns.brandId, brand!.id)));
       expect(runs.find((x) => x.status === 'skipped')?.note).toContain('monthly web search limit reached (10 of 10)');
-      expect(runs.find((x) => x.status === 'succeeded')?.note).toContain('AI judge unavailable; lexical ranking used');
+      expect(runs.find((x) => x.status === 'succeeded')?.note).toContain('AI judge unavailable (no model gateway); lexical ranking used');
       const [candidate] = await tx2((t) => t.select().from(competitorCandidates).where(eq(competitorCandidates.brandId, brand!.id)));
       expect(candidate).toMatchObject({ identity: 'web:korean-lessons-rival.example', status: 'review', confidence: 0.5 });
 
@@ -199,6 +203,59 @@ describe('automatic discovery with Tavily and the AI judge (D-055)', () => {
     } finally {
       await h2.close();
     }
+  });
+});
+
+describe('re-judging and manual runs (D-055)', () => {
+  it('repeats unjudged queries, lets a person run now (not within 10 minutes), demotes what the judge rejects and never downgrades a verdict', async () => {
+    const connection = await createConnection(h.deps, h.tenantId, h.users.owner, { provider: 'tavily', displayName: 'Tavily rerun', externalAccountId: 'rerun', credentials: { apiKey: 'tvly-rerun' } });
+    const [brand] = await tx((t) => t.insert(brands).values({ tenantId: h.tenantId, slug: 'rerun-brand', name: 'Hangul Daily', createdBy: 'test', updatedBy: 'test' }).returning());
+    await tx((t) =>
+      configureDiscovery(
+        t,
+        h.tenantId,
+        h.users.owner,
+        { brandId: brand!.id, enabled: true, country: 'BD', provider: 'tavily_web', connectionId: connection.id, intervalHours: 24, includeAppStore: false, maxQueriesPerRun: 2, lawfulBasisNote: 'Owner approves Tavily search and evidence storage for the rerun test.' },
+        h.clock.now(),
+      ),
+    );
+    const results = [
+      { title: 'Hangul Rival app', url: 'https://play.google.com/store/apps/details?id=com.hangul.rival', content: 'Learn Hangul daily with quizzes.', score: 0.8 },
+      { title: 'Hangul Daily blog', url: 'https://hangul-blog.example/', content: 'Hangul Daily tips and news.', score: 0.6 },
+      { title: 'Korea government portal', url: 'https://www.korea.go.kr/hangul', content: 'Hangul Daily official notice.', score: 0.5 },
+    ];
+    const run = async (models: typeof h.deps.models) => {
+      const { http, calls } = tavilyHttp(results);
+      return { r: (await runDiscovery({ ...h.deps, http, models }, h.tenantId, brand!.id, undefined, { force: true })) as { status: string; searches?: number }, calls };
+    };
+    const queriesOf = (calls: Captured[]) => calls.map((c) => c.body.query);
+    const rows = () => tx((t) => t.select().from(competitorCandidates).where(eq(competitorCandidates.brandId, brand!.id)));
+
+    // 1) No model: lexical candidates in review; the government portal is never a candidate.
+    const first = await run(undefined);
+    expect(first.r).toMatchObject({ status: 'succeeded', searches: 2 });
+    expect((await rows()).map((c) => [c.identity, c.status, c.confidence]).sort()).toEqual([
+      ['google_play:com.hangul.rival', 'review', 0.5],
+      ['web:hangul-blog.example', 'review', 0.5],
+    ]);
+    // 2) A person's run within 10 minutes is refused; the scheduled tick waits for the interval.
+    expect(await runDiscovery(h.deps, h.tenantId, brand!.id, undefined, { force: true })).toEqual({ status: 'skipped' });
+    h.clock.advance(11 * 60_000);
+    expect(await runDiscovery(h.deps, h.tenantId, brand!.id)).toEqual({ status: 'skipped' });
+    // 3) With the judge: the same queries again (the first batch was never judged).
+    provider.judge = () => ({ abstain: false, results: [{ index: 0, verdict: 'direct', entityType: 'app', name: 'Hangul Rival', reason: 'Same skill app.', quote: 'Learn Hangul daily' }] });
+    const second = await run(h.deps.models);
+    expect(queriesOf(second.calls)).toEqual(queriesOf(first.calls));
+    const judged = await rows();
+    expect(judged.find((c) => c.identity === 'google_play:com.hangul.rival')).toMatchObject({ status: 'enrolled', confidence: 0.85 });
+    expect(judged.find((c) => c.identity === 'web:hangul-blog.example')).toMatchObject({ status: 'review', confidence: 0.1, category: 'not_competitor' });
+    // 4) A later run without the model never overwrites the verdicts, and moves on to new queries.
+    h.clock.advance(11 * 60_000);
+    const third = await run(undefined);
+    expect(queriesOf(third.calls)).not.toEqual(queriesOf(second.calls));
+    const after = await rows();
+    expect(after.find((c) => c.identity === 'web:hangul-blog.example')).toMatchObject({ confidence: 0.1, category: 'not_competitor' });
+    expect(after.find((c) => c.identity === 'google_play:com.hangul.rival')).toMatchObject({ status: 'enrolled', confidence: 0.85 });
   });
 });
 

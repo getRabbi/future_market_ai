@@ -10,7 +10,7 @@ import { audit, normalizeText, requireMfa, requireRole } from '../../util.js';
 import { readContext } from '../connections.js';
 import { admitInternalEvidence } from '../m01-evidence/index.js';
 import { raiseAlert } from '../m24-governance/index.js';
-import { BRAVE_TERMS, braveSearchProvider, countryName, TAVILY_TERMS, tavilySearchProvider, webIdentity } from './search-providers.js';
+import { BRAVE_TERMS, braveSearchProvider, countryName, isNonCompetitorHost, TAVILY_TERMS, tavilySearchProvider, webIdentity } from './search-providers.js';
 
 const ACTOR = systemActor('competitor-discovery');
 const TERMS = 'https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/index.html';
@@ -305,9 +305,9 @@ const JudgeSchema = z.object({
         index: z.number().int().min(0),
         verdict: z.enum(['direct', 'indirect', 'not_competitor']),
         entityType: z.enum(['app', 'website', 'video_channel', 'social_page', 'course_provider', 'other']),
-        name: z.string().min(1).max(120),
-        reason: z.string().max(300),
-        quote: z.string().max(300),
+        name: z.string().min(1).max(100),
+        reason: z.string().max(200),
+        quote: z.string().max(160),
       }),
     )
     .max(60),
@@ -315,11 +315,16 @@ const JudgeSchema = z.object({
 type Verdict = z.infer<typeof JudgeSchema>['results'][number] & { model: string };
 
 /** Keeps one judge call inside small free-tier token limits (Bangla text costs more tokens). */
-const MAX_JUDGED = 25;
-const SNIPPET = 280;
+const MAX_JUDGED = 20;
+const SNIPPET = 220;
+/** Reasoning models (gpt-oss) spend completion tokens before answering; low effort + this budget leaves room for the JSON. */
+const JUDGE_MAX_TOKENS = 6000;
 
-async function judge(deps: CoreDeps, tenantId: string, brand: { id: string; name: string }, profile: { keywords: string[]; goal: string | null }, country: string, items: Item[]): Promise<Map<number, Verdict> | null> {
-  if (!deps.models || !items.length) return null;
+type Judged = { map: Map<number, Verdict> } | { unavailable: string };
+
+async function judge(deps: CoreDeps, tenantId: string, brand: { id: string; name: string }, profile: { keywords: string[]; goal: string | null }, country: string, items: Item[]): Promise<Judged | null> {
+  if (!items.length) return null;
+  if (!deps.models) return { unavailable: 'no model gateway' };
   const list = items
     .slice(0, MAX_JUDGED)
     .map((it, i) => `[${i}] ${it.store ? 'APP STORE' : 'WEB'} | ${it.url}\n${it.text.slice(0, SNIPPET)}`)
@@ -327,18 +332,21 @@ async function judge(deps: CoreDeps, tenantId: string, brand: { id: string; name
   const out = await runAgent(deps, tenantId, { kind: 'competitor_discovery', agentId: 'competitor-scout', triggeredBy: 'system', input: { brandId: brand.id, results: Math.min(items.length, MAX_JUDGED) } }, async (ctx) => {
     const r = await ctx.think('judge', PROMPTS.competitorDiscovery, {
       purpose: 'extraction',
-      maxTokens: 2500,
+      effort: 'low',
+      maxTokens: JUDGE_MAX_TOKENS,
       outputSchema: JudgeSchema,
       messages: [
         {
           role: 'user',
-          content: `Brand: ${brand.name}\nGoal: ${profile.goal ?? 'not stated'}\nMarket: ${countryName(country) ?? country}\nKeywords: ${profile.keywords.slice(0, 40).join(', ') || brand.name}\n\nSearch results:\n${untrustedBlock('search:results', list)}\n\nJudge each result you can. Quote the supporting phrase exactly as it appears in that result.`,
+          content: `Brand: ${brand.name}\nGoal: ${profile.goal ?? 'not stated'}\nMarket: ${countryName(country) ?? country}\nKeywords: ${profile.keywords.slice(0, 40).join(', ') || brand.name}\n\nSearch results:\n${untrustedBlock('search:results', list)}\n\nList only the results that are direct or indirect competitors (leave every other result out). Quote the supporting phrase exactly as it appears in that result; keep each reason to one short sentence.`,
         },
       ],
     });
     return { output: r.output, model: r.servedBy };
   });
-  if (out.status !== 'completed' || out.result.output.abstain) return null;
+  if (out.status === 'abstained') return { unavailable: out.reason };
+  if (out.status === 'failed') return { unavailable: out.error.slice(0, 120) };
+  if (out.result.output.abstain) return { unavailable: 'the model abstained' };
   const map = new Map<number, Verdict>();
   for (const v of out.result.output.results) {
     const it = items[v.index];
@@ -346,7 +354,7 @@ async function judge(deps: CoreDeps, tenantId: string, brand: { id: string; name
     if (!it || v.index >= MAX_JUDGED || map.has(v.index) || v.quote.trim().length < 3 || !normalizeText(it.text.slice(0, SNIPPET)).includes(normalizeText(v.quote))) continue;
     map.set(v.index, { ...v, model: out.result.model });
   }
-  return map;
+  return { map };
 }
 
 /* ------------------------------------------------------------------ */
@@ -403,11 +411,13 @@ function toItem(raw: unknown, query: string, searcher: { id: string; store: bool
  * literal-quote guard; confident candidates are enrolled and, under the owner's standing approval,
  * their public listing or home page is monitored. Without a model the lexical heuristics apply.
  */
-export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: string, provider?: CompetitorSearchProvider) {
+export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: string, provider?: CompetitorSearchProvider, opts: { force?: boolean } = {}) {
   const now = deps.clock.now();
   const claim = await withTenant(deps.db, { tenantId, actor: actorRef(ACTOR) }, async (tx) => {
     const [s] = await tx.select().from(competitorDiscoverySettings).where(eq(competitorDiscoverySettings.brandId, brandId)).for('update');
-    if (!s?.enabled || (s.lastAttemptAt && now.getTime() - s.lastAttemptAt.getTime() < s.intervalHours * 3_600_000)) return null;
+    // A person's "Queue discovery" skips the interval (never within 10 minutes of the last run); the monthly cap still applies.
+    const cooldownMs = opts.force ? 10 * 60_000 : s ? s.intervalHours * 3_600_000 : 0;
+    if (!s?.enabled || (s.lastAttemptAt && now.getTime() - s.lastAttemptAt.getTime() < cooldownMs)) return null;
     const [b] = await tx
       .select()
       .from(brands)
@@ -419,7 +429,8 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
     const [prior] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(competitorDiscoveryRuns)
-      .where(and(eq(competitorDiscoveryRuns.brandId, brandId), eq(competitorDiscoveryRuns.status, 'succeeded')));
+      // A query batch counts as done only once the judge saw it, so a run without the model is repeated.
+      .where(and(eq(competitorDiscoveryRuns.brandId, brandId), eq(competitorDiscoveryRuns.status, 'succeeded'), options.aiJudge ? sql`coalesce(${competitorDiscoveryRuns.note}, '') not like '%AI judge unavailable%'` : undefined));
     const offset = prior?.n ?? 0;
     const plan = (store: boolean) => planQueries({ brand: b.name, keywords: profile.keywords, templates: options.queryTemplates, country: s.country, max: options.maxQueriesPerRun, offset, store });
     const web = isWeb(s.provider);
@@ -474,7 +485,7 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
       return { status: 'skipped', reason: claim.limitNote ?? 'no queries' };
     }
 
-    const own = (it: Item) => {
+    const excluded = (it: Item) => {
       const host = (() => {
         try {
           return new URL(it.url).hostname.toLowerCase().replace(/^www\./, '');
@@ -485,7 +496,8 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
       return (
         claim.apps.some((a) => it.identity === `google_play:${a.appId}` || it.identity === `app_store:${a.appId}` || (it.raw as { bundleId?: string }).bundleId === a.appId || a.listingUrl === it.url) ||
         (!!claim.profile.landingHost && it.identity === `web:${claim.profile.landingHost}`) ||
-        claim.options.excludeDomains.some((d) => host === d.toLowerCase() || host.endsWith(`.${d.toLowerCase()}`))
+        claim.options.excludeDomains.some((d) => host === d.toLowerCase() || host.endsWith(`.${d.toLowerCase()}`)) ||
+        (!it.store && isNonCompetitorHost(host))
       );
     };
 
@@ -505,7 +517,7 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
         }
         for (const raw of results) {
           const it = toItem(raw, q, sr, now);
-          if (!it || seen.has(it.identity) || own(it)) continue;
+          if (!it || seen.has(it.identity) || excluded(it)) continue;
           seen.add(it.identity);
           items.push(it);
         }
@@ -513,7 +525,10 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
     }
     if (!items.length && errors.length && errors.length >= searchers.length) throw invalid(errors.join('; '));
 
-    const verdicts = claim.options.aiJudge ? await judge(deps, tenantId, claim.b, claim.profile, claim.s.country, items) : null;
+    const judged = claim.options.aiJudge ? await judge(deps, tenantId, claim.b, claim.profile, claim.s.country, items) : null;
+    const verdicts = judged && 'map' in judged ? judged.map : null;
+    // Results the judge saw and left out (or called not a competitor) are not stored.
+    const dismissed = verdicts ? items.filter((_, i) => i < MAX_JUDGED && (!verdicts.get(i) || verdicts.get(i)!.verdict === 'not_competitor')) : [];
     const scored = items
       .map((it, i) => {
         const v = verdicts?.get(i);
@@ -564,10 +579,11 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
           now,
         });
         const values = { tenantId, brandId, identity: c.it.identity, name: c.name.slice(0, 200), url: c.it.url, category: c.category, score: c.score, confidence: c.confidence, reasons: c.reasons, evidenceId: ev.evidenceId, runId: claim.run.id, lastSeenAt: now };
+        // A lexical (unjudged) sighting never overwrites an earlier verdict; it only refreshes when it was seen.
         const [row] = await tx
           .insert(competitorCandidates)
           .values(values)
-          .onConflictDoUpdate({ target: [competitorCandidates.tenantId, competitorCandidates.brandId, competitorCandidates.identity], set: values })
+          .onConflictDoUpdate({ target: [competitorCandidates.tenantId, competitorCandidates.brandId, competitorCandidates.identity], set: verdicts ? values : { lastSeenAt: now, runId: claim.run.id } })
           .returning();
         if (row!.status === 'review' && c.confidence >= claim.options.autoEnrollConfidence) {
           await enroll(tx, tenantId, row!, standing);
@@ -575,7 +591,18 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
         }
         count++;
       }
-      const note = [verdicts ? `AI judged ${Math.min(items.length, MAX_JUDGED)} results` : claim.options.aiJudge ? 'AI judge unavailable; lexical ranking used' : null, enrolled ? `${enrolled} enrolled` : null, claim.limitNote, ...errors].filter(Boolean).join('; ') || null;
+      // Earlier lexical candidates the judge now calls not a competitor sink to the bottom of the review list.
+      let demoted = 0;
+      for (const it of dismissed) {
+        const r = await tx
+          .update(competitorCandidates)
+          .set({ score: 5, confidence: 0.1, category: 'not_competitor', reasons: ['AI judge: not a competitor from this result’s text (kept for review; enroll it if this is wrong).'], lastSeenAt: now, runId: claim.run.id })
+          .where(and(eq(competitorCandidates.brandId, brandId), eq(competitorCandidates.identity, it.identity), eq(competitorCandidates.status, 'review')))
+          .returning({ id: competitorCandidates.id });
+        demoted += r.length;
+      }
+      const judgeNote = !claim.options.aiJudge ? null : verdicts ? `AI judged ${Math.min(items.length, MAX_JUDGED)} results` : judged && 'unavailable' in judged ? `AI judge unavailable (${judged.unavailable}); lexical ranking used` : null;
+      const note = [judgeNote, enrolled ? `${enrolled} enrolled` : null, demoted ? `${demoted} earlier candidates judged not competitors` : null, claim.limitNote, ...errors].filter(Boolean).join('; ') || null;
       await tx
         .update(competitorDiscoveryRuns)
         .set({ status: 'succeeded', resultCount: count, searchCount, note: note?.slice(0, 500) ?? null, finishedAt: now })
