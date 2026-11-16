@@ -2,7 +2,7 @@ import { PROMPTS, untrustedBlock } from '@futuregrow/agent-kernel';
 import { publicFetch } from '@futuregrow/connectors';
 import { brandApps, brands, competitorCandidates, competitorDiscoveryRuns, competitorDiscoverySettings, competitorSources, competitors, connections, type DbOrTx, growthBrandConfigs, type Tx, withTenant } from '@futuregrow/db';
 import { invalid, notFound } from '@futuregrow/observability';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { runAgent } from '../../agents.js';
 import { type Actor, actorRef, type CoreDeps, systemActor } from '../../deps.js';
@@ -266,6 +266,44 @@ async function enroll(tx: Tx, tenantId: string, candidate: typeof competitorCand
     refs: { competitorId: c.id, evidenceId: candidate.evidenceId },
     dedupKey: `competitor-discovered:${candidate.identity}`,
   });
+}
+
+/**
+ * Self-cleaning (D-055): web candidates whose URL is on a never-competitor host (search provider,
+ * document or app-directory host, APK mirror, government site, the brand's exclusions) or is no
+ * longer an entity are rejected, and a monitoring source that only the standing approval approved
+ * is revoked. Store listings and sources a person approved are never touched.
+ */
+async function cleanExcluded(tx: Tx, tenantId: string, brandId: string, options: DiscoveryOptions): Promise<{ rejected: number; revoked: number }> {
+  const rows = await tx
+    .select()
+    .from(competitorCandidates)
+    .where(and(eq(competitorCandidates.brandId, brandId), inArray(competitorCandidates.status, ['review', 'enrolled'])));
+  let rejected = 0;
+  let revoked = 0;
+  for (const c of rows) {
+    if (c.identity.startsWith('google_play:') || c.identity.startsWith('app_store:')) continue;
+    const id = webIdentity(c.url);
+    const host = id?.host ?? '';
+    const bad = !id || isNonCompetitorHost(host) || options.excludeDomains.some((d) => host === d.toLowerCase() || host.endsWith(`.${d.toLowerCase()}`));
+    if (!bad) continue;
+    await tx
+      .update(competitorCandidates)
+      .set({ status: 'rejected', reasons: [...c.reasons, `Excluded automatically: ${host || c.url} is never a competitor (search provider, document or app-directory host, APK mirror, government site, or not an entity).`] })
+      .where(eq(competitorCandidates.id, c.id));
+    rejected++;
+    if (c.status !== 'enrolled' || !c.competitorId) continue;
+    const srcs = await tx
+      .update(competitorSources)
+      .set({ status: 'revoked' })
+      .where(and(eq(competitorSources.competitorId, c.competitorId), eq(competitorSources.status, 'approved'), sql`${competitorSources.approvedBy} like 'standing:%'`))
+      .returning({ id: competitorSources.id, url: competitorSources.url });
+    for (const s of srcs) {
+      await audit(tx, tenantId, ACTOR, 'competitor.source.revoked', { type: 'competitor_source', id: s.id }, { reason: 'excluded host', host, url: s.url });
+      revoked++;
+    }
+  }
+  return { rejected, revoked };
 }
 
 export async function reviewCandidate(tx: Tx, tenantId: string, actor: Actor, id: string, decision: 'enroll' | 'reject') {
@@ -561,6 +599,7 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
         return { status: 'cancelled' };
       }
       const standing: Standing = claim.options.standingSourceApproval ? { by: current.approvedBy, at: current.approvedAt } : null;
+      const cleaned = await cleanExcluded(tx, tenantId, brandId, claim.options);
       let count = 0;
       let enrolled = 0;
       for (const c of scored) {
@@ -602,7 +641,17 @@ export async function runDiscovery(deps: CoreDeps, tenantId: string, brandId: st
         demoted += r.length;
       }
       const judgeNote = !claim.options.aiJudge ? null : verdicts ? `AI judged ${Math.min(items.length, MAX_JUDGED)} results` : judged && 'unavailable' in judged ? `AI judge unavailable (${judged.unavailable}); lexical ranking used` : null;
-      const note = [judgeNote, enrolled ? `${enrolled} enrolled` : null, demoted ? `${demoted} earlier candidates judged not competitors` : null, claim.limitNote, ...errors].filter(Boolean).join('; ') || null;
+      const note =
+        [
+          judgeNote,
+          enrolled ? `${enrolled} enrolled` : null,
+          demoted ? `${demoted} earlier candidates judged not competitors` : null,
+          cleaned.rejected ? `${cleaned.rejected} candidates on excluded hosts removed${cleaned.revoked ? `, ${cleaned.revoked} standing-approved sources revoked` : ''}` : null,
+          claim.limitNote,
+          ...errors,
+        ]
+          .filter(Boolean)
+          .join('; ') || null;
       await tx
         .update(competitorDiscoveryRuns)
         .set({ status: 'succeeded', resultCount: count, searchCount, note: note?.slice(0, 500) ?? null, finishedAt: now })
