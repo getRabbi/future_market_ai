@@ -114,7 +114,7 @@ export function Connections({ me }: { me: Me }) {
             const id = String(r.id);
             const p = providerForm(String(r.provider));
             return (
-              <div className="row" style={{ gap: '0.25rem', flexWrap: 'nowrap' }}>
+              <div className="row actions-inline">
                 <button type="button" disabled={checking === id || !p} onClick={() => void healthCheck(id)}>
                   {checking === id ? 'Testing…' : 'Test connection'}
                 </button>

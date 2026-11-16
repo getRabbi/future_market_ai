@@ -186,7 +186,9 @@ function NextActionCard() {
     pageTitle: (s) => pageBySlug(s)?.title ?? s,
   });
   return (
-    <section className={`card next-card area-next ${next?.tone ?? 'loading'}`} aria-labelledby="home-next" aria-busy={!next && !errors.length}>
+    // Tone classes are prefixed: a bare `calm` collided with the global `.calm` note style
+    // (display: flex) and laid the whole card out as one squeezed row when nothing needed you.
+    <section className={`card next-card area-next nba-${next?.tone ?? 'loading'}`} aria-labelledby="home-next" aria-busy={!next && !errors.length}>
       <header className="card-head">
         <h2 className="card-title big" id="home-next">
           <Ico name="bolt" size={21} className="next-bolt" /> Next best action

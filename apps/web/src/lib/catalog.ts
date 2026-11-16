@@ -416,7 +416,7 @@ export const SECTIONS: Section[] = [
         title: 'Discovery rankings and review',
         list: '/v1/competitors/discovery',
         rows: (r) => (Array.isArray((r as Row | null)?.candidates) ? ((r as Row).candidates as Row[]) : []),
-        columns: ['name', 'category', 'score', 'confidence', 'reasons', 'status', 'url', 'evidenceId'],
+        columns: ['name', 'category', 'score', 'confidence', 'reasons', 'status', 'url'],
         empty: 'No discovered candidates. Scores are relevance heuristics, not store rank or market share.',
         rowActions: [
           { label: 'Enroll', path: '/v1/competitors/candidates/:id/review', body: { decision: 'enroll' }, when: { field: 'status', values: ['review'] }, done: 'Enrolled; proposed sources await legal approval.' },

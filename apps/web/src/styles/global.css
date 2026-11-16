@@ -287,6 +287,11 @@ pre {
   gap: 0.5rem;
   align-items: center;
 }
+/* Row buttons kept on one line in a table (they wrap on a phone, see the 640px rules). */
+.row.actions-inline {
+  gap: 0.25rem;
+  flex-wrap: nowrap;
+}
 .stack > * + * {
   margin-top: 0.75rem;
 }
@@ -428,6 +433,24 @@ tr.clickable {
 }
 tr.clickable:hover td {
   background: var(--surface-2);
+}
+/* Wide tables scroll sideways; their Actions column stays pinned on the right so Enroll, Reject
+   and the like are never hidden past the card edge. (Phones lay rows out as cards instead.) */
+@media (min-width: 641px) {
+  .table-wrap th.actions-th,
+  .table-wrap td.actions-cell {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--surface);
+    box-shadow: inset 1px 0 0 var(--border);
+  }
+  .table-wrap th.actions-th {
+    background: var(--surface-2);
+  }
+  tr.clickable:hover td.actions-cell {
+    background: var(--surface-2);
+  }
 }
 
 .badge {
@@ -1974,6 +1997,10 @@ button.pager-link.next {
     display: block;
     width: 100%;
   }
+  /* Row buttons that share one line in a table wrap on a phone instead of widening the page. */
+  .row.actions-inline {
+    flex-wrap: wrap;
+  }
   .table-wrap thead {
     position: absolute;
     width: 1px;
@@ -3025,6 +3052,32 @@ body.nav-locked {
   flex: 1 1 14rem;
   min-width: 0;
 }
+/* A row that starts with plain text has a badge or pill as its first element: keep it pill-sized
+   instead of stretching it across the row. */
+.row-list > li > .badge:first-child,
+.row-list > li > .status-pill:first-child,
+.row-list > li > .chip:first-child {
+  flex: none;
+}
+/* Boxed rows (.row-item) keep their inner padding and a gap between boxes inside a row list. */
+.row-list > li.row-item {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+}
+.row-list > li.row-item:last-child {
+  margin-bottom: 0;
+}
+/* "Text block + status/buttons" rows: the text takes the free width, so the status always sits on
+   the right instead of wherever the text happens to end. */
+.row-item > .row > :first-child {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+/* Card-like rows with several lines stack their lines instead of laying them out side by side. */
+.row-list > li.row-item.stack-xs {
+  display: block;
+}
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -3505,7 +3558,7 @@ body.nav-locked {
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 70%, var(--surface)) 0%, var(--surface) 75%);
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
 }
-.next-card.critical {
+.next-card.nba-critical {
   background: linear-gradient(180deg, var(--danger-soft) 0%, var(--surface) 75%);
   border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
 }
@@ -3516,7 +3569,7 @@ body.nav-locked {
   color: var(--accent);
   fill: color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.next-card.critical .next-bolt {
+.next-card.nba-critical .next-bolt {
   color: var(--danger);
 }
 .next-item {
@@ -3544,11 +3597,11 @@ body.nav-locked {
   color: var(--accent);
   flex: none;
 }
-.next-card.critical .next-icon {
+.next-card.nba-critical .next-icon {
   background: var(--danger-soft);
   color: var(--danger);
 }
-.next-card.calm .next-icon {
+.next-card.nba-calm .next-icon {
   background: var(--ok-soft);
   color: var(--ok);
 }
@@ -3607,8 +3660,15 @@ body.nav-locked {
   flex-wrap: nowrap;
   min-width: 0;
 }
+.perf .mini-select {
+  min-width: 0;
+  flex: 0 1 auto;
+}
 .perf .mini-select select {
+  width: 100%;
   max-width: 12rem;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 .perf .card-scope {
   overflow: hidden;
@@ -3616,9 +3676,12 @@ body.nav-locked {
   white-space: nowrap;
   min-width: 0;
 }
+/* Two pickers (app + metric) must wrap and shrink inside a narrow card, never spill out of it. */
 .perf .card-tools {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  min-width: 0;
+  max-width: 100%;
 }
 .perf-value.open {
   color: var(--faint);
@@ -4323,6 +4386,12 @@ body.nav-locked {
 }
 .cal-caption {
   color: var(--muted);
+}
+/* Day columns are narrow: a long status ("Published and verified") wraps inside the post. */
+.cal-post .status-pill {
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: normal;
 }
 
 /* ---------- all tools ---------- */

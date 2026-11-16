@@ -1,7 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
-import { api, CHANGED_EVENT, type Me } from '../lib/api.js';
+import { ApiError, api, CHANGED_EVENT, type Me } from '../lib/api.js';
 import { authClient } from '../lib/auth.js';
-import { canDo, evaluate, type JourneyView, PIPELINE, type ProbeKey, type Progress, RANKS, STAGES, type StageKey, type Task, TOTAL_XP } from '../lib/journey.js';
+import { canDo, evaluate, type JourneyView, mergeProgress, PIPELINE, type ProbeKey, type Progress, RANKS, STAGES, type StageKey, type Task, TOTAL_XP } from '../lib/journey.js';
 import { pageBySlug, pageHref } from '../lib/nav.js';
 import { type AnyIcon, Ico } from './Icons.js';
 
@@ -19,7 +19,12 @@ interface Snapshot {
   progress: Progress;
   /** Actions waiting for approval (sidebar badge). */
   pending: number | null;
+  /** Some check failed for a passing reason (rate limit, network, server): probe again soon. */
+  incomplete?: boolean;
 }
+
+/** Retry delays after a probe with passing failures (then the normal staleness rule applies). */
+const RETRY_MS = [4_000, 15_000, 45_000];
 
 const STALE_MS = 45_000;
 const cacheKey = (me: Me) => `fg.journey.${me.tenantId}.${me.userId}`;
@@ -45,7 +50,13 @@ function writeCache(me: Me, s: Snapshot): void {
 async function probe(me: Me): Promise<Snapshot> {
   const rows = (path: string) => api<unknown>('GET', path).then((d) => (Array.isArray(d) ? (d as Row[]) : []));
   const has = (path: string, test: (r: Row) => boolean = () => true) => rows(path).then((list) => list.some(test));
-  const settle = (p: Promise<boolean>): Promise<boolean | null> => p.catch(() => null);
+  let incomplete = false;
+  // Unknown either way; only "not readable with this role" (401/403/404) is a final answer.
+  const settle = (p: Promise<boolean>): Promise<boolean | null> =>
+    p.catch((e: unknown) => {
+      if (!(e instanceof ApiError && [401, 403, 404].includes(e.status))) incomplete = true;
+      return null;
+    });
   const either = async (a: Promise<boolean | null>, b: Promise<boolean | null>) => {
     const [x, y] = await Promise.all([a, b]);
     return x || y ? true : x === null && y === null ? null : false;
@@ -53,7 +64,7 @@ async function probe(me: Me): Promise<Snapshot> {
   const connections = rows('/v1/connections');
   const teamSize = async () => {
     const r = await authClient.organization.listMembers({ query: { organizationId: me.tenantId } });
-    if (r.error) throw new Error(r.error.message ?? 'members unavailable');
+    if (r.error) throw new ApiError(r.error.message ?? 'members unavailable', r.error.status ?? 0, null, null);
     const data = r.data as { members?: unknown[]; total?: number } | unknown[] | null;
     return Array.isArray(data) ? data.length : (data?.total ?? data?.members?.length ?? 0);
   };
@@ -84,7 +95,7 @@ async function probe(me: Me): Promise<Snapshot> {
       () => null,
     ),
   ]);
-  return { at: Date.now(), progress: Object.fromEntries(keys.map((k, i) => [k, values[i]])) as Progress, pending };
+  return { at: Date.now(), progress: Object.fromEntries(keys.map((k, i) => [k, values[i]])) as Progress, pending, incomplete };
 }
 
 interface JourneyState {
@@ -101,21 +112,32 @@ const JourneyContext = createContext<JourneyState | null>(null);
 export function JourneyProvider({ me, children }: { me: Me; children: ReactNode }) {
   const [snap, setSnap] = useState<Snapshot | null>(() => readCache(me));
   const busy = useRef(false);
+  const retries = useRef(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const refresh = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
     try {
-      const s = await probe(me);
-      writeCache(me, s);
+      const fresh = await probe(me);
+      const prev = readCache(me);
+      const s: Snapshot = { ...fresh, progress: mergeProgress(fresh.progress, prev?.progress), pending: fresh.pending ?? prev?.pending ?? null };
+      // An incomplete probe is cached as already stale so the next page load checks again.
+      writeCache(me, s.incomplete ? { ...s, at: s.at - STALE_MS } : s);
       setSnap(s);
+      clearTimeout(retryTimer.current);
+      if (s.incomplete && retries.current < RETRY_MS.length) {
+        retryTimer.current = setTimeout(() => void refresh(), RETRY_MS[retries.current++]);
+      } else if (!s.incomplete) retries.current = 0;
     } finally {
       busy.current = false;
     }
   }, [me]);
 
+  useEffect(() => () => clearTimeout(retryTimer.current), []);
+
   useEffect(() => {
     const cached = readCache(me);
-    if (!cached || Date.now() - cached.at > STALE_MS) void refresh();
+    if (!cached || cached.incomplete || Date.now() - cached.at > STALE_MS) void refresh();
     // Any successful change (create, approve, connect…) re-checks progress shortly after.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const onChange = () => {

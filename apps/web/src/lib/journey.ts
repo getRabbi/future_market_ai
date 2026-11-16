@@ -166,6 +166,21 @@ export const RANKS: Rank[] = RANK_NAMES.map(([name, meaning], i) => ({ level: i 
 /** Task id → done (true / false) or unknown (null: not loaded, or not readable with this role). */
 export type Progress = Partial<Record<ProbeKey, boolean | null>>;
 
+/**
+ * A fresh probe whose check failed for a passing reason (rate limit, network, server error) must not
+ * undo what an earlier probe already established: an unknown result keeps the last known answer.
+ * Without this, one failed request showed a finished workspace as "Step 1 of 7" and the Home
+ * "Next best action" asked for work that was already done.
+ */
+export function mergeProgress(next: Progress, prev: Progress | undefined): Progress {
+  if (!prev) return next;
+  const out: Progress = { ...next };
+  for (const k of Object.keys(prev) as ProbeKey[]) {
+    if ((out[k] === null || out[k] === undefined) && typeof prev[k] === 'boolean') out[k] = prev[k];
+  }
+  return out;
+}
+
 export type StageState = 'done' | 'current' | 'upcoming';
 
 export interface JourneyView {

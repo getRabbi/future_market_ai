@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SECTIONS, sectionBySlug } from '../src/lib/catalog.js';
-import { canDo, evaluate, PIPELINE, type Progress, RANK_THRESHOLDS, RANKS, SECTION_FLOWS, STAGES, stageOf, TASKS, TOTAL_XP } from '../src/lib/journey.js';
+import { canDo, evaluate, mergeProgress, PIPELINE, type Progress, RANK_THRESHOLDS, RANKS, SECTION_FLOWS, STAGES, stageOf, TASKS, TOTAL_XP } from '../src/lib/journey.js';
 import { pageBySlug } from '../src/lib/nav.js';
 
 const all = (done: boolean): Progress => Object.fromEntries(TASKS.map((t) => [t.id, done]));
@@ -59,5 +59,23 @@ describe('growth journey (seven product steps, D-048)', () => {
     expect(stageOf('experiments')?.key).toBe('improve');
     expect(stageOf('governance')?.key).toBe('setup');
     expect(stageOf('tools')).toBeUndefined();
+  });
+});
+
+describe('journey progress after a failed check', () => {
+  it('keeps the last known answer when a fresh check is unknown, so a finished journey never drops back to step 1', () => {
+    const prev = all(true);
+    const failed: Progress = Object.fromEntries(TASKS.map((t) => [t.id, null]));
+    const merged = mergeProgress(failed, prev);
+    expect(evaluate(merged, ['owner']).done).toBe(TASKS.length);
+    expect(evaluate(failed, ['owner']).done).toBe(0);
+  });
+
+  it('still lets a real answer replace the old one, in either direction', () => {
+    const id = TASKS[1]!.id;
+    expect(mergeProgress({ [id]: false }, { [id]: true })[id]).toBe(false);
+    expect(mergeProgress({ [id]: true }, { [id]: false })[id]).toBe(true);
+    expect(mergeProgress({ [id]: null }, undefined)[id]).toBeNull();
+    expect(mergeProgress({ [id]: null }, { [id]: null })[id]).toBeNull();
   });
 });
