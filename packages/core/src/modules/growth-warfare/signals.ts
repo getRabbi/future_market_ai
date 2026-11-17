@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { brandChannels, competitorCandidates, competitorObservations, competitors, connections, type DbOrTx, evidenceRecords, growthOpportunities, growthSignals, growthWarfareSettings, keywordMetrics, type Tx, trends, withTenant } from '@futuregrow/db';
+import { brandChannels, competitorCandidates, competitorObservations, competitorSources, competitors, connections, type DbOrTx, evidenceRecords, growthOperations, growthOpportunities, growthSignals, growthWarfareSettings, keywordMetrics, type Tx, trends, withTenant } from '@futuregrow/db';
 import { invalid, notFound, sha256Canonical, sha256Hex } from '@futuregrow/observability';
 import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { type Actor, type CoreDeps, systemActor } from '../../deps.js';
@@ -23,6 +23,8 @@ const ACTOR_REF = 'system:growth-warfare';
 /** Minimum distinct people behind an aggregated first-party signal (no individual is exposed). */
 export const MIN_AGGREGATE = 5;
 const LOOKBACK_DAYS = 30;
+/** Trend directions that count as a demand shift. */
+const DIRECTIONAL = ['rising', 'shift_up', 'falling', 'shift_down'];
 
 type SignalKind = 'high_intent_demand' | 'unmet_need' | 'switching_intent' | 'emerging_problem' | 'demand_shift' | 'competitor_price_change' | 'competitor_feature_change' | 'competitor_packaging_change' | 'competitor_positioning_change' | 'competitor_availability_change' | 'competitor_policy_change';
 
@@ -223,7 +225,7 @@ async function trendSignals(t: DbOrTx, cfg: BrandConfig, now: Date): Promise<Can
   const rows = await t
     .select()
     .from(trends)
-    .where(and(gte(trends.createdAt, new Date(now.getTime() - LOOKBACK_DAYS * DAY)), inArray(trends.direction, ['rising', 'shift_up', 'falling', 'shift_down'])))
+    .where(and(gte(trends.createdAt, new Date(now.getTime() - LOOKBACK_DAYS * DAY)), inArray(trends.direction, DIRECTIONAL)))
     .orderBy(desc(trends.createdAt))
     .limit(200);
   const out: CandidateSignal[] = [];
@@ -293,15 +295,13 @@ async function querySignals(t: DbOrTx, cfg: BrandConfig, competitorNames: string
   return out;
 }
 
-/**
- * First-party inquiries and consented app searches, aggregated by matched brand keyword and need
- * pattern. Only counts of distinct people are kept (k ≥ MIN_AGGREGATE); the aggregate is admitted
- * as internal evidence so the signal has provenance without copying anyone's words.
- */
-async function firstPartySignals(t: Tx, tenantId: string, cfg: BrandConfig, competitorNames: string[], now: Date): Promise<CandidateSignal[]> {
-  if (!cfg.keywords.length) return [];
+type FirstPartyGroup = { kind: SignalKind; keyword: string; units: Set<string>; table: string };
+
+/** Read-only half of the first-party source: raw counts and keyword groups (no evidence is written). */
+async function collectFirstParty(t: DbOrTx, cfg: BrandConfig, competitorNames: string[], now: Date): Promise<{ messages: number; searches: number; groups: Map<string, FirstPartyGroup> }> {
+  const groups = new Map<string, FirstPartyGroup>();
+  if (!cfg.keywords.length) return { messages: 0, searches: 0, groups };
   const since = new Date(now.getTime() - LOOKBACK_DAYS * DAY);
-  const out: CandidateSignal[] = [];
   const inquiries = (
     await t.execute<{ conversation_id: string; text: string }>(sql`
       select m.conversation_id, m.redacted_text as text from conversation_messages m
@@ -316,7 +316,6 @@ async function firstPartySignals(t: Tx, tenantId: string, cfg: BrandConfig, comp
              or exists (select 1 from consent_state c where c.profile_id = e.profile_id and c.purpose = 'analytics' and c.status = 'granted'))
       limit 5000`)
   ).rows;
-  const groups = new Map<string, { kind: SignalKind; keyword: string; units: Set<string>; table: string }>();
   const add = (table: string, unit: string, text: string | null) => {
     if (!text || !unit) return;
     const kind = classifyQuery(text, competitorNames);
@@ -330,6 +329,17 @@ async function firstPartySignals(t: Tx, tenantId: string, cfg: BrandConfig, comp
   };
   for (const r of inquiries) add('conversation_messages', r.conversation_id, r.text);
   for (const r of searches) add('customer_events', r.unit, r.text);
+  return { messages: inquiries.length, searches: searches.length, groups };
+}
+
+/**
+ * First-party inquiries and consented app searches, aggregated by matched brand keyword and need
+ * pattern. Only counts of distinct people are kept (k ≥ MIN_AGGREGATE); the aggregate is admitted
+ * as internal evidence so the signal has provenance without copying anyone's words.
+ */
+async function firstPartySignals(t: Tx, tenantId: string, cfg: BrandConfig, competitorNames: string[], now: Date): Promise<CandidateSignal[]> {
+  const { groups } = await collectFirstParty(t, cfg, competitorNames, now);
+  const out: CandidateSignal[] = [];
   for (const [key, g] of groups) {
     if (g.units.size < MIN_AGGREGATE) continue;
     const people = g.units.size;
@@ -392,6 +402,15 @@ export interface ScanResult {
   sources: Record<string, number>;
 }
 
+/** D-055: competitors that discovery enrolled for the brand count as well, so the brand profile never needs ids copied by hand. */
+async function withEnrolledCompetitors(t: DbOrTx, brandId: string, profile: BrandConfig): Promise<BrandConfig> {
+  const enrolled = await t
+    .select({ id: competitorCandidates.competitorId })
+    .from(competitorCandidates)
+    .where(and(eq(competitorCandidates.brandId, brandId), eq(competitorCandidates.status, 'enrolled'), isNotNull(competitorCandidates.competitorId)));
+  return { ...profile, competitorIds: [...new Set([...profile.competitorIds, ...enrolled.map((r) => r.id!)])].slice(0, 200) };
+}
+
 async function publishingChannels(t: DbOrTx, brandId: string): Promise<number> {
   const rows = await t
     .select({ provider: connections.provider })
@@ -448,13 +467,7 @@ export async function scanBrand(deps: CoreDeps, tenantId: string, brandId: strin
   return withTenant(deps.db, { tenantId, actor: ACTOR_REF }, async (t) => {
     const [brand] = (await t.execute<{ id: string; name: string }>(sql`select id, name from brands where id = ${brandId}`)).rows;
     if (!brand) throw notFound('brand');
-    const { config: profile } = await getBrandConfig(t, brandId);
-    // D-055: competitors that discovery enrolled for this brand count as well, so the brand profile never needs ids copied by hand.
-    const enrolled = await t
-      .select({ id: competitorCandidates.competitorId })
-      .from(competitorCandidates)
-      .where(and(eq(competitorCandidates.brandId, brandId), eq(competitorCandidates.status, 'enrolled'), isNotNull(competitorCandidates.competitorId)));
-    const config: BrandConfig = { ...profile, competitorIds: [...new Set([...profile.competitorIds, ...enrolled.map((r) => r.id!)])].slice(0, 200) };
+    const config = await withEnrolledCompetitors(t, brandId, (await getBrandConfig(t, brandId)).config);
     const names = config.competitorIds.length ? (await t.select({ name: competitors.name }).from(competitors).where(inArray(competitors.id, config.competitorIds))).map((r) => r.name) : [];
     const sweep = await sweepSignals(t, tenantId, brandId, now);
     const lists = { competitor: await competitorSignals(t, config, now), trend: await trendSignals(t, config, now), query: await querySignals(t, config, names, now), firstParty: await firstPartySignals(t, tenantId, config, names, now) };
@@ -538,6 +551,94 @@ export async function scanBrand(deps: CoreDeps, tenantId: string, brandId: strin
     return { brandId, candidates: all.length, created, updated, opportunities, expired: sweep.expired, rejected: sweep.rejected, sources: { competitor: lists.competitor.length, trend: lists.trend.length, query: lists.query.length, firstParty: lists.firstParty.length } };
   });
 }
+
+/* ------------------------------------------------------------------ */
+/* What F1 is watching (read-only, for the Control Room)               */
+/* ------------------------------------------------------------------ */
+
+/** ready = it would hand the next scan a signal; waiting = connected but nothing new; missing = no source yet. */
+export type InputState = 'ready' | 'waiting' | 'missing';
+
+/**
+ * F1's four inputs for one brand, read exactly as a scan reads them, so the Control Room can say
+ * why nothing shows yet and what would change that. `candidates` is how many signals each input
+ * would hand the next scan. Unlike a scan it writes nothing (no aggregate evidence is admitted).
+ */
+export async function signalInputs(t: DbOrTx, brandId: string, settings: Settings, now: Date) {
+  const config = await withEnrolledCompetitors(t, brandId, (await getBrandConfig(t, brandId)).config);
+  const ids = config.competitorIds;
+  const names = ids.length ? (await t.select({ name: competitors.name }).from(competitors).where(inArray(competitors.id, ids))).map((r) => r.name) : [];
+  const since = new Date(now.getTime() - LOOKBACK_DAYS * DAY);
+  const n = sql<number>`count(*)::int`;
+
+  // Competitor pages: approved sources of the brand's competitors, their crawl state and literal changes.
+  const pages = ids.length
+    ? await t
+        .select({ lastFetchedAt: competitorSources.lastFetchedAt, robotsAllowed: competitorSources.lastRobotsAllowed, hours: competitorSources.crawlIntervalHours })
+        .from(competitorSources)
+        .where(and(inArray(competitorSources.competitorId, ids), eq(competitorSources.status, 'approved')))
+    : [];
+  const fetched = pages.map((p) => p.lastFetchedAt?.getTime()).filter((x): x is number => typeof x === 'number');
+  const due = pages.map((p) => (p.lastFetchedAt ? p.lastFetchedAt.getTime() + p.hours * 3_600_000 * 0.9 : now.getTime()));
+  const [changes] = ids.length
+    ? await t
+        .select({ n })
+        .from(competitorObservations)
+        .where(and(inArray(competitorObservations.competitorId, ids), eq(competitorObservations.evidenceFlag, 'P'), gte(competitorObservations.observedAt, since)))
+    : [{ n: 0 }];
+  const competitorReady = (await competitorSignals(t, config, now)).length;
+
+  const [recentTrends] = await t
+    .select({ n })
+    .from(trends)
+    .where(and(gte(trends.createdAt, since), inArray(trends.direction, DIRECTIONAL)));
+  const trendReady = (await trendSignals(t, config, now)).length;
+
+  const [searchConsole] = await t
+    .select({ n })
+    .from(connections)
+    .where(and(eq(connections.provider, 'search_console'), eq(connections.status, 'active')));
+  const [latestQueries] = await t.select({ end: keywordMetrics.periodEnd }).from(keywordMetrics).orderBy(desc(keywordMetrics.periodEnd)).limit(1);
+  const queryReady = (await querySignals(t, config, names, now)).length;
+
+  const first = await collectFirstParty(t, config, names, now);
+  const firstReady = [...first.groups.values()].filter((g) => g.units.size >= MIN_AGGREGATE).length;
+
+  const [last] = await t
+    .select({ finishedAt: growthOperations.finishedAt, result: growthOperations.result })
+    .from(growthOperations)
+    .where(and(eq(growthOperations.brandId, brandId), eq(growthOperations.kind, 'signal_scan'), eq(growthOperations.status, 'completed')))
+    .orderBy(desc(growthOperations.finishedAt))
+    .limit(1);
+  const lastResult = (last?.result ?? {}) as Partial<ScanResult>;
+  const state = (ready: number, connected: boolean): InputState => (ready > 0 ? 'ready' : connected ? 'waiting' : 'missing');
+  const quotas = Object.values(settings.effective.channelQuotas as Record<string, number>);
+
+  return {
+    lookbackDays: LOOKBACK_DAYS,
+    keywords: config.keywords.length,
+    lastScan: last?.finishedAt ? { at: last.finishedAt.toISOString(), candidates: lastResult.candidates ?? 0, created: lastResult.created ?? 0, opportunities: lastResult.opportunities ?? 0, sources: lastResult.sources ?? {} } : null,
+    nextScanAfter: settings.features.F1 && settings.lastScanAt ? new Date(new Date(settings.lastScanAt).getTime() + settings.effective.monitoringHours * 3_600_000).toISOString() : null,
+    competitor: {
+      state: state(competitorReady, pages.length > 0),
+      competitors: ids.length,
+      pages: pages.length,
+      checkedPages: fetched.length,
+      blockedPages: pages.filter((p) => p.robotsAllowed === false).length,
+      lastCheckedAt: fetched.length ? new Date(Math.max(...fetched)).toISOString() : null,
+      nextCheckAt: due.length ? new Date(Math.min(...due)).toISOString() : null,
+      changes: changes?.n ?? 0,
+      candidates: competitorReady,
+    },
+    trend: { state: state(trendReady, (recentTrends?.n ?? 0) > 0), recent: recentTrends?.n ?? 0, candidates: trendReady },
+    search: { state: state(queryReady, (searchConsole?.n ?? 0) > 0 || Boolean(latestQueries)), connected: (searchConsole?.n ?? 0) > 0, latestPeriodEnd: latestQueries?.end ?? null, candidates: queryReady },
+    firstParty: { state: state(firstReady, first.messages + first.searches > 0), messages: first.messages, searches: first.searches, candidates: firstReady, minPeople: MIN_AGGREGATE },
+    // Even with opportunities nothing goes out while these stay at zero / off (owner settings).
+    execution: { channelQuota: quotas.reduce((a, b) => a + b, 0), externalOperations: settings.controls.externalOperations, dailyAiBudgetUsd: settings.controls.dailyAiBudgetUsd },
+  };
+}
+
+export type SignalInputs = Awaited<ReturnType<typeof signalInputs>>;
 
 /**
  * Scheduled monitoring: scans each working brand when F1 is on and the monitoring interval has

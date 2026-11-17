@@ -31,6 +31,23 @@ Search & Acquisition Tools, Conversion Rescue, Campaign Experiments, Strategy Le
 Settings, Execution History. It is in Goals under "More" so the approved sidebar (D-048) is
 unchanged; All tools and search list it.
 
+**What Growth Warfare is watching** (Growth Overview, since 2026-11-17). Everything after F1
+starts from a signal, so an empty room needs a reason. The panel shows the four F1 inputs for the
+selected brand, read exactly as a scan reads them (`signals.signalInputs`, returned as `inputs` by
+`GET /v1/growth-warfare/overview`):
+
+| Input | What the row shows |
+|---|---|
+| Competitor page changes | Monitored pages (profile and discovery-enrolled competitors) and how many were checked. The last and next check, and literal [P] changes in 30 days. The first check of a page is only its baseline. |
+| Search queries | Search Console connection and the latest reported period. |
+| Market trends | Trends with a clear direction, and whether any matches the brand keywords. |
+| Customer questions and app searches | Customer messages and consented app searches (k ≥ 5 people). |
+
+- Each row is *ready* (it would hand the next scan a signal), *waiting* (connected, nothing new) or *not set up*.
+- The panel also shows the last scan's result and when the next automatic scan runs.
+- When channel quotas are 0 or external operations are off, it states that nothing goes out yet and links to Growth Settings.
+- Reading the inputs writes nothing: unlike a scan, it admits no aggregate evidence.
+
 **Switches.** F1–F6 per tenant (per-brand overrides can only switch off). OFF is enforced in every
 service entry point (`requireFeature`, 409 `FEATURE_OFF`) and in the scheduled tick.
 

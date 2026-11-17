@@ -9,7 +9,7 @@ import { growthAiSpend } from './copy.js';
 import { brainContext, recommendFollowUps, syncLearning, tacticPriorities } from './darwin.js';
 import { listOperations, runOperation } from './operations.js';
 import { AGGRESSION_PROFILES, engageEmergencyStop, FEATURE_INFO, featureActive, getBrandConfig, getSettings, workingBrandIds } from './settings.js';
-import { GW_ACTOR, listOpportunities, scanTenant } from './signals.js';
+import { GW_ACTOR, listOpportunities, scanTenant, signalInputs } from './signals.js';
 
 /**
  * Growth Warfare OS (D-054): F1–F6 as one policy-bounded layer over the existing modules. It adds
@@ -98,6 +98,8 @@ export async function controlRoom(t: DbOrTx, deps: Pick<CoreDeps, 'clock' | 'con
       externalOperations: s.controls.externalOperations,
       paidOperations: s.controls.paidOperations,
     },
+    // What F1 is watching for the brand, so an empty room says why and what would change it.
+    inputs: selected ? await signalInputs(t, selected, s, now) : null,
     priorities: selected ? await tacticPriorities(t, selected) : [],
     followUps: selected ? await recommendFollowUps(t, selected) : [],
     generatedAt: now.toISOString(),

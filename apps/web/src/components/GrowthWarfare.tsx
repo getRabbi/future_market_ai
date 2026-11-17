@@ -87,6 +87,20 @@ interface Room {
   readiness: { modelGateway: boolean; approvedModels: number; searchConsole: boolean; aiVisibilityProvider: string; channels: Readiness[]; aiBudget: { growthWarfare: { todayUsd: number; monthUsd: number; dailyLimitUsd: number; monthlyLimitUsd: number } }; externalOperations: boolean; paidOperations: boolean };
   priorities: { tactic: string; randomizedTests: number; wins: number; losses: number; posteriorMean: number; declining: string | null; observationalNotes: number }[];
   followUps: { memoryId: string; kind: string; recommendation: string; caution: string }[];
+  inputs: Inputs | null;
+}
+type InputState = 'ready' | 'waiting' | 'missing';
+/** F1's four inputs for the brand (read the same way a scan reads them). */
+interface Inputs {
+  lookbackDays: number;
+  keywords: number;
+  lastScan: { at: string; candidates: number; created: number; opportunities: number; sources: Record<string, number> } | null;
+  nextScanAfter: string | null;
+  competitor: { state: InputState; competitors: number; pages: number; checkedPages: number; blockedPages: number; lastCheckedAt: string | null; nextCheckAt: string | null; changes: number; candidates: number };
+  trend: { state: InputState; recent: number; candidates: number };
+  search: { state: InputState; connected: boolean; latestPeriodEnd: string | null; candidates: number };
+  firstParty: { state: InputState; messages: number; searches: number; candidates: number; minPeople: number };
+  execution: { channelQuota: number; externalOperations: boolean; dailyAiBudgetUsd: number };
 }
 interface Opportunity {
   id: string;
@@ -231,7 +245,7 @@ export function GrowthWarfare({ me }: { me: Me }) {
           Growth Warfare works per brand: its keywords, competitors, funnel, channels and budgets stay separate.
         </EmptyState>
       ) : tab === 'overview' ? (
-        <Overview r={r} />
+        <Overview r={r} onSettings={() => setTab('settings')} />
       ) : tab === 'opportunities' ? (
         <Opportunities me={me} brandId={brandId!} on={r.features.F1.on} onChange={reload} />
       ) : tab === 'conquest' ? (
@@ -255,7 +269,97 @@ export function GrowthWarfare({ me }: { me: Me }) {
   );
 }
 
-function Overview({ r }: { r: Room }) {
+const INPUT_PILL: Record<InputState, [tone: string, label: (n: number) => string]> = {
+  ready: ['ok', (n) => `${n} signal${n === 1 ? '' : 's'} available`],
+  waiting: ['info', () => 'Waiting for new data'],
+  missing: ['muted', () => 'Not set up'],
+};
+
+function InputRow({ title, state, ready, href, linkLabel, children }: { title: string; state: InputState; ready: number; href: string; linkLabel: string; children: ReactNode }) {
+  const [tone, label] = INPUT_PILL[state];
+  return (
+    <li className="row-item">
+      <div className="row">
+        <div>
+          <strong>{title}</strong>
+          <div className="small">{children}</div>
+          <a className="small" href={href}>
+            {linkLabel}
+          </a>
+        </div>
+        <span className={`status-pill ${tone}`}>{label(ready)}</span>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * What F1 is watching: its four inputs, the last scan and the next one. Without it an empty room
+ * looks broken; with it the owner sees why nothing shows yet and what would change that.
+ */
+function WatchPanel({ i, empty, onSettings }: { i: Inputs; empty: boolean; onSettings: () => void }) {
+  const { competitor: cp, search: sc, trend: tr, firstParty: fp } = i;
+  const ready = cp.candidates + sc.candidates + tr.candidates + fp.candidates;
+  const quiet = i.execution.channelQuota === 0 || !i.execution.externalOperations;
+  return (
+    <Section title="What Growth Warfare is watching" hint={`Signals come only from these four inputs (last ${i.lookbackDays} days), matched against your ${i.keywords} brand keywords and competitors.`}>
+      <p className="small">
+        {i.lastScan ? (
+          <>
+            Last scan {relativeTime(i.lastScan.at)}: {i.lastScan.candidates} signal{i.lastScan.candidates === 1 ? '' : 's'} found, {i.lastScan.opportunities} new opportunit{i.lastScan.opportunities === 1 ? 'y' : 'ies'}.{' '}
+          </>
+        ) : (
+          'No scan has run yet. '
+        )}
+        {i.nextScanAfter ? <>Next automatic scan {new Date(i.nextScanAfter).getTime() <= Date.now() ? 'within the next 15 minutes' : relativeTime(i.nextScanAfter)}.</> : 'Turn on F1 in Growth Settings to scan automatically.'}
+      </p>
+      {empty && ready === 0 ? (
+        <div className="notice" role="status">
+          <strong>Nothing to show yet, and that is expected.</strong>
+          <div className="small">None of the inputs below has new data to turn into a signal. Each row says what it is waiting for. Signals, opportunities and everything after them start from here.</div>
+        </div>
+      ) : null}
+      <ul className="row-list">
+        <InputRow title="Competitor page changes" state={cp.state} ready={cp.candidates} href="/app/market/" linkLabel="Open Market & Competitors">
+          {cp.pages ? (
+            <>
+              {cp.pages} page{cp.pages === 1 ? '' : 's'} of {cp.competitors} competitor{cp.competitors === 1 ? '' : 's'} monitored; {cp.checkedPages} checked{cp.lastCheckedAt ? `, last ${relativeTime(cp.lastCheckedAt)}` : ''}. {cp.changes} change{cp.changes === 1 ? '' : 's'} seen in {i.lookbackDays} days.
+              {cp.nextCheckAt ? ` Next check ${new Date(cp.nextCheckAt).getTime() <= Date.now() ? 'within the hour' : relativeTime(cp.nextCheckAt)}.` : ''} The first check of a page is its baseline; a signal needs a later change.
+              {cp.blockedPages ? ` ${cp.blockedPages} page${cp.blockedPages === 1 ? '' : 's'} disallow checking (robots.txt).` : ''}
+            </>
+          ) : (
+            'No competitor page is monitored. Competitor discovery finds competitors and monitors their store listings and home pages.'
+          )}
+        </InputRow>
+        <InputRow title="Search queries (Search Console)" state={sc.state} ready={sc.candidates} href="/app/search-console/" linkLabel="Open Search Console">
+          {sc.connected || sc.latestPeriodEnd
+            ? `Latest reported period ends ${sc.latestPeriodEnd ?? 'not yet'}. Queries with 20 or more impressions that match your keywords become signals.`
+            : 'Not connected. It needs a website you own, verified in Google Search Console. It gives the strongest demand signals: what people search for.'}
+        </InputRow>
+        <InputRow title="Market trends" state={tr.state} ready={tr.candidates} href="/app/market/" linkLabel="Open Market & Competitors">
+          {tr.recent ? `${tr.recent} trend${tr.recent === 1 ? '' : 's'} with a clear direction in ${i.lookbackDays} days; only trends about your keywords count.` : `No trend with a clear direction in ${i.lookbackDays} days.`}
+        </InputRow>
+        <InputRow title="Customer questions and app searches" state={fp.state} ready={fp.candidates} href="/app/conversations/" linkLabel="Open Conversations">
+          {fp.messages || fp.searches ? `${fp.messages} customer message${fp.messages === 1 ? '' : 's'} and ${fp.searches} consented app search${fp.searches === 1 ? '' : 'es'} in ${i.lookbackDays} days.` : `No customer messages or consented app searches in ${i.lookbackDays} days.`} A signal needs at least{' '}
+          {fp.minPeople} different people asking about the same keyword; no one is shown individually.
+        </InputRow>
+      </ul>
+      {quiet ? (
+        <div className="notice warn">
+          <div className="small">
+            <strong>When opportunities appear, nothing goes out yet.</strong> {i.execution.channelQuota === 0 ? 'Every channel quota is 0' : 'Channel quotas are set'}
+            {i.execution.externalOperations ? '' : ' and external operations are off'}, so channel tasks wait. AI budget for Growth Warfare: ${i.execution.dailyAiBudgetUsd.toFixed(2)} a day.{' '}
+            <button type="button" className="link-btn" onClick={onSettings}>
+              Open Growth Settings
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </Section>
+  );
+}
+
+function Overview({ r, onSettings }: { r: Room; onSettings: () => void }) {
   const c = r.counts as Record<string, Record<string, number>>;
   const sum = (o: Record<string, number> | undefined) => Object.values(o ?? {}).reduce((a, b) => a + b, 0);
   const tiles = [
@@ -279,6 +383,7 @@ function Overview({ r }: { r: Room }) {
         ))}
       </div>
       <p className="small muted">{r.outcomes.note}</p>
+      {r.inputs ? <WatchPanel i={r.inputs} empty={tiles[0][1] === 0 && tiles[1][1] === 0} onSettings={onSettings} /> : null}
       <Section title="Provider readiness" hint="Only real, connected and approved providers are used. Missing ones are shown as missing.">
         <ul className="row-list">
           <li className="row-item">
