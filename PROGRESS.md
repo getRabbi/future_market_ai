@@ -204,7 +204,7 @@ The sequence follows the product plan's P0 gates (evidence, policy, capability/l
 | Production-verified | Facebook Page photo/text posts through M23 with read-back verification (EPS-topik-Bangla, Development-mode app; public visibility not independently verified); daily Page post counters; Studio calendar, branded cards, evening window, rolling 24 h limit; conversion ingestion routes deployed (no live app traffic yet). |
 | Implemented, fixture-tested only | Instagram, TikTok, YouTube, LinkedIn publishing executors; X executor; brand/campaign registry and brand-scoped reports; platform readiness; learning comparisons; media registry; spam screen. |
 | Configured, awaiting credentials | Google Ads, Shopify, App Store Connect (sales and Analytics Reports), Resend, PostHog, Chatwoot; Google Play bulk reports and vitals (D-045, B-022); stock media vendor. |
-| Awaiting external approval or owner decision | Meta App Review / Live mode and `read_insights`; TikTok audit; LinkedIn Community Management API (B-020); X spend (B-019); Reddit API (B-021); image model approval (B-011). |
+| Awaiting external approval or owner decision | Meta App Review / Live mode (`read_insights` granted 2026-11-15); TikTok audit; LinkedIn Community Management API (B-020); X spend (B-019); Reddit API (B-021); image model approval (B-011). |
 | Not implemented | Video production for YouTube/TikTok; independent device/store install verification; engagement/analytics ingestion for non-Meta platforms; stock/AI vendor adapters. |
 
 ## Completion summary
@@ -234,13 +234,35 @@ All 24 modules are implemented and tested against real PostgreSQL with provider 
 ### Growth Warfare OS F1–F6 (2026-11-12) — ☑ (PR #34 → PR #32, released as `5cddfa8` on 2026-11-12; Pages `eec2fb77`; every feature OFF)
 
 - D-054: Market Signal Hunter, Competitor Conquest Forge, Growth Blitz & Distribution Mesh, Search & Utility Capture Engine, Conversion Rescue & Viral Loops, Campaign Darwin Engine; Control Room `/app/growth-warfare`; public tool page `/t/?id=…`; Autopilot research/ideas/decide/learn hand-off; durable multi-process AI spend reservations.
-- Migration `0030_growth_warfare` (additive, 12 tables), applied in production on 2026-11-12 and now the newest applied migration: PR #33 must regenerate its 0028/0029 as 0031/0032 (newer journal `when`) before it merges, or Drizzle skips them. Worker `growth_warfare_tick` (*/15). Every feature and every external or paid operation defaults OFF.
+- Migration `0030_growth_warfare` (additive, 12 tables), applied in production on 2026-11-12 then the newest applied migration: PR #33 must regenerate its 0028/0029 with a newer journal `when` before it merges, or Drizzle skips them. Since D-055 applied 0031 on 2026-11-15, they become 0032/0033. Worker `growth_warfare_tick` (*/15). Every feature and every external or paid operation defaults OFF.
 - Tests: `packages/core/test/growth-warfare.test.ts` (20), `apps/api/test/growth-warfare-api.test.ts` (5), web catalog covers every Control Room and public-tool call. Blockers: B-028 (plus B-026 for paid creation). Details: docs/GROWTH_WARFARE_OS.md.
 - Release (owner-authorized, 2026-11-12 06:57 UTC): verified pre-deploy backup; PR #34 merged into `feat/remaining-development` (`6880bf4`), PR #32 into `main` (`5cddfa8`); api, worker, analytics-job and media-job rebuilt; api `migrate {ok:true}` (29 migrations, newest 0030); Pages `eec2fb77`. Local verification before the merge: TypeScript 628/628, Python 45/45, browser E2E 22/22 (it found a null-data crash in the competitor discovery panels, fixed in `8d4d865`); GitHub CI on the merge commit green. Live read-only checks: `/statusz` ok, `/app/growth-warfare/` and `/t/` 200, OpenAPI 355 paths (38 growth-warfare, 4 public tool), every Growth Warfare table empty (no settings row, so every feature reads OFF), `ai_spend_reservations` empty, worker `growth_warfare_tick` ran with no work. Rollback: api/worker/jobs `b204935`, Pages `6ba3b1db` (0024–0030 are additive).
 - [ ] Owner: switch features on per tenant (admin + two-factor) once the B-028 prerequisites are in place.
 
-### Automatic competitor discovery (2026-11-15) — ◐ (implemented and tested on branch `feat/auto-competitor-discovery`; not merged or deployed)
+### Automatic competitor discovery (2026-11-15/16) — ☑ (PR #36, released as `6b50e07` on 2026-11-15; Pages `a6007b80`; follow-ups PR #37–#39 and #41)
 
 - D-055: Tavily web search (free key) + App Store, queries from the Growth Warfare brand keywords (templates, rotation), AI judge with a literal-quote guard, auto-enrolment from confidence 0.8, one standing approval for monitoring public listings and home pages, monthly web search cap, F1 reads enrolled competitors. Migration 0031 (additive). Guide: docs/COMPETITOR_DISCOVERY.md.
-- Tests: `packages/core/test/competitor-discovery-auto.test.ts` (planning, identities, Tavily + judge + standing approval + F1, monthly cap, lexical fallback, refused key) and the existing discovery tests.
-- [ ] Owner: free Tavily key in Connections; save the discovery settings once.
+- Release (owner-authorized, 2026-11-15 ~19:35 UTC): CI 7/7, merged as `6b50e07`; api and worker rebuilt, `migrate {ok:true}` (newest 0031); Pages `a6007b80`. Rollback: api/worker/jobs `fe1f83b`, Pages `eec2fb77` (0031 is additive).
+- Follow-ups, each owner-authorized, CI green and api/worker only:
+  - PR #37 (`0c8b1cc`, 2026-11-15): Tavily connection test and hourly health check through `GET /usage` (no search credit). Before it, saving the key showed "invalid" because no test existed for the provider.
+  - PR #38 (`d978698`, 2026-11-16): the AI judge works on Groq. Low-effort purposes send `reasoning_effort: low`, and the judge sees 20 results × 220 characters with 6,000 tokens. Unjudged batches are repeated, judge rejections demote earlier lexical candidates, and a person's *Queue discovery* runs now.
+  - PR #39 (`99352d9`, 2026-11-16): self-cleaning. App directories (AppBrain, APK mirrors and similar) are excluded. Each run rejects earlier web candidates on excluded hosts and revokes the monitoring source only when the standing approval alone approved it.
+  - PR #41 (2026-11-17): a competitor that discovery created and self-cleaning then retired (every candidate rejected, no approved or pending source) is left out of the Competitors list and the comparison. Nothing is deleted.
+- Live: the owner added the Tavily key and saved the discovery settings on 2026-11-15 (EPS brand, BD, 24 h, App Store too, AI judge, standing approval). The judged run on 2026-11-16 enrolled three Google Play listings and one false positive (an AppBrain directory page), which PR #39 cleaned up. Signals appear only once a monitored page changes; the first crawl is the baseline.
+- Tests: `packages/core/test/competitor-discovery-auto.test.ts` (planning, identities, Tavily + judge + standing approval + F1, monthly cap, lexical fallback, refused key, re-judging, self-cleaning, retirement, Tavily usage check) and the existing discovery tests.
+- [x] Owner: free Tavily key in Connections; save the discovery settings once.
+- [ ] Owner (optional): remove the two duplicate Tavily connections; only `main` is used.
+
+### UX layout repair (2026-11-16/17) — ☑ (PR #40, released as `9548a94` on 2026-11-17; Pages `81343439`)
+
+- The owner reported the Home page broken to the left of Performance. A read-only sweep of all 42 pages at 1600, 1366, 1024 and 390 px found the cause and seven related problems:
+  - The Next best action card used its tone as a bare class. The "calm" tone matched the global `.calm` note style (`display: flex`), so when nothing needed the user, the card's text wrapped one letter per line. Tone classes are now prefixed.
+  - The Performance pickers spilled out of their card.
+  - A transient probe failure (rate limit, network) dropped a finished journey to "Step 1 of 7" and Next best action repeated done work. An unknown result now keeps the last known answer, and the probe retries.
+  - Growth Warfare: counters had no tile styling and readiness badges stretched across their row.
+  - Row-list status badges sat wherever the text ended.
+  - Wide tables hid their row buttons; the Actions column now stays pinned on the right.
+  - On a phone, the Connections page was 42 px wider than the screen.
+  - A long status was clipped in the Calendar's narrow day column.
+- Tests: `apps/web/test/layout-classes.test.ts` and the journey merge tests in `apps/web/test/journey.test.ts`. Local TypeScript suite 639/639, CI 7/7.
+- Verified on live after the deploy: 84 screens (42 pages at desktop and 390 px) with no overflow, squeezed text, overlap or API error. Web only; rollback Pages `a6007b80`.

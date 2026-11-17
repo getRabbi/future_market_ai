@@ -8,7 +8,8 @@ import { type CoreHarness, createCoreHarness } from '../../../test/helpers/core.
 import { clearModelCache, createModelGateway } from '../src/agents.js';
 import { checkConnectionHealth, createConnection, testConnectionCredentials } from '../src/modules/connections.js';
 import * as gw from '../src/modules/growth-warfare/index.js';
-import { configureDiscovery, planQueries, runDiscovery } from '../src/modules/m05-competitors/discovery.js';
+import { configureDiscovery, DISCOVERED_NOTE, isRetiredDiscovery, planQueries, runDiscovery } from '../src/modules/m05-competitors/discovery.js';
+import { comparison, listCompetitors } from '../src/modules/m05-competitors/index.js';
 import { countryName, isNonCompetitorHost, webIdentity } from '../src/modules/m05-competitors/search-providers.js';
 import { approveModel, seedModelRegistry } from '../src/modules/m24-governance/index.js';
 
@@ -90,6 +91,9 @@ describe('query planning and identities (D-055)', () => {
     // Never competitors: providers, mirrors, document hosts, government; official non-government bodies are left to the judge.
     expect(['eps.go.kr', 'www.bangladesh.gov.bd', 'agency.gov', 'tavily.com', 'apkpure.com', 'www.scribd.com', 'en.wikipedia.org'].every(isNonCompetitorHost)).toBe(true);
     expect(['rival.example', 'epstopik.hrdkorea.or.kr', 'governance-courses.example'].some(isNonCompetitorHost)).toBe(false);
+    // Software download directories list other publishers' apps (soft112 was enrolled live on 2026-11-16).
+    expect(['korean-eps-topik.soft112.com', 'www.softpedia.com', 'download.cnet.com', 'www.appbrain.com'].every(isNonCompetitorHost)).toBe(true);
+    expect(['cnet.com', 'news.cnet.com'].some(isNonCompetitorHost)).toBe(false);
     expect(webIdentity('http://rival.example/')).toBeNull();
     expect(webIdentity('https://10.0.0.1/')).toBeNull();
     expect(webIdentity('https://play.google.com/store/search?q=topik')).toBeNull();
@@ -291,7 +295,7 @@ describe('self-cleaning of excluded hosts (D-055)', () => {
           ? await tx((t) =>
               t
                 .insert(competitors)
-                .values({ tenantId: h.tenantId, name: `${identity} (seed)`, domains: [new URL(url).hostname] })
+                .values({ tenantId: h.tenantId, name: `${identity} (seed)`, domains: [new URL(url).hostname], notes: `${DISCOVERED_NOTE}; seeded for the cleanup test` })
                 .returning(),
             )
           : [null];
@@ -350,6 +354,36 @@ describe('self-cleaning of excluded hosts (D-055)', () => {
         .where(and(eq(auditLog.action, 'competitor.source.revoked'), eq(auditLog.subjectId, appbrain!.id))),
     );
     expect(audits).toHaveLength(1);
+
+    // The retired directory no longer shows as a competitor; nothing was deleted.
+    const [manual] = await tx((t) =>
+      t
+        .insert(competitors)
+        .values({ tenantId: h.tenantId, name: 'Manual rival (cleanup test)', domains: ['manual-rival.example'] })
+        .returning(),
+    );
+    const listed = (await tx((t) => listCompetitors(t))).map((c) => c.name);
+    expect(listed).not.toContain('web:appbrain.com (seed)');
+    expect(listed).toEqual(expect.arrayContaining(['web:apkpure.com (seed)', 'google_play:com.rival.keep (seed)', manual!.name]));
+    expect((await tx((t) => comparison(t))).map((c) => c.competitor)).not.toContain('web:appbrain.com (seed)');
+    expect(await tx((t) => t.select().from(competitors).where(eq(competitors.name, 'web:appbrain.com (seed)')))).toHaveLength(1);
+  });
+
+  it('retires only discovery-created competitors whose candidates were all rejected and that nothing monitors', () => {
+    const c = { id: 'c1', notes: `${DISCOVERED_NOTE}; relevance is inferred.` };
+    const rejected = [{ competitorId: 'c1', status: 'rejected' }];
+    const revoked = [{ competitorId: 'c1', status: 'revoked' }];
+    expect(isRetiredDiscovery(c, rejected, revoked)).toBe(true);
+    expect(isRetiredDiscovery(c, rejected, [])).toBe(true);
+    // Added by a person: never retired.
+    expect(isRetiredDiscovery({ id: 'c1', notes: null }, rejected, revoked)).toBe(false);
+    expect(isRetiredDiscovery({ id: 'c1', notes: 'Main rival' }, rejected, revoked)).toBe(false);
+    // Still enrolled or under review somewhere, or never linked to a candidate.
+    expect(isRetiredDiscovery(c, [...rejected, { competitorId: 'c1', status: 'enrolled' }], revoked)).toBe(false);
+    expect(isRetiredDiscovery(c, [{ competitorId: 'other', status: 'rejected' }], revoked)).toBe(false);
+    // A source that is approved (by anyone) or awaiting approval keeps it listed.
+    expect(isRetiredDiscovery(c, rejected, [...revoked, { competitorId: 'c1', status: 'approved' }])).toBe(false);
+    expect(isRetiredDiscovery(c, rejected, [{ competitorId: 'c1', status: 'pending' }])).toBe(false);
   });
 });
 

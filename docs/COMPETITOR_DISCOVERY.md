@@ -46,15 +46,16 @@ You do this once, signed in with your normal two-factor session. Nothing asks fo
 - **Run now.** *Queue discovery* (a person) runs immediately instead of waiting for the interval. It never runs within 10 minutes of the last run, and the monthly cap still applies.
 - **Unjudged batches are repeated.** A run where the AI judge was unavailable does not count. The next run repeats the same queries, so those results get a verdict. Its note says why the judge was unavailable.
 - **Verdicts are not overwritten.** A later run without the model only refreshes when a candidate was seen. An earlier candidate the judge now calls not a competitor stays in review at confidence 0.1, under category `not_competitor`.
-- **Hosts that are never competitors:** search providers, reference and document hosts, APK mirrors, app directories (e.g. AppBrain, which lists other publishers' apps) and government sites (`*.gov`, `*.gov.xx`, `*.go.xx`). Official non-government bodies are left to the judge.
+- **Hosts that are never competitors:** search providers, reference and document hosts, APK mirrors, app directories (e.g. AppBrain, which lists other publishers' apps), software download sites (e.g. soft112, Softpedia) and government sites (`*.gov`, `*.gov.xx`, `*.go.xx`). Official non-government bodies are left to the judge.
 - **Self-cleaning.** Each run rejects earlier web candidates on such hosts (or the brand's own exclusions, or URLs that are no longer an entity). If one was enrolled, its monitoring source is revoked, but only when the standing approval alone approved it. Sources a person approved, and store listings, are never touched. The run note counts what was removed.
+- **Retired competitors.** A competitor that discovery created is retired once every candidate that pointed at it is rejected and none of its sources is approved or pending. *Competitors* and the comparison then leave it out. Nothing is deleted: its snapshots, observations and audit records stay, and the revoked source still shows under *Pages we monitor*. Enrolling it again or approving a source brings it back. A competitor you added yourself is never retired.
 - **Model call.** The judge sees at most 20 results with 220-character snippets. It is asked for competitors only, and the call runs at low reasoning effort (Groq gpt-oss) with a 6,000-token budget, so the JSON fits.
 
 ## What stays with a person
 
 - **Uncertain candidates.** "Indirect" candidates, below the threshold, wait under *Discovery rankings
   and review* (enroll or reject).
-- **Revoking monitoring.** Revoke a source any time in *Monitored sources*. A revoked source is never
+- **Revoking monitoring.** Revoke a source any time in *Pages we monitor*. A revoked source is never
   re-approved by discovery.
 - **Opportunities.** Accepting an opportunity, approving a campaign package and submitting a channel
   task stay with a person (D-054).

@@ -391,7 +391,7 @@ export const SECTIONS: Section[] = [
               { key: 'intervalHours', type: 'number', label: 'Search every (hours, 24-720)', initial: 24, integer: true, min: 24, max: 720 },
               { key: 'includeAppStore', type: 'toggle', label: 'Also search the Apple App Store (free)', initial: true },
               { key: 'aiJudge', type: 'toggle', label: 'Let the AI judge each result (direct, indirect, not a competitor)', initial: true },
-              { key: 'standingSourceApproval', type: 'toggle', label: 'Approve monitoring of enrolled competitors’ public listings and home pages (robots.txt respected)', initial: true, help: 'One approval instead of one per competitor. Revoke any source later in Monitored sources.' },
+              { key: 'standingSourceApproval', type: 'toggle', label: 'Approve monitoring of enrolled competitors’ public listings and home pages (robots.txt respected)', initial: true, help: 'One approval instead of one per competitor. Revoke any source later in Pages we monitor.' },
               { key: 'autoEnrollConfidence', type: 'number', label: 'Enroll without review from confidence', initial: 0.8, min: 0.6, max: 1, advanced: true, help: 'An AI “direct” verdict is 0.85, “indirect” 0.6.' },
               { key: 'maxQueriesPerRun', type: 'number', label: 'Searches per run', initial: 4, integer: true, min: 1, max: 10, advanced: true },
               { key: 'monthlySearchLimit', type: 'number', label: 'Web searches per month (cap)', initial: 300, integer: true, min: 10, max: 5000, advanced: true, help: 'Tavily’s free plan has 1,000 a month.' },

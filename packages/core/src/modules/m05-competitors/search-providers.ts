@@ -44,7 +44,7 @@ const NON_ENTITY_SEGMENTS = new Set(['watch', 'shorts', 'results', 'search', 'ha
 
 /**
  * Hosts that are never a competitor of a brand: search providers, reference and document hosts,
- * APK mirrors and app directories (they list other publishers' apps), and government sites
+ * APK mirrors, app directories and software download sites (they list other publishers' apps), and government sites
  * (official bodies are not competitors). Store listings are unaffected; the AI judge decides
  * everything else.
  */
@@ -73,6 +73,12 @@ const NON_COMPETITOR_HOSTS = [
   '9apps.com',
   'malavida.com',
   'filehippo.com',
+  // Software download directories (e.g. korean-eps-topik.soft112.com was enrolled on 2026-11-16).
+  'soft112.com',
+  'softpedia.com',
+  'download.cnet.com',
+  'filehorse.com',
+  'updatestar.com',
 ];
 export function isNonCompetitorHost(host: string): boolean {
   const h = host.toLowerCase().replace(/^www\./, '');
