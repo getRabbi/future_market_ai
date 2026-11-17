@@ -251,6 +251,27 @@ describe('F1 Market Signal Hunter', () => {
     expect((await signals.scanTenant(h.deps, h.tenantId)).status).toBe('skipped');
   });
 
+  it('tells the Control Room what F1 watches and what the last scan found, without writing anything', async () => {
+    const evidenceCount = () => tx(async (t) => (await t.execute<{ n: number }>(sql`select count(*)::int as n from evidence_records`)).rows[0]!.n);
+    const before = await evidenceCount();
+    const room = await tx((t) => gw.controlRoom(t, h.deps, h.tenantId, brandId));
+    const i = room.inputs!;
+    expect(i).toMatchObject({ lookbackDays: 30, keywords: 3 });
+    // One literal [P] change of a profile competitor; the [I] inference is not counted.
+    expect(i.competitor).toMatchObject({ state: 'ready', competitors: 1, pages: 0, changes: 1, candidates: 1 });
+    expect(i.search).toMatchObject({ state: 'ready', connected: false, latestPeriodEnd: '2026-10-15' });
+    expect(i.search.candidates).toBeGreaterThanOrEqual(1);
+    expect(i.firstParty).toMatchObject({ state: 'ready', messages: 6, searches: 0, minPeople: 5 });
+    expect(['missing', 'waiting']).toContain(i.trend.state);
+    // The last completed scan and what each input handed it (both scans here finish at the same fake instant).
+    expect(i.lastScan!.candidates).toBeGreaterThan(0);
+    expect(i.lastScan!.sources).toMatchObject({ competitor: 1 });
+    expect(new Date(i.nextScanAfter!).getTime()).toBeGreaterThan(h.clock.now().getTime());
+    expect(i.execution).toMatchObject({ externalOperations: false });
+    // Reading the inputs admits no aggregate evidence (only a scan does).
+    expect(await evidenceCount()).toBe(before);
+  });
+
   it('keeps tenants apart', async () => {
     const other = `org_other_${Date.now()}`;
     await h.t.handle.db.insert(organization).values({ id: other, name: 'Other', slug: other });
